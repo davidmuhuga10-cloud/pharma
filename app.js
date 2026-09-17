@@ -181,6 +181,25 @@ async function init() {
 // confirmed account with no pharmacy is a dead end with no way back in.
 var PENDING_KEY = 'hodhi_pending_signup';
 
+// Hodhi logs in with a phone number, not an email — pharmacy staff in
+// Kenya reliably have a phone number, not necessarily an email address they
+// check. Supabase Auth's password flow is still email-shaped under the
+// hood, so we derive a stable, non-deliverable "auth email" from the
+// phone number and use that everywhere sb.auth.* wants an email. The real
+// phone number is what the person types and sees; this derived address
+// never appears in the UI. Normalizing to a consistent digit form (07... ->
+// 2547...) means "0712345678" and "+254712345678" log into the same
+// account.
+function normalizePhone(raw) {
+  var digits = (raw || '').replace(/\D/g, '');
+  if (digits.length === 10 && digits.charAt(0) === '0') digits = '254' + digits.slice(1);
+  else if (digits.length === 9) digits = '254' + digits;
+  return digits;
+}
+function phoneToAuthEmail(phone) {
+  return 'p' + normalizePhone(phone) + '@hodhi.local';
+}
+
 function stashPendingSignup(data) {
   try { localStorage.setItem(PENDING_KEY, JSON.stringify(data)); } catch (e) {}
 }
@@ -359,7 +378,7 @@ function renderLogin() {
   var body = $('#authBody') || (function () { render(); return $('#authBody'); })();
   body.innerHTML =
     '<div class="card">' +
-    '<div class="field"><label>Email</label><input id="loEmail" type="email" placeholder="you@pharmacy.co.ke"></div>' +
+    '<div class="field"><label>Phone number</label><input id="loPhone" type="tel" placeholder="07XXXXXXXX"></div>' +
     '<div class="field"><label>Password</label><input id="loPw" type="password" placeholder="••••••••"></div>' +
     '<div id="loErr" class="error-text"></div>' +
     '<button class="btn primary" id="loBtn" onclick="doLogin()">Log in</button>' +
@@ -375,8 +394,7 @@ function renderSignup() {
     '<div class="card">' +
     '<div class="field"><label>Pharmacy name</label><input id="suPharmacy" placeholder="e.g. Rubao Mukothima Pharmacy"></div>' +
     '<div class="field"><label>Your name</label><input id="suName" placeholder="e.g. Rubao Mukothima"></div>' +
-    '<div class="field"><label>Phone</label><input id="suPhone" placeholder="07XXXXXXXX"></div>' +
-    '<div class="field"><label>Email</label><input id="suEmail" type="email" placeholder="you@pharmacy.co.ke"></div>' +
+    '<div class="field"><label>Phone number</label><input id="suPhone" type="tel" placeholder="07XXXXXXXX"></div>' +
     '<div class="field"><label>Password</label><input id="suPw" type="password" placeholder="At least 8 characters"></div>' +
     '<div id="suErr" class="error-text"></div>' +
     '<button class="btn primary" id="suBtn" onclick="doSignup()">Create pharmacy account</button>' +
@@ -392,8 +410,7 @@ function renderJoin() {
     '<div class="tiny" style="margin-bottom:10px">Ask the pharmacy owner for a staff invite code (Settings → Staff, in their app).</div>' +
     '<div class="field"><label>Staff code</label><input id="jnCode" placeholder="e.g. 2E530A" style="text-transform:uppercase"></div>' +
     '<div class="field"><label>Your name</label><input id="jnName" placeholder="e.g. Peter Attendant"></div>' +
-    '<div class="field"><label>Phone</label><input id="jnPhone" placeholder="07XXXXXXXX"></div>' +
-    '<div class="field"><label>Email</label><input id="jnEmail" type="email" placeholder="you@example.com"></div>' +
+    '<div class="field"><label>Phone number</label><input id="jnPhone" type="tel" placeholder="07XXXXXXXX"></div>' +
     '<div class="field"><label>Password</label><input id="jnPw" type="password" placeholder="At least 8 characters"></div>' +
     '<div id="jnErr" class="error-text"></div>' +
     '<button class="btn primary" id="jnBtn" onclick="doJoin()">Join pharmacy</button>' +
@@ -404,28 +421,20 @@ function renderJoin() {
 // can't be styled, and some in-app browsers (e.g. opening the PWA link from
 // inside WhatsApp) block it outright. A normal form field, like every other
 // screen in the app, fixes both problems.
+// Phone-based accounts have no email on file to send a reset link to, so
+// self-service reset isn't possible here. The pharmacy owner is the one
+// person who can always fix a forgotten password: from Settings → Staff
+// they can deactivate/reissue a staff invite code for anyone else, and if
+// the owner themselves is locked out, this is a manual, ask-a-human step
+// for now (matches how a lost phone/PIN is handled elsewhere in the app).
 function renderForgotPassword() {
   STATE.authMode = 'forgot';
   var body = $('#authBody') || (function () { render(); return $('#authBody'); })();
   body.innerHTML =
     '<div class="card">' +
-    '<div class="tiny" style="margin-bottom:10px">Enter the email on your Hodhi account and we\'ll send a reset link.</div>' +
-    '<div class="field"><label>Email</label><input id="fpEmail" type="email" placeholder="you@pharmacy.co.ke"></div>' +
-    '<div id="fpErr" class="error-text"></div>' +
-    '<button class="btn primary" id="fpBtn" onclick="doForgotPassword()">Send reset link</button>' +
+    '<div class="tiny">Hodhi accounts don\'t have an email on file, so there\'s no automatic reset link.</div>' +
+    '<div class="tiny" style="margin-top:8px">If you\'re staff, ask your pharmacy owner for a new staff invite code (Settings → Staff) and join again. If you\'re the owner, contact whoever set up Hodhi for this pharmacy to have your password reset.</div>' +
     '</div><div class="auth-toggle"><a href="#" onclick="renderLogin();return false;">Back to log in</a></div>';
-}
-
-async function doForgotPassword() {
-  var btn = $('#fpBtn'); var err = $('#fpErr'); err.textContent = '';
-  act(btn, async function () {
-    var email = $('#fpEmail').value.trim();
-    if (!email) { err.textContent = 'Enter your email address.'; return; }
-    var { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin + window.location.pathname });
-    if (error) { err.textContent = friendlyError(error); return; }
-    renderLogin();
-    toast('Check your email for a password reset link.', 'good');
-  });
 }
 
 function recoveryScreen() {
@@ -459,14 +468,13 @@ async function doJoin() {
     var code = $('#jnCode').value.trim();
     var fullName = $('#jnName').value.trim();
     var phone = $('#jnPhone').value.trim();
-    var email = $('#jnEmail').value.trim();
     var pw = $('#jnPw').value;
-    if (!code || !email || pw.length < 8) { err.textContent = 'Fill in the staff code, email, and an 8+ character password.'; return; }
-    var { data: signUpData, error: suErr } = await sb.auth.signUp({ email: email, password: pw });
+    if (!code || !phone || pw.length < 8) { err.textContent = 'Fill in the staff code, phone number, and an 8+ character password.'; return; }
+    var { data: signUpData, error: suErr } = await sb.auth.signUp({ email: phoneToAuthEmail(phone), password: pw });
     if (suErr) { err.textContent = suErr.message; return; }
     stashPendingSignup({ kind: 'staff', code: code, fullName: fullName, phone: phone });
     if (!signUpData.session) {
-      toast('Check your email to confirm the account, then log in and it will pick up your staff code automatically.', 'good');
+      toast('Account created — log in with your phone number and password and it will pick up your staff code automatically.', 'good');
       renderLogin();
       return;
     }
@@ -481,11 +489,12 @@ async function doJoin() {
 async function doLogin() {
   var btn = $('#loBtn'); var err = $('#loErr'); err.textContent = '';
   act(btn, async function () {
-    var email = $('#loEmail').value.trim(), pw = $('#loPw').value;
-    var { error } = await sb.auth.signInWithPassword({ email: email, password: pw });
+    var phone = $('#loPhone').value.trim(), pw = $('#loPw').value;
+    if (!phone || !pw) { err.textContent = 'Enter your phone number and password.'; return; }
+    var { error } = await sb.auth.signInWithPassword({ email: phoneToAuthEmail(phone), password: pw });
     if (error) {
-      if (/email not confirmed/i.test(error.message)) {
-        err.textContent = 'Confirm your email first — check your inbox (and spam folder) for the link we sent.';
+      if (/invalid login credentials/i.test(error.message)) {
+        err.textContent = 'Incorrect phone number or password.';
       } else {
         err.textContent = error.message;
       }
@@ -507,20 +516,21 @@ async function doSignup() {
     var pharmacyName = $('#suPharmacy').value.trim();
     var fullName = $('#suName').value.trim();
     var phone = $('#suPhone').value.trim();
-    var email = $('#suEmail').value.trim();
     var pw = $('#suPw').value;
-    if (!pharmacyName || !email || pw.length < 8) { err.textContent = 'Fill in the pharmacy name, email, and an 8+ character password.'; return; }
-    var { data: signUpData, error: suErr } = await sb.auth.signUp({ email: email, password: pw });
+    if (!pharmacyName || !phone || pw.length < 8) { err.textContent = 'Fill in the pharmacy name, phone number, and an 8+ character password.'; return; }
+    var { data: signUpData, error: suErr } = await sb.auth.signUp({ email: phoneToAuthEmail(phone), password: pw });
     if (suErr) { err.textContent = suErr.message; return; }
     // Stash what they typed BEFORE checking for a session — if this Supabase
     // project requires email confirmation, signUp() returns no session at
     // all, so there's no authenticated user yet to attach a pharmacy to.
     // loadProfileAndPharmacy() finishes this automatically on their first
-    // real login (see finishPendingSignupIfAny above).
+    // real login (see finishPendingSignupIfAny above). Confirmation should be
+    // turned OFF for this project since the derived address can't receive it
+    // — see PHARMA_PROJECT_STATUS.md.
     stashPendingSignup({ kind: 'owner', pharmacyName: pharmacyName, fullName: fullName, phone: phone });
     if (!signUpData.session) {
       err.textContent = '';
-      toast('Check your email to confirm the account, then log in and your pharmacy will be set up automatically.', 'good');
+      toast('Account created — log in with your phone number and password to finish setting up your pharmacy.', 'good');
       renderLogin();
       return;
     }
