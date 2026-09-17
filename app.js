@@ -54,9 +54,14 @@ var STRINGS = {
     logOut: 'Toka', addDrug: '+ Ongeza dawa mpya', checkout: 'Lipa', total: 'Jumla'
   }
 };
+// English only for now, enforced regardless of what's stored on the
+// profile — the Swahili strings above only cover a handful of nav/headline
+// labels (see the comment on STRINGS), so switching a pharmacist into it
+// mid-app would show a confusing mix of translated and untranslated text.
+// Once Swahili is fully translated, this can go back to reading
+// STATE.profile.language.
 function t(key) {
-  var lang = (STATE.profile && STATE.profile.language) || 'en';
-  return (STRINGS[lang] && STRINGS[lang][key]) || STRINGS.en[key] || key;
+  return STRINGS.en[key] || key;
 }
 
 // ---------------------------------------------------------------------------
@@ -421,20 +426,44 @@ function renderJoin() {
 // can't be styled, and some in-app browsers (e.g. opening the PWA link from
 // inside WhatsApp) block it outright. A normal form field, like every other
 // screen in the app, fixes both problems.
-// Phone-based accounts have no email on file to send a reset link to, so
-// self-service reset isn't possible here. The pharmacy owner is the one
-// person who can always fix a forgotten password: from Settings → Staff
-// they can deactivate/reissue a staff invite code for anyone else, and if
-// the owner themselves is locked out, this is a manual, ask-a-human step
-// for now (matches how a lost phone/PIN is handled elsewhere in the app).
+// Phone-based accounts have no email on file to send a reset link to.
+// Interim design (explicitly requested, to be tightened later): anyone who
+// knows the phone number registered on a Hodhi account can set it a brand
+// new password immediately, no code/OTP. That lookup + password change
+// happens server-side in the reset-password-by-phone Edge Function, which
+// is the only place allowed to hold the service-role key this needs — see
+// that function's own comments for why this can't be done directly from
+// the browser.
 function renderForgotPassword() {
   STATE.authMode = 'forgot';
   var body = $('#authBody') || (function () { render(); return $('#authBody'); })();
   body.innerHTML =
     '<div class="card">' +
-    '<div class="tiny">Hodhi accounts don\'t have an email on file, so there\'s no automatic reset link.</div>' +
-    '<div class="tiny" style="margin-top:8px">If you\'re staff, ask your pharmacy owner for a new staff invite code (Settings → Staff) and join again. If you\'re the owner, contact whoever set up Hodhi for this pharmacy to have your password reset.</div>' +
+    '<div class="tiny" style="margin-bottom:10px">Enter the phone number on the account and choose a new password.</div>' +
+    '<div class="field"><label>Phone number</label><input id="fpPhone" type="tel" placeholder="07XXXXXXXX"></div>' +
+    '<div class="field"><label>New password</label><input id="fpPw" type="password" placeholder="At least 8 characters"></div>' +
+    '<div id="fpErr" class="error-text"></div>' +
+    '<button class="btn primary" id="fpBtn" onclick="doForgotPassword()">Set new password</button>' +
     '</div><div class="auth-toggle"><a href="#" onclick="renderLogin();return false;">Back to log in</a></div>';
+}
+
+async function doForgotPassword() {
+  var btn = $('#fpBtn'); var err = $('#fpErr'); err.textContent = '';
+  act(btn, async function () {
+    var phone = $('#fpPhone').value.trim();
+    var pw = $('#fpPw').value;
+    if (!phone) { err.textContent = 'Enter the phone number on the account.'; return; }
+    if (pw.length < 8) { err.textContent = 'Use at least 8 characters.'; return; }
+    var { data, error } = await sb.functions.invoke('reset-password-by-phone', {
+      body: { phone: phone, newPassword: pw }
+    });
+    if (error || (data && data.error)) {
+      err.textContent = (data && data.error) || friendlyError(error);
+      return;
+    }
+    renderLogin();
+    toast('Password updated — log in with your new password.', 'good');
+  });
 }
 
 function recoveryScreen() {
@@ -740,6 +769,49 @@ function parseFlexibleExpiry(val) {
   return null;
 }
 
+// Column-name aliases the importer recognizes, matched case-insensitively.
+// 'drugs' (plural) is here because that's the header real pharmacy
+// stock-take sheets actually use (see IMPORT_COLUMN_ALIASES.name).
+var IMPORT_COLUMN_ALIASES = {
+  name: ['drug', 'drugs', 'name', 'drug name'],
+  category: ['category'],
+  form: ['form'],
+  unit: ['unit'],
+  qty: ['qty', 'quantity'],
+  costPrice: ['cost price'],
+  sellPrice: ['sell price', 'price', 'price per unit'],
+  expiry: ['expiry', 'exp dt', 'expiry date'],
+  batchNo: ['batch no', 'batch'],
+  supplier: ['supplier']
+};
+
+// Real stock-take sheets (like the one this app was built from) often have
+// a title row above the real column headers ("RUBAO MUKOTHIMA STOCK TAKE",
+// then "DRUGS / QTY / PRICE PER UNIT / …" on the next row). Reading the
+// file as plain rows (not assuming row 1 is the header) and searching the
+// first several rows for one that actually contains a recognized column
+// name handles that without asking the pharmacist to edit their sheet first.
+function findImportHeaderRow(rows) {
+  for (var i = 0; i < Math.min(rows.length, 10); i++) {
+    for (var c = 0; c < rows[i].length; c++) {
+      var cell = String(rows[i][c] || '').trim().toLowerCase();
+      if (IMPORT_COLUMN_ALIASES.name.indexOf(cell) !== -1) return i;
+    }
+  }
+  return 0;
+}
+
+function buildImportColumnMap(headerRow) {
+  var map = {};
+  headerRow.forEach(function (cell, idx) {
+    var v = String(cell || '').trim().toLowerCase();
+    Object.keys(IMPORT_COLUMN_ALIASES).forEach(function (field) {
+      if (map[field] === undefined && IMPORT_COLUMN_ALIASES[field].indexOf(v) !== -1) map[field] = idx;
+    });
+  });
+  return map;
+}
+
 function openImportExcel() {
   var input = document.createElement('input');
   input.type = 'file';
@@ -751,8 +823,11 @@ function openImportExcel() {
       try {
         var wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array', cellDates: true });
         var ws = wb.Sheets[wb.SheetNames[0]];
-        var rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
-        previewImport(rows);
+        var allRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+        var headerIdx = findImportHeaderRow(allRows);
+        var colMap = buildImportColumnMap(allRows[headerIdx] || []);
+        var dataRows = allRows.slice(headerIdx + 1);
+        previewImport(dataRows, colMap);
       } catch (err) {
         toast('Could not read that file — is it a valid Excel/CSV file?', 'bad');
       }
@@ -762,34 +837,48 @@ function openImportExcel() {
   input.click();
 }
 
-function previewImport(rawRows) {
+function previewImport(dataRows, colMap) {
   var parsed = [];
   var skipped = 0;
-  rawRows.forEach(function (r) {
-    var get = function (keys) {
-      for (var i = 0; i < keys.length; i++) {
-        var k = Object.keys(r).find(function (rk) { return rk.trim().toLowerCase() === keys[i]; });
-        if (k && String(r[k]).trim() !== '') return r[k];
-      }
-      return null;
+  var currentCategory = '';
+  dataRows.forEach(function (row) {
+    var cell = function (field) {
+      var idx = colMap[field];
+      if (idx === undefined) return null;
+      var v = row[idx];
+      return (v === undefined || v === null || String(v).trim() === '') ? null : v;
     };
-    var name = get(['drug', 'name', 'drug name']);
-    var qty = parseInt(get(['qty', 'quantity']), 10);
-    var sellPrice = parseFloat(get(['sell price', 'price', 'price per unit']));
-    var expiryRaw = get(['expiry', 'exp dt', 'expiry date']);
+    var name = cell('name');
+    var qty = parseInt(cell('qty'), 10);
+    var sellPrice = parseFloat(cell('sellPrice'));
+
+    // A row that's just a drug name with no quantity and no price at all
+    // (written in ALL CAPS, e.g. "ANALGESICS/ANTIPYRETICS", "COUGH SYRUPS")
+    // is a section header in the pharmacist's sheet, not a stock line —
+    // remember it as the category for the rows underneath, same way a
+    // person reading the sheet by eye would.
+    if (name && qty !== qty /* NaN */ && !sellPrice) {
+      var trimmedName = String(name).trim();
+      if (trimmedName === trimmedName.toUpperCase() && /[A-Za-z]/.test(trimmedName)) {
+        currentCategory = trimmedName;
+        return;
+      }
+    }
+
+    var expiryRaw = cell('expiry');
     var expiry = parseFlexibleExpiry(expiryRaw);
     if (!name || !qty || qty <= 0 || !sellPrice || !expiry) { skipped++; return; }
     parsed.push({
       name: String(name).trim(),
-      category: get(['category']) || '',
-      form: (get(['form']) || 'other').toString().toLowerCase(),
-      unit: get(['unit']) || 'unit',
+      category: cell('category') || currentCategory || '',
+      form: (cell('form') || 'other').toString().toLowerCase(),
+      unit: cell('unit') || 'unit',
       qty: qty,
-      costPrice: parseFloat(get(['cost price'])) || null,
+      costPrice: parseFloat(cell('costPrice')) || null,
       sellPrice: sellPrice,
       expiry: expiry,
-      batchNo: get(['batch no', 'batch']) || null,
-      supplier: get(['supplier']) || null
+      batchNo: cell('batchNo') || null,
+      supplier: cell('supplier') || null
     });
   });
 
@@ -811,8 +900,13 @@ async function runImport(encoded) {
   var rows = JSON.parse(decodeURIComponent(atob(encoded)));
   var btn = $('#impBtn');
   act(btn, async function () {
+    // Normalized (letters/digits only, lowercased) so "Anti-H-Pylori" from
+    // the seeded categories matches "ANTI H PYLORI" as written by hand in a
+    // real stock-take sheet — punctuation/spacing varies, the category
+    // doesn't.
+    var normCat = function (s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, ''); };
     var catByName = {};
-    STATE.categoriesCache.forEach(function (c) { catByName[c.name.toLowerCase()] = c.id; });
+    STATE.categoriesCache.forEach(function (c) { catByName[normCat(c.name)] = c.id; });
     var drugByName = {};
     STATE.drugsCache.forEach(function (d) { drugByName[d.name.toLowerCase()] = d.drug_id; });
     // also pick up drugs already in the DB that might not be in the (stock>0) cache
@@ -831,7 +925,7 @@ async function runImport(encoded) {
             name: r.name,
             form: validForms.indexOf(r.form) !== -1 ? r.form : 'other',
             unit: r.unit,
-            category_id: r.category ? (catByName[r.category.toLowerCase()] || null) : null
+            category_id: r.category ? (catByName[normCat(r.category)] || null) : null
           }).select().single();
           if (dErr) throw dErr;
           drugId = newDrug.id;
@@ -1698,16 +1792,7 @@ async function renderSettings() {
     '<div class="section-title">Account</div>' +
     '<div class="card">' +
     '<div class="tiny" style="margin-bottom:10px">Signed in as ' + esc(STATE.profile.full_name || '') + ' (' + esc(STATE.profile.role) + ')</div>' +
-    '<div class="field"><label>Language / Lugha</label><select id="stLang" onchange="saveLanguage(this.value)">' +
-    '<option value="en"' + (STATE.profile.language === 'en' || !STATE.profile.language ? ' selected' : '') + '>English</option>' +
-    '<option value="sw"' + (STATE.profile.language === 'sw' ? ' selected' : '') + '>Kiswahili</option>' +
-    '</select></div></div>';
-}
-
-async function saveLanguage(lang) {
-  await sb.from('profiles').update({ language: lang }).eq('id', STATE.profile.id);
-  STATE.profile.language = lang;
-  render();
+    '<div class="field"><label>Language</label><div class="tiny">English (Kiswahili is coming soon — turned off for now so the app doesn\'t mix half-translated screens)</div></div></div>';
 }
 
 function openAddSupplier() {
