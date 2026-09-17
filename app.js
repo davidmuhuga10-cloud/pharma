@@ -59,6 +59,37 @@ function t(key) {
   return (STRINGS[lang] && STRINGS[lang][key]) || STRINGS.en[key] || key;
 }
 
+// ---------------------------------------------------------------------------
+// ICON SET — hand-drawn inline SVGs, self-contained (no icon-font CDN to
+// depend on, same reasoning as vendoring Supabase/xlsx above). Every icon
+// uses stroke="currentColor" so it inherits whatever color CSS gives it.
+// ---------------------------------------------------------------------------
+var ICONS = {
+  home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h5v-6h4v6h5V9.5"/>',
+  stock: '<rect x="3" y="9" width="18" height="6" rx="3" transform="rotate(-35 12 12)"/><line x1="12" y1="6.5" x2="12" y2="17.5" transform="rotate(-35 12 12)"/>',
+  sell: '<path d="M6 2h12v20l-3-2-3 2-3-2-3 2Z"/><line x1="8.5" y1="7" x2="15.5" y2="7"/><line x1="8.5" y1="11" x2="15.5" y2="11"/><line x1="8.5" y1="15" x2="13" y2="15"/>',
+  reports: '<line x1="4" y1="20" x2="20" y2="20"/><rect x="6" y="12" width="3" height="8"/><rect x="10.5" y="7" width="3" height="13"/><rect x="15" y="3" width="3" height="17"/>',
+  settings: '<line x1="4" y1="7" x2="20" y2="7"/><circle cx="9" cy="7" r="2"/><line x1="4" y1="13" x2="20" y2="13"/><circle cx="15" cy="13" r="2"/><line x1="4" y1="19" x2="20" y2="19"/><circle cx="9" cy="19" r="2"/>',
+  printer: '<path d="M6 9V3h12v6"/><rect x="4" y="9" width="16" height="8" rx="1.5"/><path d="M7 17v4h10v-4"/>',
+  upload: '<path d="M12 16V4"/><path d="M6.5 9.5 12 4l5.5 5.5"/><path d="M4 20h16"/>',
+  download: '<path d="M12 4v12"/><path d="M6.5 10.5 12 16l5.5-5.5"/><path d="M4 20h16"/>',
+  clipboard: '<rect x="5.5" y="4" width="13" height="16" rx="2"/><rect x="9" y="2" width="6" height="4" rx="1"/><line x1="8.5" y1="11" x2="15.5" y2="11"/><line x1="8.5" y1="15" x2="15.5" y2="15"/>',
+  cart: '<circle cx="9.5" cy="20" r="1.4"/><circle cx="17.5" cy="20" r="1.4"/><path d="M3 4h2.2l2.2 11.6a2 2 0 0 0 2 1.6h7.8a2 2 0 0 0 2-1.6L20.5 8H6"/>',
+  warn: '<path d="M12 3 22 20H2Z"/><line x1="12" y1="9.5" x2="12" y2="13.5"/><circle cx="12" cy="16.5" r="1"/>',
+  close: '<line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/>',
+  box: '<rect x="4" y="8" width="16" height="12" rx="2"/><path d="M8 8V6.5a4 4 0 0 1 8 0V8"/>'
+};
+function icon(name, size) {
+  var s = size || 18;
+  return '<svg class="ic-svg" width="' + s + '" height="' + s + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + (ICONS[name] || '') + '</svg>';
+}
+// The brand mark used on the auth screen and topbar — a rounded badge in
+// brand green with the capsule glyph, instead of plain unstyled text.
+function logoMarkHtml(size) {
+  var s = size || 44;
+  return '<div class="brand-badge" style="width:' + s + 'px;height:' + s + 'px">' + icon('stock', Math.round(s * 0.52)) + '</div>';
+}
+
 function $(sel, ctx) { return (ctx || document).querySelector(sel); }
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
   return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -87,7 +118,7 @@ function sheet(title, bodyHtml) {
   mask.className = 'mask';
   mask.innerHTML =
     '<div class="sheet"><div class="sheet-head"><h2>' + esc(title) + '</h2>' +
-    '<button onclick="closeSheet()">✕</button></div><div id="sheetBody">' + bodyHtml + '</div></div>';
+    '<button onclick="closeSheet()">' + icon('close',15) + '</button></div><div id="sheetBody">' + bodyHtml + '</div></div>';
   mask.addEventListener('click', function (e) { if (e.target === mask) closeSheet(); });
   document.body.appendChild(mask);
   return $('#sheetBody');
@@ -112,7 +143,7 @@ function friendlyError(e) {
 function errorCard(container, message, retryFn) {
   container.innerHTML =
     '<div class="card empty">' +
-    '<div style="margin-bottom:10px">⚠️ ' + esc(message) + '</div>' +
+    '<div style="margin-bottom:10px;display:flex;gap:8px;align-items:flex-start">' + icon('warn',18) + '' + esc(message) + '</div>' +
     '<button class="btn secondary small" onclick="(' + retryFn + ')()">Try again</button>' +
     '</div>';
 }
@@ -129,8 +160,8 @@ async function init() {
     render();
   } catch (e) {
     $('#app').innerHTML =
-      '<div class="auth-wrap"><div class="auth-card"><div class="auth-logo"><div class="mark">Hodhi</div></div>' +
-      '<div class="card empty">⚠️ ' + esc(friendlyError(e)) + '<div style="margin-top:12px">' +
+      '<div class="auth-wrap-simple"><div class="auth-card">' + logoMarkHtml(44) + '<div class="mark">Hodhi</div>' +
+      '<div class="card empty" style="display:flex;gap:8px;align-items:flex-start;text-align:left;margin-top:14px">' + icon('warn', 18) + esc(friendlyError(e)) + '<div style="margin-top:12px">' +
       '<button class="btn primary" onclick="location.reload()">Reload</button></div></div></div></div>';
     return;
   }
@@ -217,8 +248,8 @@ function render() {
     return;
   }
   app.innerHTML =
-    '<div class="topbar"><div><div class="brand">Hodhi</div>' +
-    '<div class="sub">' + esc(STATE.pharmacy ? STATE.pharmacy.name : '') + '</div></div>' +
+    '<div class="topbar"><div class="topbar-id">' + logoMarkHtml(30) + '<div><div class="brand">Hodhi</div>' +
+    '<div class="sub">' + esc(STATE.pharmacy ? STATE.pharmacy.name : '') + '</div></div></div>' +
     '<button onclick="logout()">Log out</button></div>' +
     '<div class="content" id="content"></div>' +
     navBar() +
@@ -228,22 +259,22 @@ function render() {
 
 function navBar() {
   var items = [
-    ['dashboard', '🏠', t('home')],
-    ['inventory', '💊', t('stock')],
-    ['sell', '🧾', t('sell')],
-    ['reports', '📊', t('reports')],
-    ['settings', '⚙️', t('settings')]
+    ['dashboard', 'home', t('home')],
+    ['inventory', 'stock', t('stock')],
+    ['sell', 'sell', t('sell')],
+    ['reports', 'reports', t('reports')],
+    ['settings', 'settings', t('settings')]
   ];
   return '<div class="navbar">' + items.map(function (i) {
     return '<button class="' + (STATE.tab === i[0] ? 'active' : '') + '" onclick="setTab(\'' + i[0] + '\')">' +
-      '<span class="ic">' + i[1] + '</span>' + i[2] + '</button>';
+      '<span class="ic">' + icon(i[1], 20) + '</span>' + i[2] + '</button>';
   }).join('') + '</div>';
 }
 
 function cartFab() {
   if (!STATE.cart.length) return '';
   var n = STATE.cart.reduce(function (a, c) { return a + c.qty; }, 0);
-  return '<button class="fab" onclick="openCheckout()" title="Checkout">🛒<span style="position:absolute;top:-4px;right:-4px;background:#B3261E;color:#fff;border-radius:50%;width:20px;height:20px;font-size:11px;display:flex;align-items:center;justify-content:center;">' + n + '</span></button>';
+  return '<button class="fab" onclick="openCheckout()" title="Checkout">' + icon('cart',22) + '<span style="position:absolute;top:-4px;right:-4px;background:#B3261E;color:#fff;border-radius:50%;width:20px;height:20px;font-size:11px;display:flex;align-items:center;justify-content:center;">' + n + '</span></button>';
 }
 
 function setTab(t) { STATE.tab = t; render(); }
@@ -299,14 +330,28 @@ function exportExcel(filename, sheetName, rows) {
 // AUTH
 // ---------------------------------------------------------------------------
 
+// Desktop gets a proper split layout (brand panel + form) instead of a small
+// centered card floating in a sea of empty page; mobile collapses to the
+// brand mark above the form, same as before. See style.css's
+// .auth-wrap/.auth-brand rules for the responsive behavior.
 function authScreen() {
   if (STATE.recoveryMode) return recoveryScreen();
   var msg = STATE.disabledMessage;
   STATE.disabledMessage = null;
-  return '<div class="auth-wrap"><div class="auth-card">' +
-    '<div class="auth-logo"><div class="mark">Hodhi</div><div class="tag">Know your stock. Never run dry, never run expired.</div></div>' +
+  return '<div class="auth-wrap">' +
+    '<div class="auth-brand">' +
+    logoMarkHtml(56) +
+    '<div class="mark">Hodhi</div><div class="tag">Know your stock. Never run dry, never run expired.</div>' +
+    '<ul class="auth-brand-list">' +
+    '<li>' + icon('stock', 16) + ' Batch-level stock with automatic expiry tracking</li>' +
+    '<li>' + icon('sell', 16) + ' Fast, cart-based selling with split payments</li>' +
+    '<li>' + icon('reports', 16) + ' Daily, weekly and monthly reports — no month-end wait</li>' +
+    '</ul>' +
+    '</div>' +
+    '<div class="auth-form-col"><div class="auth-card">' +
     (msg ? '<div class="card" style="border-color:#EFC3BE;background:#FBE9E7;margin-bottom:12px">' + esc(msg) + '</div>' : '') +
-    '<div id="authBody"></div></div></div>';
+    '<div id="authBody"></div></div></div>' +
+    '</div>';
 }
 
 function renderLogin() {
@@ -384,9 +429,9 @@ async function doForgotPassword() {
 }
 
 function recoveryScreen() {
-  return '<div class="auth-wrap"><div class="auth-card">' +
-    '<div class="auth-logo"><div class="mark">Hodhi</div><div class="tag">Set a new password</div></div>' +
-    '<div class="card">' +
+  return '<div class="auth-wrap-simple"><div class="auth-card">' +
+    logoMarkHtml(44) + '<div class="mark">Hodhi</div><div class="tag">Set a new password</div>' +
+    '<div class="card" style="margin-top:14px">' +
     '<div class="field"><label>New password</label><input id="rcPw" type="password" placeholder="At least 8 characters"></div>' +
     '<div id="rcErr" class="error-text"></div>' +
     '<button class="btn primary" id="rcBtn" onclick="doSetNewPassword()">Save new password</button>' +
@@ -601,11 +646,11 @@ function drawInventory() {
     '<div class="searchbox field"><input placeholder="Search drugs…" value="' + esc(invFilter) + '" oninput="invFilter=this.value;invPage=1;drawInventory()"></div>' +
     '<div class="toolbar-row">' +
     (can('edit_inventory') ? '<button class="btn secondary" onclick="openAddDrug()">' + t('addDrug') + '</button>' : '') +
-    (can('edit_inventory') ? '<button class="btn ghost" onclick="openImportExcel()">⬆ Import</button>' : '') +
-    '<button class="btn ghost" onclick="exportInventoryExcel()">⬇ Excel</button>' +
-    '<button class="btn ghost" onclick="printInventory()">🖨 Print</button>' +
+    (can('edit_inventory') ? '<button class="btn ghost" onclick="openImportExcel()">' + icon('upload',15) + ' Import</button>' : '') +
+    '<button class="btn ghost" onclick="exportInventoryExcel()">' + icon('download',15) + ' Excel</button>' +
+    '<button class="btn ghost" onclick="printInventory()">' + icon('printer',15) + ' Print</button>' +
     '</div>' +
-    (can('restock') ? '<div class="toolbar-row"><button class="btn ghost" onclick="openReorderList()">📋 Reorder list</button></div>' : '') +
+    (can('restock') ? '<div class="toolbar-row"><button class="btn ghost" onclick="openReorderList()">' + icon('clipboard',15) + ' Reorder list</button></div>' : '') +
     '<div class="card">' + (rows.length ? rows.map(function (d) {
       var badge = d.qty_in_stock === 0 ? '<span class="badge bad">Out</span>'
         : d.qty_in_stock <= d.reorder_level ? '<span class="badge warn">Low</span>'
@@ -821,8 +866,8 @@ function openReorderList() {
   var body = sheet('Reorder list', '');
   body.innerHTML =
     '<div class="toolbar-row">' +
-    '<button class="btn ghost" onclick="exportReorderExcel()">⬇ Excel</button>' +
-    '<button class="btn ghost" onclick="printReorderList()">🖨 Print</button>' +
+    '<button class="btn ghost" onclick="exportReorderExcel()">' + icon('download',15) + ' Excel</button>' +
+    '<button class="btn ghost" onclick="printReorderList()">' + icon('printer',15) + ' Print</button>' +
     '</div>' +
     '<div class="card">' + (needed.length ? needed.map(function (n) {
       return listRow(n.name, 'Have ' + n.current + ' ' + n.unit + ' · reorder level ' + n.reorderLevel, '<b>Order ' + n.suggested + '</b>');
@@ -1095,7 +1140,7 @@ function heldSalesCard() {
       var cart = h.cart || [];
       var total = cart.reduce(function (a, c) { return a + c.qty * c.price; }, 0);
       return '<div class="list-row"><div><div class="name">' + esc(h.label || 'Held sale') + '</div><div class="meta">' + cart.length + ' item(s) · ' + fmt(total) + ' · ' + new Date(h.created_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) + '</div></div>' +
-        '<div class="right" style="display:flex;gap:6px"><button class="btn small secondary" onclick="resumeHeldSale(\'' + h.id + '\')">Resume</button><button class="btn small danger" onclick="deleteHeldSale(\'' + h.id + '\')">✕</button></div></div>';
+        '<div class="right" style="display:flex;gap:6px"><button class="btn small secondary" onclick="resumeHeldSale(\'' + h.id + '\')">Resume</button><button class="btn small danger" onclick="deleteHeldSale(\'' + h.id + '\')">' + icon('close',14) + '</button></div></div>';
     }).join('') + '</div>';
 }
 
@@ -1282,7 +1327,7 @@ function showReceipt(items, payments, customer, invoiceNo) {
     '<div class="card">' + items.map(function (it) {
       return listRow(it.name + (it.patient_name ? ' (' + esc(it.patient_name) + ')' : ''), it.qty + ' × ' + fmt(it.price), fmt(it.qty * it.price));
     }).join('') + '<div class="list-row"><div class="name">Total</div><div class="name">' + fmt(total) + '</div></div></div>' +
-    '<button class="btn primary" onclick="printReceipt()">🖨 Print receipt</button>' +
+    '<button class="btn primary" onclick="printReceipt()">' + icon('printer',15) + ' Print receipt</button>' +
     '<button class="btn ghost" style="margin-top:8px" onclick="closeSheet()">Done</button>';
 }
 
@@ -1320,8 +1365,8 @@ function drawReportsShell() {
       return '<button class="btn ' + (reportRange === r ? 'primary' : 'ghost') + ' small" onclick="reportRange=\'' + r + '\';loadReport()">' + r[0].toUpperCase() + r.slice(1) + '</button>';
     }).join('') + '</div>' +
     '<div class="toolbar-row">' +
-    '<button class="btn ghost" onclick="exportReportExcel()">⬇ Excel</button>' +
-    '<button class="btn ghost" onclick="printReport()">🖨 Print</button>' +
+    '<button class="btn ghost" onclick="exportReportExcel()">' + icon('download',15) + ' Excel</button>' +
+    '<button class="btn ghost" onclick="printReport()">' + icon('printer',15) + ' Print</button>' +
     '</div>' +
     '<div id="reportBody"><div class="empty">Loading…</div></div>';
 }
@@ -1538,7 +1583,7 @@ function drawClaims() {
   var pendingTotal = claimsCache.filter(function (c) { return c.status === 'pending'; }).reduce(function (a, c) { return a + Number(c.amount || 0); }, 0);
   el.innerHTML =
     '<div class="section-title">Insurance claims' + (pendingTotal ? ' — ' + fmt(pendingTotal) + ' pending' : '') + '</div>' +
-    '<div class="toolbar-row"><button class="btn ghost" onclick="exportClaimsExcel()">⬇ Excel</button></div>' +
+    '<div class="toolbar-row"><button class="btn ghost" onclick="exportClaimsExcel()">' + icon('download',15) + ' Excel</button></div>' +
     '<div class="card">' + claimsCache.map(function (c) {
       return '<div class="list-row"><div><div class="name">' + esc(c.scheme) + '</div><div class="meta">' + new Date(c.created_at).toLocaleDateString('en-GB') + (c.claim_number ? ' · ' + esc(c.claim_number) : '') + '</div></div>' +
         '<div class="right"><div>' + fmt(c.amount) + '</div><select style="margin-top:4px" onchange="updateClaimStatus(\'' + c.id + '\',this.value)">' +

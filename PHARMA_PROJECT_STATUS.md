@@ -1,6 +1,7 @@
 # Pharma (Hodhi) — Project Status
 
-**Last updated:** September 17, 2026
+**Last updated:** September 17, 2026 (visual/UX redesign pass just completed — see item 7 in section 4)
+**Live site:** https://pharmacymngt.netlify.app
 **This file's purpose:** Upload this document into a new Claude session (or paste it in) at any time and it will fully understand where this project stands — what's built, what's been fixed, what's still pending, and exactly how this project works day to day. This is the sister project to Shule Web/ShuleTop — same owner, same workflow rules, same accounts — see section 2 for what carries over and what's specific to this project.
 
 ---
@@ -59,7 +60,7 @@ After the review, the user asked to set this up as its own project (this folder,
 | 4 | Whole app is one 1,706-line file with hand-built string concatenation and inline `onclick` handlers — fragile but not currently broken (verified escaping is correct everywhere it was checked) | 🔲 **Not started** — this is a refactor, not a bug; lower priority than the items below |
 | 5 | No automated tests, especially for the SQL functions doing money/stock math (FEFO deduction, split-payment balancing, void/return credit) | 🔲 **Not started** — highest-priority remaining item; a bad migration could silently break stock accuracy with nothing to catch it |
 | 6 | Swahili translation only covers navigation labels, not the whole app, despite the language toggle existing | 🔲 **Not started** — either finish it or remove the toggle until it's complete |
-| 7 | Visual/UX: no logo or brand identity, desktop auth screen wastes most of the screen, single flat color palette, emoji used as icons, generic system font | 🔲 **Not started** — this was flagged as the single highest-leverage fix, since it's what a client judges in the first five seconds. Needs a real design pass: logo/wordmark, considered color system built on the existing green, a proper icon set (e.g. Lucide/Phosphor), a redesigned desktop-width auth screen |
+| 7 | Visual/UX: no logo or brand identity, desktop auth screen wastes most of the screen, single flat color palette, emoji used as icons, generic system font | ✅ **Fixed** — added a real logo mark (`logoMarkHtml()` in `app.js`, a green rounded badge with a capsule glyph, used on the topbar and every auth screen); replaced every emoji icon (nav bar, print/import/export/reorder buttons, cart, warnings, close buttons) with a hand-drawn inline SVG icon set (`ICONS`/`icon()` in `app.js` — no icon-font CDN dependency, same reasoning as vendoring Supabase/xlsx); redesigned the desktop auth screen as a real two-column split (brand panel with feature highlights + form), collapsing to a simple stacked layout on mobile; added subtle shadows/depth to cards, buttons and the sheet modal instead of flat borders only. Verified in a real browser (screenshots taken) before shipping. Font is still the system stack (no new external font dependency added, deliberately, to avoid reintroducing the CDN-reliability problem from bug #1) |
 | 8 | Backups | ❓ **Unconfirmed** — need to check that Supabase point-in-time recovery is switched on for this project (a one-click Supabase dashboard setting, not a code change) |
 | 9 | eTIMS (KRA e-invoicing) integration | 🔲 **Not started** — not urgent today, but flagged as a real compliance deadline coming for VAT-registered Kenyan pharmacies; the sales record already has the fields designed to support it later without a rebuild |
 
@@ -81,9 +82,11 @@ After the review, the user asked to set this up as its own project (this folder,
 
 ## 6. What's next (in priority order)
 
-1. Confirm git push + Netlify deploy are both live and working end to end (a real URL, loading the real app).
-2. Automated tests for the SQL money/stock logic (item 5 above) — before anything else touches `schema.sql`.
-3. The visual/UX design pass (item 7) — logo, color system, desktop auth layout, proper icons. This was identified as the highest-impact fix for how the client perceives the product.
-4. Confirm Supabase backups are enabled (item 8) — quick dashboard check.
+1. ✅ Confirmed git push + Netlify deploy live end to end at https://pharmacymngt.netlify.app — verified in a real browser, no console errors, self-hosted libraries loading, real Supabase connection working.
+2. ✅ Visual/UX design pass (item 7) — done and shipped, see section 4.
+3. **Automated tests for the SQL money/stock logic (item 5)** — next up, and the highest-priority remaining item. Before anything else touches `schema.sql`.
+4. Confirm Supabase backups are enabled (item 8) — quick dashboard check, not yet done.
 5. Decide on Swahili (finish it or remove the toggle) and on the eTIMS integration timeline.
 6. Optional: refactor the single-file `app.js` architecture if the codebase keeps growing (item 4) — not urgent today.
+
+**Reminder for whoever picks this up:** after any further code change, the delivery workflow is: edit in the Claude sandbox → verify (`node --check`, real headless-browser render, screenshot) → `SendUserFile` → `device_commit_files` into `C:\Users\user\Downloads\Pharma` → tell the user the exact `git add`/`commit`/`push` commands to run themselves (Claude never runs git for them). Netlify auto-deploys on every push to `main` — no separate deploy step needed once pushed.
