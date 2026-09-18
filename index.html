@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Hodhi — Pharmacy Stock &amp; Sales</title>
+<title>Pharma — Pharmacy Stock &amp; Sales</title>
 <meta name="theme-color" content="#0F5132">
 <link rel="manifest" href="manifest.json">
 <link rel="stylesheet" href="style.css">
@@ -17,7 +17,7 @@
 
 <!-- Self-hosted instead of loaded from a CDN: a CDN outage, a blocked domain
      on a customer's Wi-Fi/firewall, or jsDelivr being slow left the whole
-     app stuck on "Loading Hodhi…" forever with no error message. Vendoring
+     app stuck on "Loading Pharma…" forever with no error message. Vendoring
      these two files removes that single point of failure entirely — they
      now load exactly like every other file in this folder. -->
 <script src="vendor-supabase.js"></script>
@@ -31,12 +31,12 @@
     });
   }
   // If app.js itself fails to load/execute for any reason, don't leave the
-  // user staring at "Loading Hodhi…" forever with no way to recover.
+  // user staring at "Loading Pharma…" forever with no way to recover.
   window.addEventListener('error', function (e) {
     if (!document.getElementById('app') || document.getElementById('app').textContent.indexOf('Loading') === -1) return;
     document.getElementById('app').innerHTML =
       '<div class="auth-wrap"><div class="auth-card"><div class="card empty">' +
-      '⚠️ Hodhi could not start. Please reload the page — if this keeps happening, check your internet connection.' +
+      '⚠️ Pharma could not start. Please reload the page — if this keeps happening, check your internet connection.' +
       '<div style="margin-top:12px"><button class="btn primary" onclick="location.reload()">Reload</button></div>' +
       '</div></div></div>';
   });

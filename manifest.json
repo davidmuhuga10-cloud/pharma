@@ -1,6 +1,6 @@
 {
-  "name": "Hodhi — Pharmacy Stock & Sales",
-  "short_name": "Hodhi",
+  "name": "Pharma — Pharmacy Stock & Sales",
+  "short_name": "Pharma",
   "description": "Know your stock. Never run dry, never run expired.",
   "id": "/",
   "start_url": "./index.html",

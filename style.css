@@ -20,6 +20,20 @@
   --shadow-lg: 0 16px 40px rgba(15,81,50,0.16);
   --sidebar-w: 264px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+
+  /* Dashboard data colors — validated for colorblind-safety with the
+     dataviz skill's palette checker (lightness band, chroma floor, CVD
+     separation, contrast). Distinct from the brand chrome colors above
+     (--green/--amber/--red), which stay reserved for nav/buttons/badges
+     everywhere else in the app and never carry chart/data meaning. */
+  --d-sales: #008300;       --d-sales-light: #E3F3E3;
+  --d-blue: #4D7AB3;        /* Top sellers bars */
+  --d-violet: #6F5FA0;      --d-violet-light: #ECE8F7;  /* Rush hours bars */
+  --d-orange: #eb6834;      --d-orange-light: #FDEBE3;  /* Stock value */
+  --d-magenta: #e87ba4;     --d-magenta-light: #FCEAF1; /* Supplier debt */
+  --d-critical: #d03b3b;    --d-serious: #ec835a;    --d-warning: #fab219;    --d-good: #0ca30c;
+  --d-ctx-warm: #BE8F87;    /* de-emphasis "cost of goods" segment, closer to red per feedback */
+  --d-gridline: #E7E2DC;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; background: var(--paper); color: var(--ink); }
@@ -32,7 +46,7 @@ input, select, textarea { font: inherit; }
 /* A small reusable badge: the "H" mark on a rounded green square, matching
    the app icon (icons/icon-512.png). Used on the topbar, the sidebar, the
    loading screen and every auth screen so the brand has one consistent
-   mark instead of plain unstyled "Hodhi" text. */
+   mark instead of plain unstyled "Pharma" text. */
 .brand-badge {
   flex-shrink: 0; display: flex; align-items: center; justify-content: center;
   background: linear-gradient(155deg, var(--green), var(--green-dark));
@@ -308,6 +322,70 @@ h2 { font-size: 16px; }
   .auth-form-col { flex: 1; }
   .auth-card { max-width: 400px; }
 }
+
+/* ---------------------------------------------------------------------- */
+/* DASHBOARD — redesigned dashboard: real date-range filter, an axis'd    */
+/* sales trend + rush-hours chart, capped/click-through lists, and fixed  */
+/* card sizes so a brand-new pharmacy with zero data sees clean           */
+/* placeholders instead of a layout that jumps once real data arrives.    */
+/* ---------------------------------------------------------------------- */
+.dash-filter-row {
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+  border-bottom: 1px solid var(--line); margin-bottom: 16px;
+}
+.dash-tabs { display: flex; gap: 22px; align-items: baseline; flex-wrap: wrap; }
+.dash-tab {
+  background: none; border: none; padding: 0 2px 10px 2px; font-size: 14px; font-family: inherit;
+  color: var(--ink-soft); font-weight: 600; border-bottom: 2.5px solid transparent; cursor: pointer;
+}
+.dash-tab.active { color: var(--ink); font-weight: 800; border-bottom-color: var(--green); }
+.dash-period-label { font-size: 12px; color: var(--ink-soft); padding-bottom: 10px; }
+
+.dash-row { display: flex; flex-direction: column; gap: 16px; align-items: stretch; margin-bottom: 16px; }
+@media (min-width: 860px) { .dash-row { flex-direction: row; } }
+.dash-col { flex: 1; min-width: 0; }
+
+.dash-graph-card { min-height: 300px; display: flex; flex-direction: column; }
+.dash-graph-head { text-align: center; }
+.dash-graph-headline { font-size: 28px; font-weight: 800; color: var(--ink); margin-top: 4px; }
+.dash-graph-chip-row { margin-top: 8px; display: flex; justify-content: center; }
+.dash-chip { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; }
+.dash-chip.up { color: var(--d-sales); background: var(--d-sales-light); }
+.dash-chip.down { color: var(--d-critical); background: #FBEAEA; }
+.dash-chart-wrap { margin-top: 14px; }
+.dash-chart-wrap svg { display: block; }
+.dash-axis-label-row { display: flex; margin-top: 6px; }
+.dash-axis-label { flex: 1; text-align: center; font-size: 10.5px; color: var(--ink-soft); font-weight: 600; }
+
+.dash-pill-row { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
+@media (min-width: 860px) { .dash-pill-row { flex-direction: row; } }
+.dash-pill { flex: 1; border-radius: var(--radius); padding: 13px 16px; }
+.dash-pill .dot { width: 8px; height: 8px; border-radius: 3px; margin-bottom: 8px; }
+.dash-pill .label { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; }
+.dash-pill .value { font-size: 18px; font-weight: 800; color: var(--ink); margin-top: 3px; }
+.dash-pill .sub { font-size: 10.5px; font-weight: 700; color: var(--ink-soft); margin-top: 3px; }
+
+.dash-list-card { min-height: 268px; }
+.dash-list-title { text-align: center; }
+.dash-bar-row { display: flex; align-items: center; gap: 10px; margin-top: 11px; }
+.dash-bar-row.placeholder { opacity: 0.4; }
+.dash-bar-label { width: 150px; min-width: 0; font-size: 12px; color: var(--ink); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dash-bar-meta { font-size: 10px; color: var(--ink-soft); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dash-bar-track { flex: 1; background: var(--line); border-radius: 5px; height: 7px; overflow: hidden; }
+.dash-bar-fill { height: 100%; border-radius: 5px; }
+.dash-bar-value { width: 58px; text-align: right; font-size: 11px; font-weight: 700; color: var(--ink); flex-shrink: 0; }
+.dash-refetching { opacity: .45; transition: opacity .15s; pointer-events: none; }
+.dash-bar-status { width: 52px; text-align: right; font-size: 10px; font-weight: 700; flex-shrink: 0; }
+.dash-view-all { display: block; width: 100%; margin-top: 12px; padding: 8px; background: none; border: none; border-top: 1px dashed var(--line); font-size: 12px; font-weight: 700; color: var(--green); text-align: center; cursor: pointer; font-family: inherit; }
+
+.dash-health-legend { display: flex; gap: 22px; margin-top: 10px; flex-wrap: wrap; }
+.dash-health-legend .sw { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink); }
+.dash-health-legend .dot { width: 8px; height: 8px; border-radius: 2px; }
+
+.dash-profit-legend { display: flex; gap: 18px; margin-top: 10px; align-items: baseline; flex-wrap: wrap; }
+.dash-profit-legend .sw { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink); }
+.dash-profit-legend .dot { width: 8px; height: 8px; border-radius: 2px; }
+.dash-profit-margin { font-size: 11px; color: var(--ink-soft); font-weight: 700; }
 
 /* ---------------------------------------------------------------------- */
 /* PRINT — reports and receipts print on their own, with a business       */

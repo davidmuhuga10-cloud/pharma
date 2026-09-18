@@ -1,4 +1,4 @@
-/* Hodhi — Supabase connection details.
+/* Pharma — Supabase connection details.
    The publishable/anon key below is DESIGNED to be public - it ships inside
    every app that uses Supabase this way. Row Level Security (set up in
    schema.sql) is what actually protects the data, not secrecy of this key.

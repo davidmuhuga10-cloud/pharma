@@ -1,5 +1,5 @@
 -- ============================================================================
--- HODHI — Pharmacy stock & sales system (v2)
+-- PHARMA — Pharmacy stock & sales system (v2, renamed from "Hodhi")
 -- Multi-tenant schema: every pharmacy's data is isolated by pharmacy_id +
 -- Row Level Security, same pattern used in Kodi and Shule.
 -- Run this once, in order, against a fresh Supabase project.
@@ -1424,7 +1424,7 @@ alter table sms_platform_config enable row level security;
 
 alter table pharmacies add column if not exists next_lpo_no integer not null default 1;  -- atomically incremented per LPO -> LPO-000001, ...
 
-alter table suppliers add column if not exists opening_balance numeric(10,2) not null default 0;       -- debt owed to this supplier before Hodhi started tracking it
+alter table suppliers add column if not exists opening_balance numeric(10,2) not null default 0;       -- debt owed to this supplier before Pharma started tracking it
 alter table suppliers add column if not exists opening_balance_date date;                                -- as-of date for the opening balance, shown as the ledger's first line
 
 -- One row per delivery. Creating an LPO also creates the batches (see
@@ -1641,3 +1641,148 @@ $$;
 
 grant execute on function record_supplier_lpo(uuid, uuid, jsonb, date, text) to authenticated;
 grant execute on function record_supplier_payment(uuid, uuid, numeric, text, text, date, text) to authenticated;
+
+-- ============================================================================
+-- 13. DASHBOARD DATA (added this session — PHARMA_PROJECT_STATUS.md item 22)
+-- — one round-trip RPC backing the redesigned dashboard's Today/Week/Month/
+-- Year filter: the sales trend chart, the rush-hour chart (sales grouped
+-- into 3-hour-of-day buckets, across every day in the selected range — this
+-- is what lets a busy pharmacy see when its rush hours actually are), the
+-- top-sellers leaderboard (top 50 returned so the dashboard tile can show 4
+-- and the "view all" sheet can show the rest with no second round-trip),
+-- and profit (sales minus cost of goods sold, where COGS is computed from
+-- the exact batch each sale_item drew from via sale_items.batch_id ->
+-- batches.cost_price — the true cost consumed, not a guess). Everything is
+-- computed for the selected range AND the equivalent previous period, so
+-- the app can show a real "+N% vs last week"-style delta instead of a
+-- fabricated one. Stock value / stock health / expiring-soon are NOT part
+-- of this function — those are point-in-time snapshots, not date-range
+-- dependent, and stay on the existing v_drug_stock / v_out_of_stock /
+-- v_low_stock / v_expiring_batches views app.js already queries directly.
+-- ============================================================================
+
+create or replace function dashboard_data(p_pharmacy_id uuid, p_range text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_start timestamptz;
+  v_end timestamptz := now();
+  v_prev_start timestamptz;
+  v_prev_end timestamptz;
+  v_bucket text;
+  v_sales_total numeric;
+  v_sales_prev_total numeric;
+  v_cost_total numeric;
+  v_cost_prev_total numeric;
+  v_profit_total numeric;
+  v_profit_prev_total numeric;
+  v_trend jsonb;
+  v_rush jsonb;
+  v_top_sellers jsonb;
+begin
+  if p_pharmacy_id is distinct from my_pharmacy_id() then
+    raise exception 'Not authorized for this pharmacy';
+  end if;
+  if p_range not in ('today', 'week', 'month', 'year') then
+    raise exception 'Invalid range — expected today, week, month or year';
+  end if;
+
+  case p_range
+    when 'today' then
+      v_start := date_trunc('day', now());
+      v_prev_start := v_start - interval '1 day';
+      v_prev_end := v_start;
+      v_bucket := 'hour';
+    when 'week' then
+      -- Sunday-start week, matching the app's existing client-side reports logic.
+      v_start := date_trunc('day', now()) - (extract(dow from now())::int * interval '1 day');
+      v_prev_start := v_start - interval '7 days';
+      v_prev_end := v_start;
+      v_bucket := 'day';
+    when 'month' then
+      v_start := date_trunc('month', now());
+      v_prev_start := v_start - interval '1 month';
+      v_prev_end := v_start;
+      v_bucket := 'week';
+    when 'year' then
+      v_start := date_trunc('year', now());
+      v_prev_start := v_start - interval '1 year';
+      v_prev_end := v_start;
+      v_bucket := 'month';
+  end case;
+
+  select coalesce(sum(total_amount), 0) into v_sales_total
+    from sales
+    where pharmacy_id = p_pharmacy_id and voided = false and sold_at >= v_start and sold_at < v_end;
+
+  select coalesce(sum(total_amount), 0) into v_sales_prev_total
+    from sales
+    where pharmacy_id = p_pharmacy_id and voided = false and sold_at >= v_prev_start and sold_at < v_prev_end;
+
+  select coalesce(sum(si.quantity * coalesce(b.cost_price, 0)), 0) into v_cost_total
+    from sale_items si
+    join sales sa on sa.id = si.sale_id
+    join batches b on b.id = si.batch_id
+    where si.pharmacy_id = p_pharmacy_id and sa.voided = false and sa.sold_at >= v_start and sa.sold_at < v_end;
+
+  select coalesce(sum(si.quantity * coalesce(b.cost_price, 0)), 0) into v_cost_prev_total
+    from sale_items si
+    join sales sa on sa.id = si.sale_id
+    join batches b on b.id = si.batch_id
+    where si.pharmacy_id = p_pharmacy_id and sa.voided = false and sa.sold_at >= v_prev_start and sa.sold_at < v_prev_end;
+
+  v_profit_total := v_sales_total - v_cost_total;
+  v_profit_prev_total := v_sales_prev_total - v_cost_prev_total;
+
+  select coalesce(jsonb_agg(jsonb_build_object('bucket_start', bucket_start, 'total', total) order by bucket_start), '[]'::jsonb)
+    into v_trend
+  from (
+    select date_trunc(v_bucket, sold_at) as bucket_start, sum(total_amount) as total
+    from sales
+    where pharmacy_id = p_pharmacy_id and voided = false and sold_at >= v_start and sold_at < v_end
+    group by 1
+  ) t;
+
+  select coalesce(jsonb_agg(jsonb_build_object('idx', idx, 'total', total) order by idx), '[]'::jsonb)
+    into v_rush
+  from (
+    select floor(extract(hour from sold_at) / 3)::int as idx, sum(total_amount) as total
+    from sales
+    where pharmacy_id = p_pharmacy_id and voided = false and sold_at >= v_start and sold_at < v_end
+    group by 1
+  ) r;
+
+  select coalesce(jsonb_agg(jsonb_build_object('drug_id', drug_id, 'name', name, 'units', units, 'revenue', revenue) order by units desc), '[]'::jsonb)
+    into v_top_sellers
+  from (
+    select si.drug_id, d.name, sum(si.quantity) as units, sum(si.line_total) as revenue
+    from sale_items si
+    join sales sa on sa.id = si.sale_id
+    join drugs d on d.id = si.drug_id
+    where si.pharmacy_id = p_pharmacy_id and sa.voided = false and sa.sold_at >= v_start and sa.sold_at < v_end
+    group by si.drug_id, d.name
+    order by units desc
+    limit 50
+  ) ts;
+
+  return jsonb_build_object(
+    'range', p_range,
+    'start', v_start,
+    'end', v_end,
+    'bucket', v_bucket,
+    'sales_total', v_sales_total,
+    'sales_prev_total', v_sales_prev_total,
+    'cost_total', v_cost_total,
+    'profit_total', v_profit_total,
+    'profit_prev_total', v_profit_prev_total,
+    'trend', v_trend,
+    'rush', v_rush,
+    'top_sellers', v_top_sellers
+  );
+end;
+$$;
+
+grant execute on function dashboard_data(uuid, text) to authenticated;
