@@ -96,6 +96,32 @@ create index on drugs (pharmacy_id);
 create index on drugs (pharmacy_id, active);
 create index drugs_category_id_idx on drugs (category_id);
 
+-- Shared, read-only reference catalog (not tenant-scoped — no pharmacy_id)
+-- of the most commonly sold items in a Kenyan chemist/pharmacy, grouped by
+-- the same 16 categories bootstrap_pharmacy() seeds for every new signup.
+-- Powers the "Sync common drugs" fast-onboarding flow (see
+-- sync_master_drugs below): a pharmacy browses/searches this list and picks
+-- the ones it actually stocks, entering its own quantity/price/reorder
+-- level/expiry per item — this table only supplies the name/form/unit/
+-- category/prescription-status starting point, never a price or quantity.
+-- Content sourced from a real pharmacy's stock-take sheet; form/unit are a
+-- best-effort default a pharmacy can freely override once the drug exists
+-- in their own `drugs` table. Read-only for tenants by design: RLS is
+-- enabled with a SELECT-only policy below, so only a migration (running as
+-- the table owner) can add to or change it.
+create table master_drugs (
+  id              uuid primary key default gen_random_uuid(),
+  category_name   text not null,     -- matches drug_categories.name for the 16 seeded categories
+  name            text not null,
+  form            drug_form not null default 'other',
+  unit            text not null default 'unit',
+  is_prescription boolean not null default false,
+  sort_order      integer not null default 0,   -- display order within its category
+  created_at      timestamptz not null default now()
+);
+
+create index master_drugs_category_idx on master_drugs (category_name, sort_order);
+
 -- Suppliers a pharmacy restocks from — used for the supplier autocomplete on
 -- restock and the "reorder list" export/print.
 create table suppliers (
@@ -123,6 +149,7 @@ create table batches (
   sell_price          numeric(10,2) not null,
   discount_percent    numeric(5,2) not null default 0 check (discount_percent >= 0 and discount_percent <= 100),
   expiry_date         date not null,
+  expiry_unknown      boolean not null default false,  -- true = expiry_date is a placeholder (see sync_master_drugs), not a real date; display "unknown", never the placeholder date itself
   received_at         date not null default current_date,
   created_by          uuid references profiles(id),
   created_at          timestamptz not null default now()
@@ -503,6 +530,9 @@ begin
   if p_pharmacy_id is distinct from my_pharmacy_id() then
     raise exception 'Not authorized for this pharmacy';
   end if;
+  if my_role() not in ('owner', 'pharmacist') then
+    raise exception 'Only the owner or a pharmacist can record a return';
+  end if;
 
   select * into v_item from sale_items where id = p_sale_item_id and pharmacy_id = p_pharmacy_id;
   if v_item is null then
@@ -545,6 +575,9 @@ begin
   if p_pharmacy_id is distinct from my_pharmacy_id() then
     raise exception 'Not authorized for this pharmacy';
   end if;
+  if my_role() not in ('owner', 'pharmacist') then
+    raise exception 'Only the owner or a pharmacist can void a sale';
+  end if;
 
   select voided into v_already_voided from sales where id = p_sale_id and pharmacy_id = p_pharmacy_id;
   if v_already_voided is null then
@@ -573,6 +606,17 @@ end;
 $$;
 
 -- Restock: adds a new batch and logs the movement in one call.
+-- A single function, not an overload: p_expiry_unknown was briefly added as
+-- a *second*, separate overload of record_restock instead of extending this
+-- one, which made every normal call from the app ambiguous (Supabase/
+-- PostgREST calls RPCs with named parameters, and Postgres could not choose
+-- between "the 9-arg version, matched exactly" and "the 10-arg version,
+-- with p_expiry_unknown filled from its default" — it raised "function
+-- record_restock(...) is not unique" and refused the call, almost
+-- certainly the real cause of the RAFIKI PHARMACY stalled import earlier
+-- this session). That overload was also missing the role check below
+-- entirely. Both are fixed by keeping exactly one function with a
+-- defaulted last arg.
 create or replace function record_restock(
   p_pharmacy_id uuid,
   p_drug_id uuid,
@@ -582,7 +626,8 @@ create or replace function record_restock(
   p_expiry_date date,
   p_batch_no text default null,
   p_supplier text default null,
-  p_supplier_id uuid default null
+  p_supplier_id uuid default null,
+  p_expiry_unknown boolean default false
 )
 returns uuid
 language plpgsql
@@ -591,15 +636,28 @@ set search_path = public
 as $$
 declare
   v_batch_id uuid;
+  v_expiry date;
 begin
   if p_pharmacy_id is distinct from my_pharmacy_id() then
     raise exception 'Not authorized for this pharmacy';
   end if;
+  if my_role() not in ('owner', 'pharmacist') then
+    raise exception 'Only the owner or a pharmacist can restock';
+  end if;
+
+  if p_expiry_unknown then
+    v_expiry := (current_date + interval '3 years')::date;
+  else
+    if p_expiry_date is null then
+      raise exception 'Expiry date is required unless expiry is marked unknown';
+    end if;
+    v_expiry := p_expiry_date;
+  end if;
 
   insert into batches (pharmacy_id, drug_id, batch_no, supplier, supplier_id, quantity_received,
-                        quantity_remaining, cost_price, sell_price, expiry_date, created_by)
+                        quantity_remaining, cost_price, sell_price, expiry_date, expiry_unknown, created_by)
   values (p_pharmacy_id, p_drug_id, p_batch_no, p_supplier, p_supplier_id, p_quantity,
-          p_quantity, p_cost_price, p_sell_price, p_expiry_date, auth.uid())
+          p_quantity, p_cost_price, p_sell_price, v_expiry, p_expiry_unknown, auth.uid())
   returning id into v_batch_id;
 
   insert into stock_adjustments (pharmacy_id, drug_id, batch_id, type, quantity_delta, created_by)
@@ -608,6 +666,122 @@ begin
   update drugs set default_price = p_sell_price where id = p_drug_id;
 
   return v_batch_id;
+end;
+$$;
+
+-- Fast onboarding: sync a batch of drugs picked from the shared master
+-- catalog (see `master_drugs` above) in one call, instead of adding and
+-- restocking each one by hand. Same authorization tier as record_restock
+-- (owner/pharmacist), and functionally *is* a restock per item — it just
+-- also creates the `drugs` row first when the pharmacy doesn't already
+-- have one by that name.
+--
+-- p_items: jsonb array of
+--   { master_drug_id, quantity, sell_price, reorder_level?, cost_price?, expiry_date? }
+-- reorder_level defaults to the pharmacy's low_stock_default; expiry_date is
+-- optional — when omitted the batch gets a placeholder date 3 years out
+-- with expiry_unknown = true, so it never appears in "expiring soon" and
+-- never wins a FEFO draw against a batch with a real, nearer expiry. The
+-- app displays that as "no expiry recorded", never the placeholder date.
+--
+-- If the pharmacy already has a drug with this exact name (e.g. added by
+-- hand, or synced before), reuses that drug and just adds a new batch —
+-- never overwrites its category/form/unit/reorder level, only refreshes
+-- default_price the same way any restock does.
+create or replace function sync_master_drugs(
+  p_pharmacy_id uuid,
+  p_items jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_item jsonb;
+  v_master record;
+  v_drug_id uuid;
+  v_category_id uuid;
+  v_batch_id uuid;
+  v_quantity integer;
+  v_sell_price numeric(10,2);
+  v_cost_price numeric(10,2);
+  v_reorder_level integer;
+  v_expiry_date date;
+  v_expiry_unknown boolean;
+  v_default_reorder integer;
+  v_results jsonb := '[]'::jsonb;
+begin
+  if p_pharmacy_id is distinct from my_pharmacy_id() then
+    raise exception 'Not authorized for this pharmacy';
+  end if;
+  if my_role() not in ('owner', 'pharmacist') then
+    raise exception 'Only the owner or a pharmacist can sync drugs';
+  end if;
+  if p_items is null or jsonb_array_length(p_items) = 0 then
+    raise exception 'Select at least one drug to sync';
+  end if;
+
+  select low_stock_default into v_default_reorder from pharmacies where id = p_pharmacy_id;
+
+  for v_item in select * from jsonb_array_elements(p_items)
+  loop
+    select * into v_master from master_drugs where id = (v_item->>'master_drug_id')::uuid;
+    if v_master is null then
+      raise exception 'Unknown master drug: %', v_item->>'master_drug_id';
+    end if;
+
+    v_quantity := (v_item->>'quantity')::integer;
+    if v_quantity is null or v_quantity <= 0 then
+      raise exception 'Enter a valid quantity for %', v_master.name;
+    end if;
+
+    v_sell_price := nullif(v_item->>'sell_price', '')::numeric;
+    if v_sell_price is null or v_sell_price <= 0 then
+      raise exception 'Enter a selling price for %', v_master.name;
+    end if;
+
+    v_cost_price := nullif(v_item->>'cost_price', '')::numeric;
+    v_reorder_level := coalesce(nullif(v_item->>'reorder_level', '')::integer, v_default_reorder, 5);
+
+    if coalesce(v_item->>'expiry_date', '') <> '' then
+      v_expiry_date := (v_item->>'expiry_date')::date;
+      v_expiry_unknown := false;
+    else
+      v_expiry_date := (current_date + interval '3 years')::date;
+      v_expiry_unknown := true;
+    end if;
+
+    select id into v_drug_id from drugs where pharmacy_id = p_pharmacy_id and name = v_master.name;
+
+    if v_drug_id is null then
+      select id into v_category_id from drug_categories
+      where pharmacy_id = p_pharmacy_id and name = v_master.category_name;
+      if v_category_id is null then
+        insert into drug_categories (pharmacy_id, name) values (p_pharmacy_id, v_master.category_name)
+        returning id into v_category_id;
+      end if;
+
+      insert into drugs (pharmacy_id, category_id, name, form, unit, reorder_level, default_price, is_prescription)
+      values (p_pharmacy_id, v_category_id, v_master.name, v_master.form, v_master.unit, v_reorder_level, v_sell_price, v_master.is_prescription)
+      returning id into v_drug_id;
+    else
+      update drugs set default_price = v_sell_price where id = v_drug_id;
+    end if;
+
+    insert into batches (pharmacy_id, drug_id, quantity_received, quantity_remaining, cost_price, sell_price,
+                          expiry_date, expiry_unknown, received_at, created_by)
+    values (p_pharmacy_id, v_drug_id, v_quantity, v_quantity, v_cost_price, v_sell_price,
+            v_expiry_date, v_expiry_unknown, current_date, auth.uid())
+    returning id into v_batch_id;
+
+    insert into stock_adjustments (pharmacy_id, drug_id, batch_id, type, quantity_delta, reason, created_by)
+    values (p_pharmacy_id, v_drug_id, v_batch_id, 'restock', v_quantity, 'Synced from master catalog', auth.uid());
+
+    v_results := v_results || jsonb_build_object('master_drug_id', v_master.id, 'drug_id', v_drug_id, 'batch_id', v_batch_id);
+  end loop;
+
+  return v_results;
 end;
 $$;
 
@@ -629,6 +803,9 @@ declare
 begin
   if p_pharmacy_id is distinct from my_pharmacy_id() then
     raise exception 'Not authorized for this pharmacy';
+  end if;
+  if my_role() not in ('owner', 'pharmacist') then
+    raise exception 'Only the owner or a pharmacist can correct stock';
   end if;
   if p_new_quantity < 0 then
     raise exception 'Quantity cannot be negative';
@@ -668,6 +845,9 @@ declare
 begin
   if p_pharmacy_id is distinct from my_pharmacy_id() then
     raise exception 'Not authorized for this pharmacy';
+  end if;
+  if my_role() not in ('owner', 'pharmacist') then
+    raise exception 'Only the owner or a pharmacist can write off stock';
   end if;
   if p_type not in ('write_off', 'expired_disposal') then
     raise exception 'Invalid write-off type';
@@ -833,6 +1013,12 @@ alter table returns enable row level security;
 alter table insurance_claims enable row level security;
 alter table staff_invites enable row level security;
 alter table stock_adjustments enable row level security;
+-- Enabled with only a SELECT policy (no insert/update/delete policy at
+-- all), same pattern as password_reset_attempts: every authenticated user
+-- can read the shared catalog, but no tenant can write to it however the
+-- blanket grants below are phrased — only a migration (running as the
+-- table owner, which bypasses RLS) can add to or change it.
+alter table master_drugs enable row level security;
 
 create policy "own pharmacy read" on pharmacies for select using (id = my_pharmacy_id());
 create policy "owner updates own pharmacy" on pharmacies for update using (id = my_pharmacy_id() and my_role() = 'owner');
@@ -858,6 +1044,7 @@ create policy "tenant all returns" on returns for all using (pharmacy_id = my_ph
 create policy "tenant all insurance_claims" on insurance_claims for all using (pharmacy_id = my_pharmacy_id());
 create policy "owner manage invites" on staff_invites for all using (pharmacy_id = my_pharmacy_id() and my_role() = 'owner');
 create policy "tenant read stock_adjustments" on stock_adjustments for all using (pharmacy_id = my_pharmacy_id());
+create policy "read master_drugs" on master_drugs for select using (true);
 
 -- Every view above is created with security_invoker = true, so it enforces
 -- RLS as the querying user rather than as the view's (privileged) owner.
@@ -878,3 +1065,302 @@ grant execute on all functions in schema public to authenticated;
 alter default privileges in schema public grant select, insert, update, delete on tables to authenticated;
 alter default privileges in schema public grant select on sequences to authenticated;
 alter default privileges in schema public grant execute on functions to authenticated;
+
+-- ----------------------------------------------------------------------------
+-- 10. SEED DATA — shared master drug catalog (see master_drugs above)
+-- ----------------------------------------------------------------------------
+-- 287 items across the 16 categories bootstrap_pharmacy() seeds for every
+-- pharmacy, curated from a real Kenyan chemist's stock-take sheet (the same
+-- one referenced throughout this project's docs). form/unit are a
+-- best-effort default from the item's name/category, not a clinical
+-- classification — a pharmacy can freely edit either once the drug lands in
+-- their own drugs table via sync_master_drugs.
+
+insert into master_drugs (category_name, name, form, unit, is_prescription, sort_order) values
+  ('Analgesics/Antipyretics', 'Brufen 60mls', 'syrup', 'bottle', false, 0),
+  ('Analgesics/Antipyretics', 'Brufen 100mls', 'syrup', 'bottle', false, 1),
+  ('Analgesics/Antipyretics', 'PCM 60mls', 'syrup', 'bottle', false, 2),
+  ('Analgesics/Antipyretics', 'Curamol 100mls', 'syrup', 'bottle', false, 3),
+  ('Analgesics/Antipyretics', 'Curamol 60mls', 'syrup', 'bottle', false, 4),
+  ('Analgesics/Antipyretics', 'Calpol 60mls', 'syrup', 'bottle', false, 5),
+  ('Analgesics/Antipyretics', 'Calpol 100mls', 'syrup', 'bottle', false, 6),
+  ('Analgesics/Antipyretics', 'Brustan 100mls', 'syrup', 'bottle', false, 7),
+  ('Analgesics/Antipyretics', 'Mara moja', 'tablet', 'tablet', false, 8),
+  ('Analgesics/Antipyretics', 'Kaluma strong tab', 'tablet', 'tablet', false, 9),
+  ('Analgesics/Antipyretics', 'Action pair tabs', 'tablet', 'tablet', false, 10),
+  ('Analgesics/Antipyretics', 'Hedex', 'tablet', 'tablet', false, 11),
+  ('Analgesics/Antipyretics', 'Panadol extra', 'tablet', 'tablet', false, 12),
+  ('Analgesics/Antipyretics', 'Meloxicam 7.5mg', 'tablet', 'tablet', false, 13),
+  ('Analgesics/Antipyretics', 'Relief MR', 'tablet', 'tablet', false, 14),
+  ('Analgesics/Antipyretics', 'PCM 500mg', 'tablet', 'tablet', false, 15),
+  ('Analgesics/Antipyretics', 'tamepyn', 'tablet', 'tablet', false, 16),
+  ('Analgesics/Antipyretics', 'Diclofenac 100mg', 'tablet', 'tablet', false, 17),
+  ('Analgesics/Antipyretics', 'Piroxicam 20mg', 'tablet', 'tablet', false, 18),
+  ('Analgesics/Antipyretics', 'Aceclofenac', 'tablet', 'tablet', false, 19),
+  ('Analgesics/Antipyretics', 'Brufen 200mg', 'tablet', 'tablet', false, 20),
+  ('Analgesics/Antipyretics', 'Brufen 400mg', 'tablet', 'tablet', false, 21),
+  ('Analgesics/Antipyretics', 'Zuru Mr', 'tablet', 'tablet', false, 22),
+  ('Analgesics/Antipyretics', 'Buscopan', 'tablet', 'tablet', false, 23),
+  ('Analgesics/Antipyretics', 'Myospaz', 'tablet', 'tablet', false, 24),
+  ('Analgesics/Antipyretics', 'Acetal MR', 'tablet', 'tablet', false, 25),
+  ('Analgesics/Antipyretics', 'Tramadol caps', 'capsule', 'tablet', true, 26),
+  ('Analgesics/Antipyretics', 'Celecoxib 200mg', 'tablet', 'tablet', false, 27),
+  ('Analgesics/Antipyretics', 'Diclofenac suppositories', 'suppository', 'unit', false, 28),
+  ('Analgesics/Antipyretics', 'Surepyn', 'tablet', 'tablet', false, 29),
+  ('Analgesics/Antipyretics', 'Mefenamic acid 250mg', 'tablet', 'tablet', false, 30),
+  ('Analgesics/Antipyretics', 'Mefenamin acid 500mg', 'tablet', 'tablet', false, 31),
+  ('Analgesics/Antipyretics', 'Lobak', 'tablet', 'tablet', false, 32),
+  ('Analgesics/Antipyretics', 'Indomethacin 25mg caps', 'capsule', 'tablet', false, 33),
+  ('Analgesics/Antipyretics', 'Subsyde CR caps', 'capsule', 'tablet', false, 34),
+  ('Analgesics/Antipyretics', 'A.P.C tabs', 'tablet', 'tablet', false, 35),
+  ('Antibiotics/Antifungals/Amoebicides', 'Flucloxacillin 100mls', 'syrup', 'bottle', false, 0),
+  ('Antibiotics/Antifungals/Amoebicides', 'Azithromycin 15mls', 'syrup', 'bottle', false, 1),
+  ('Antibiotics/Antifungals/Amoebicides', 'Peerdine 100mls', 'syrup', 'bottle', false, 2),
+  ('Antibiotics/Antifungals/Amoebicides', 'Posdine 100mls', 'syrup', 'bottle', false, 3),
+  ('Antibiotics/Antifungals/Amoebicides', 'Eflaron plus 100mls', 'syrup', 'bottle', false, 4),
+  ('Antibiotics/Antifungals/Amoebicides', 'Entamaxin 100mls', 'syrup', 'bottle', false, 5),
+  ('Antibiotics/Antifungals/Amoebicides', 'Metronidazole 60mls', 'syrup', 'bottle', false, 6),
+  ('Antibiotics/Antifungals/Amoebicides', 'Metronidazole 100mls', 'syrup', 'bottle', false, 7),
+  ('Antibiotics/Antifungals/Amoebicides', 'Metronidazole IV', 'other', 'unit', false, 8),
+  ('Antibiotics/Antifungals/Amoebicides', 'Zefcolin 100mls', 'syrup', 'bottle', false, 9),
+  ('Antibiotics/Antifungals/Amoebicides', 'Cefixime 60mls', 'syrup', 'bottle', false, 10),
+  ('Antibiotics/Antifungals/Amoebicides', 'Amoxiclav 228 susp', 'syrup', 'bottle', false, 11),
+  ('Antibiotics/Antifungals/Amoebicides', 'Cefuroxime 50mls susp', 'syrup', 'bottle', false, 12),
+  ('Antibiotics/Antifungals/Amoebicides', 'Cephalexin 60mls', 'syrup', 'bottle', false, 13),
+  ('Antibiotics/Antifungals/Amoebicides', 'Neonatal ampiclox 15mls', 'syrup', 'bottle', false, 14),
+  ('Antibiotics/Antifungals/Amoebicides', 'Amoxicillin 60mls susp', 'syrup', 'bottle', false, 15),
+  ('Antibiotics/Antifungals/Amoebicides', 'Septrin (co-trimoxazole 60mls', 'syrup', 'bottle', false, 16),
+  ('Antibiotics/Antifungals/Amoebicides', 'Septrin (co-trimoxazole) 100mls', 'syrup', 'bottle', false, 17),
+  ('Antibiotics/Antifungals/Amoebicides', 'Bulkot mouth paint', 'other', 'unit', false, 18),
+  ('Antibiotics/Antifungals/Amoebicides', 'Nystatin 12mls', 'syrup', 'bottle', false, 19),
+  ('Antibiotics/Antifungals/Amoebicides', 'Amoxicillin 100mls susp', 'syrup', 'bottle', false, 20),
+  ('Antibiotics/Antifungals/Amoebicides', 'Ampiclox 100mls susp', 'syrup', 'bottle', false, 21),
+  ('Antibiotics/Antifungals/Amoebicides', 'Fluconazole 200mg', 'tablet', 'tablet', false, 22),
+  ('Antibiotics/Antifungals/Amoebicides', 'Diracip MDS', 'tablet', 'tablet', false, 23),
+  ('Antibiotics/Antifungals/Amoebicides', 'Diracip M', 'tablet', 'tablet', false, 24),
+  ('Antibiotics/Antifungals/Amoebicides', 'Griseofulvin 125mg', 'tablet', 'tablet', false, 25),
+  ('Antibiotics/Antifungals/Amoebicides', 'Griseofulvin 250mg', 'tablet', 'tablet', false, 26),
+  ('Antibiotics/Antifungals/Amoebicides', 'Griseofulvin 500mg', 'tablet', 'tablet', false, 27),
+  ('Antibiotics/Antifungals/Amoebicides', 'Ketoconazole', 'tablet', 'tablet', false, 28),
+  ('Antibiotics/Antifungals/Amoebicides', 'Metronidazole 200mg', 'tablet', 'tablet', false, 29),
+  ('Antibiotics/Antifungals/Amoebicides', 'Metronidazole 400mg', 'tablet', 'tablet', false, 30),
+  ('Antibiotics/Antifungals/Amoebicides', 'Entamaxin caps', 'capsule', 'tablet', false, 31),
+  ('Antibiotics/Antifungals/Amoebicides', 'Fluconazole 150mg', 'tablet', 'tablet', false, 32),
+  ('Antibiotics/Antifungals/Amoebicides', 'Ofloxacin &Ornidazole tabs', 'tablet', 'tablet', false, 33),
+  ('Antibiotics/Antifungals/Amoebicides', 'Co trimoxazole 480mg', 'tablet', 'tablet', false, 34),
+  ('Antibiotics/Antifungals/Amoebicides', 'Co trimoxazole 960mg', 'tablet', 'tablet', false, 35),
+  ('Antibiotics/Antifungals/Amoebicides', 'clotrimazole pessaries', 'suppository', 'unit', false, 36),
+  ('Antibiotics/Antifungals/Amoebicides', 'Levofloxacin 50mg', 'tablet', 'tablet', false, 37),
+  ('Antibiotics/Antifungals/Amoebicides', 'Ciprofloxacin 500mg', 'tablet', 'tablet', false, 38),
+  ('Antibiotics/Antifungals/Amoebicides', 'Eflaron plus tabs', 'tablet', 'tablet', false, 39),
+  ('Antibiotics/Antifungals/Amoebicides', 'Flucloxacillin 250mg', 'tablet', 'tablet', false, 40),
+  ('Antibiotics/Antifungals/Amoebicides', 'Flucloxacillin 500mg', 'tablet', 'tablet', false, 41),
+  ('Antibiotics/Antifungals/Amoebicides', 'Amoxicillin 250mg', 'tablet', 'tablet', false, 42),
+  ('Antibiotics/Antifungals/Amoebicides', 'Amoxicillin 500mg', 'tablet', 'tablet', false, 43),
+  ('Antibiotics/Antifungals/Amoebicides', 'Amoxiclav DT', 'tablet', 'tablet', false, 44),
+  ('Antibiotics/Antifungals/Amoebicides', 'Amoxicillin DT tabs', 'tablet', 'tablet', false, 45),
+  ('Antibiotics/Antifungals/Amoebicides', 'Doxycycline 100mg', 'tablet', 'tablet', false, 46),
+  ('Antibiotics/Antifungals/Amoebicides', 'Cephalexin 250mg', 'tablet', 'tablet', false, 47),
+  ('Antibiotics/Antifungals/Amoebicides', 'Cephalexin 500mg', 'tablet', 'tablet', false, 48),
+  ('Antibiotics/Antifungals/Amoebicides', 'Amoxiclav 625mg', 'tablet', 'tablet', false, 49),
+  ('Antibiotics/Antifungals/Amoebicides', 'Amoxiclav 1000mg', 'tablet', 'tablet', false, 50),
+  ('Antibiotics/Antifungals/Amoebicides', 'Cefuroxime 250mg', 'tablet', 'tablet', false, 51),
+  ('Antibiotics/Antifungals/Amoebicides', 'Cefuroxime 500mg', 'tablet', 'tablet', false, 52),
+  ('Antibiotics/Antifungals/Amoebicides', 'Cefixime 400mg', 'tablet', 'tablet', false, 53),
+  ('Antibiotics/Antifungals/Amoebicides', 'Azithromycin 250mg', 'tablet', 'tablet', false, 54),
+  ('Antibiotics/Antifungals/Amoebicides', 'Azitrhromycin 500mg', 'tablet', 'tablet', false, 55),
+  ('Antibiotics/Antifungals/Amoebicides', 'Clindamycin 500mg', 'tablet', 'tablet', false, 56),
+  ('Antibiotics/Antifungals/Amoebicides', 'Nitrafurantoin 100mg', 'tablet', 'tablet', false, 57),
+  ('Antibiotics/Antifungals/Amoebicides', 'Natoa(mebendazole) 100mg', 'tablet', 'tablet', false, 58),
+  ('Antibiotics/Antifungals/Amoebicides', 'Natoa (mebendazole) 30mls', 'syrup', 'bottle', false, 59),
+  ('Antibiotics/Antifungals/Amoebicides', 'ABZ [olworm ] susp', 'syrup', 'bottle', false, 60),
+  ('Antibiotics/Antifungals/Amoebicides', 'ABZ [olworm ] tabs', 'tablet', 'tablet', false, 61),
+  ('Antibiotics/Antifungals/Amoebicides', 'Tinidazole 500mg', 'tablet', 'tablet', false, 62),
+  ('Antibiotics/Antifungals/Amoebicides', 'Secnidazole 1gm', 'tablet', 'tablet', false, 63),
+  ('Antibiotics/Antifungals/Amoebicides', 'Tegraforte', 'tablet', 'tablet', false, 64),
+  ('Antibiotics/Antifungals/Amoebicides', 'Lethal 30', 'tablet', 'tablet', false, 65),
+  ('Antibiotics/Antifungals/Amoebicides', 'Diamisole', 'tablet', 'tablet', false, 66),
+  ('Antibiotics/Antifungals/Amoebicides', 'Tumbocid', 'tablet', 'tablet', false, 67),
+  ('Antibiotics/Antifungals/Amoebicides', 'Benaworm', 'tablet', 'tablet', false, 68),
+  ('Antibiotics/Antifungals/Amoebicides', 'Loperamide 2mg', 'tablet', 'tablet', false, 69),
+  ('Antibiotics/Antifungals/Amoebicides', 'ABZ tabs', 'tablet', 'tablet', false, 70),
+  ('Antibiotics/Antifungals/Amoebicides', 'ABZ suspension', 'syrup', 'bottle', false, 71),
+  ('Antibiotics/Antifungals/Amoebicides', 'Ampiclox 250mg', 'tablet', 'tablet', false, 72),
+  ('Antibiotics/Antifungals/Amoebicides', 'Ampiclox 500mg', 'tablet', 'tablet', false, 73),
+  ('Bronchodilators/Anti-Allergy', 'Tricoff 50mls', 'syrup', 'bottle', false, 0),
+  ('Bronchodilators/Anti-Allergy', 'Tricohist 60mls', 'syrup', 'bottle', false, 1),
+  ('Bronchodilators/Anti-Allergy', 'Tricohist 100mls', 'syrup', 'bottle', false, 2),
+  ('Bronchodilators/Anti-Allergy', 'Ascoril 100mls', 'syrup', 'bottle', false, 3),
+  ('Bronchodilators/Anti-Allergy', 'Cophydrex 60mls', 'syrup', 'bottle', false, 4),
+  ('Bronchodilators/Anti-Allergy', 'Cold cap 100mls', 'syrup', 'bottle', false, 5),
+  ('Bronchodilators/Anti-Allergy', 'Upacof dry 100mls', 'syrup', 'bottle', false, 6),
+  ('Bronchodilators/Anti-Allergy', 'upacof expect 100mls', 'syrup', 'bottle', false, 7),
+  ('Bronchodilators/Anti-Allergy', 'Good morning 50mls', 'syrup', 'bottle', false, 8),
+  ('Bronchodilators/Anti-Allergy', 'Tridex 60mls', 'syrup', 'bottle', false, 9),
+  ('Bronchodilators/Anti-Allergy', 'Tridex 100mls', 'syrup', 'bottle', false, 10),
+  ('Bronchodilators/Anti-Allergy', 'Salbutamol 100mls', 'syrup', 'bottle', false, 11),
+  ('Bronchodilators/Anti-Allergy', 'Piriton 50mls', 'syrup', 'bottle', false, 12),
+  ('Bronchodilators/Anti-Allergy', 'Prednisolone 60mls', 'syrup', 'bottle', false, 13),
+  ('Bronchodilators/Anti-Allergy', 'Salbutamol 60mls', 'syrup', 'bottle', false, 14),
+  ('Bronchodilators/Anti-Allergy', 'Flugone 60mls', 'syrup', 'bottle', false, 15),
+  ('Bronchodilators/Anti-Allergy', 'cetirizine 60mls', 'syrup', 'bottle', false, 16),
+  ('Bronchodilators/Anti-Allergy', 'Franol(theophylline)', 'tablet', 'tablet', false, 17),
+  ('Bronchodilators/Anti-Allergy', 'Prednisolone 5mg', 'tablet', 'tablet', false, 18),
+  ('Bronchodilators/Anti-Allergy', 'Salbutamol 4mg', 'tablet', 'tablet', false, 19),
+  ('Bronchodilators/Anti-Allergy', 'Montellukast 5mg', 'tablet', 'tablet', false, 20),
+  ('Bronchodilators/Anti-Allergy', 'Montellukast 5mg Dt', 'tablet', 'tablet', false, 21),
+  ('Bronchodilators/Anti-Allergy', 'Piriton tabs', 'tablet', 'tablet', false, 22),
+  ('Bronchodilators/Anti-Allergy', 'Celestamine tabs', 'tablet', 'tablet', false, 23),
+  ('Bronchodilators/Anti-Allergy', 'Cold cap caps', 'capsule', 'tablet', false, 24),
+  ('Bronchodilators/Anti-Allergy', 'Flugone caps', 'capsule', 'tablet', false, 25),
+  ('Bronchodilators/Anti-Allergy', 'Cetrizine 10mg', 'tablet', 'tablet', false, 26),
+  ('Bronchodilators/Anti-Allergy', 'Ibucap', 'tablet', 'tablet', false, 27),
+  ('Antacids/Anti-H-Pylori', 'Recergel 180mls', 'syrup', 'bottle', false, 0),
+  ('Antacids/Anti-H-Pylori', 'Recergel 100mls', 'syrup', 'bottle', false, 1),
+  ('Antacids/Anti-H-Pylori', 'Allugel 100mls', 'syrup', 'bottle', false, 2),
+  ('Antacids/Anti-H-Pylori', 'Gastrogel 100mls', 'syrup', 'bottle', false, 3),
+  ('Antacids/Anti-H-Pylori', 'Omeprazole 20mg', 'tablet', 'tablet', false, 4),
+  ('Antacids/Anti-H-Pylori', 'Esomeprazole 20mg', 'tablet', 'tablet', false, 5),
+  ('Antacids/Anti-H-Pylori', 'Esomeprazole 40mg', 'tablet', 'tablet', false, 6),
+  ('Antacids/Anti-H-Pylori', 'Eno sachets', 'other', 'unit', false, 7),
+  ('Antacids/Anti-H-Pylori', 'Sodamint 300mg tabs', 'tablet', 'tablet', false, 8),
+  ('Antacids/Anti-H-Pylori', 'Eno tabs', 'tablet', 'tablet', false, 9),
+  ('Antacids/Anti-H-Pylori', 'Surekit', 'other', 'unit', false, 10),
+  ('Antacids/Anti-H-Pylori', 'Pylotrip', 'tablet', 'tablet', false, 11),
+  ('Antacids/Anti-H-Pylori', 'Kit pylo', 'other', 'unit', false, 12),
+  ('Antimalarials', 'Al tabs', 'tablet', 'tablet', false, 0),
+  ('Antimalarials', 'Remoxe caps', 'capsule', 'tablet', false, 1),
+  ('Antimalarials', 'Fanlar dose', 'tablet', 'tablet', false, 2),
+  ('Antimalarials', 'P alaxin dose', 'tablet', 'tablet', false, 3),
+  ('Antimalarials', 'AL 60mls susp', 'syrup', 'bottle', false, 4),
+  ('Anti-DM', 'Glucomet 7 day', 'tablet', 'tablet', false, 0),
+  ('Anti-DM', 'Glucomet 14 day', 'tablet', 'tablet', false, 1),
+  ('Anti-DM', 'Nogluc', 'tablet', 'tablet', false, 2),
+  ('Hypertensives/Convulsants', 'HCTZ 25mg', 'tablet', 'tablet', false, 0),
+  ('Hypertensives/Convulsants', 'HCTZ 50mg', 'tablet', 'tablet', false, 1),
+  ('Hypertensives/Convulsants', 'Phenytoin 100mg', 'tablet', 'tablet', true, 2),
+  ('Hypertensives/Convulsants', 'Furosemide', 'tablet', 'tablet', false, 3),
+  ('Hypertensives/Convulsants', 'Nifedipine 20mg', 'tablet', 'tablet', false, 4),
+  ('Hypertensives/Convulsants', 'Enalapril 5mg', 'tablet', 'tablet', false, 5),
+  ('Hypertensives/Convulsants', 'Amlodipine 10mg', 'tablet', 'tablet', false, 6),
+  ('Hypertensives/Convulsants', 'Carbamazepine', 'tablet', 'tablet', true, 7),
+  ('Hypertensives/Convulsants', 'Phenobarbitone', 'tablet', 'tablet', true, 8),
+  ('Hypertensives/Convulsants', 'Diazepam', 'tablet', 'tablet', true, 9),
+  ('Hypertensives/Convulsants', 'Amitryptyle', 'tablet', 'tablet', false, 10),
+  ('Hypertensives/Convulsants', 'Benzexhol (Artane)', 'tablet', 'tablet', false, 11),
+  ('Hypertensives/Convulsants', 'Carditan H', 'tablet', 'tablet', false, 12),
+  ('Hypertensives/Convulsants', 'Carvedilol 6.25mg', 'tablet', 'tablet', false, 13),
+  ('Hypertensives/Convulsants', 'Losartan', 'tablet', 'tablet', false, 14),
+  ('Antiemetics/Laxatives', 'Promethazine 25mg', 'tablet', 'tablet', false, 0),
+  ('Antiemetics/Laxatives', 'Promethazine 60mls', 'syrup', 'bottle', false, 1),
+  ('Antiemetics/Laxatives', 'Lactulose 100mls', 'syrup', 'bottle', false, 2),
+  ('Antiemetics/Laxatives', 'Bisacodyl 5mg', 'tablet', 'tablet', false, 3),
+  ('Antiemetics/Laxatives', 'Domperidone 10mg', 'tablet', 'tablet', false, 4),
+  ('Antiemetics/Laxatives', 'Nosic', 'tablet', 'tablet', false, 5),
+  ('Antiemetics/Laxatives', 'Ondasentron', 'tablet', 'tablet', false, 6),
+  ('Contraceptives', 'Postinor 2', 'tablet', 'tablet', false, 0),
+  ('Contraceptives', 'P2 generic', 'tablet', 'tablet', false, 1),
+  ('Contraceptives', 'Depo provera inj', 'injection', 'vial', true, 2),
+  ('Contraceptives', 'Trust classic', 'tablet', 'tablet', false, 3),
+  ('Contraceptives', 'Kiss classic', 'tablet', 'tablet', false, 4),
+  ('Contraceptives', 'Kiss strawberry', 'tablet', 'tablet', false, 5),
+  ('Contraceptives', 'Femiplan', 'tablet', 'tablet', false, 6),
+  ('Supplements', 'Multivitamin 100mls', 'syrup', 'bottle', false, 0),
+  ('Supplements', 'Scotts emulsion 100mls', 'syrup', 'bottle', false, 1),
+  ('Supplements', 'Seven seas multivitamin 100mls', 'syrup', 'bottle', false, 2),
+  ('Supplements', 'Seven seas codliver oil 100mls', 'syrup', 'bottle', false, 3),
+  ('Supplements', 'Ranferon blood builder 200mls', 'syrup', 'bottle', false, 4),
+  ('Supplements', 'Bonnisan 120mls', 'syrup', 'bottle', false, 5),
+  ('Supplements', 'Cypon 100mls', 'syrup', 'bottle', false, 6),
+  ('Supplements', 'Junior zinc', 'tablet', 'tablet', false, 7),
+  ('Supplements', 'Folic acid', 'tablet', 'tablet', false, 8),
+  ('Supplements', 'Ifas', 'tablet', 'tablet', false, 9),
+  ('Supplements', 'Omega 3 caps', 'capsule', 'tablet', false, 10),
+  ('Supplements', 'Sera fe caps', 'capsule', 'tablet', false, 11),
+  ('Supplements', 'Becoactin tabs', 'tablet', 'tablet', false, 12),
+  ('Supplements', 'Cypro b plus', 'tablet', 'tablet', false, 13),
+  ('Supplements', 'Byofer 12', 'tablet', 'tablet', false, 14),
+  ('Supplements', 'Neuroforte', 'tablet', 'tablet', false, 15),
+  ('Supplements', 'Neurobion', 'tablet', 'tablet', false, 16),
+  ('Supplements', 'Pregabalin', 'tablet', 'tablet', true, 17),
+  ('Supplements', 'Cartil forte', 'tablet', 'tablet', false, 18),
+  ('Supplements', 'Gabapentin', 'tablet', 'tablet', true, 19),
+  ('Eye/Ear Drops', 'Gentamicin drops', 'drops', 'bottle', false, 0),
+  ('Eye/Ear Drops', 'Lub tears', 'drops', 'bottle', false, 1),
+  ('Eye/Ear Drops', 'Floral', 'drops', 'bottle', false, 2),
+  ('Eye/Ear Drops', 'Flarex', 'drops', 'bottle', false, 3),
+  ('Eye/Ear Drops', 'Olopatadine', 'drops', 'bottle', false, 4),
+  ('Eye/Ear Drops', 'Probeta N 7.5ml', 'drops', 'bottle', false, 5),
+  ('Eye/Ear Drops', 'T.E.O', 'drops', 'bottle', false, 6),
+  ('ORS', 'ORS sachets', 'other', 'sachet', false, 0),
+  ('ORS', 'Zinc + ORS combo pack', 'other', 'unit', false, 1),
+  ('Injectables', 'Ceftrixone inj', 'injection', 'vial', true, 0),
+  ('Injectables', 'Ondasentron inj', 'injection', 'vial', true, 1),
+  ('Injectables', 'K cort inj', 'injection', 'vial', true, 2),
+  ('Injectables', 'AL inj', 'injection', 'vial', true, 3),
+  ('Injectables', 'Gentamicin inj', 'injection', 'vial', true, 4),
+  ('Injectables', 'Tramadol', 'injection', 'vial', true, 5),
+  ('Injectables', 'Pcm inj', 'injection', 'vial', true, 6),
+  ('Powders/Creams', 'Grabacin powder', 'other', 'sachet', false, 0),
+  ('Powders/Creams', 'Nebanol powder 5gm', 'other', 'sachet', false, 1),
+  ('Powders/Creams', 'Clotrimazole cream', 'cream_ointment', 'tube', false, 2),
+  ('Powders/Creams', 'Norash', 'tablet', 'tablet', false, 3),
+  ('Powders/Creams', 'Betason', 'tablet', 'tablet', false, 4),
+  ('Powders/Creams', 'Miconazole', 'tablet', 'tablet', false, 5),
+  ('Powders/Creams', 'Mediven cream', 'cream_ointment', 'tube', false, 6),
+  ('Powders/Creams', 'Hydrocort', 'tablet', 'tablet', false, 7),
+  ('Powders/Creams', 'Ketoconazole cream', 'cream_ointment', 'tube', false, 8),
+  ('Powders/Creams', 'Funbact cream', 'cream_ointment', 'tube', false, 9),
+  ('Powders/Creams', 'Fastum gel', 'cream_ointment', 'tube', false, 10),
+  ('Powders/Creams', 'Fustil 15mg', 'tablet', 'tablet', false, 11),
+  ('Powders/Creams', 'Mupirocin cream', 'cream_ointment', 'tube', false, 12),
+  ('Powders/Creams', 'Clob b', 'tablet', 'tablet', false, 13),
+  ('Powders/Creams', 'Epiderm cream', 'cream_ointment', 'tube', false, 14),
+  ('Powders/Creams', 'Elyvate cream', 'cream_ointment', 'tube', false, 15),
+  ('Powders/Creams', 'Clozole b', 'tablet', 'tablet', false, 16),
+  ('Powders/Creams', 'Clozole', 'tablet', 'tablet', false, 17),
+  ('Powders/Creams', 'Terbinafine cream', 'cream_ointment', 'tube', false, 18),
+  ('Powders/Creams', 'Xtraderm cream', 'cream_ointment', 'tube', false, 19),
+  ('Powders/Creams', 'Silver diazine cream', 'cream_ointment', 'tube', false, 20),
+  ('Powders/Creams', 'Diclofenac gel', 'cream_ointment', 'tube', false, 21),
+  ('Powders/Creams', 'Pharmasal ointment', 'cream_ointment', 'tube', false, 22),
+  ('Powders/Creams', 'Burnmed', 'tablet', 'tablet', false, 23),
+  ('Powders/Creams', 'Sulphur ointment', 'cream_ointment', 'tube', false, 24),
+  ('Powders/Creams', 'Mephylamine (antihistamine)', 'tablet', 'tablet', false, 25),
+  ('Non-Pharmaceuticals', 'Ns 500mls', 'iv_fluid', 'bottle', false, 0),
+  ('Non-Pharmaceuticals', 'Elastoplast', 'other', 'unit', false, 1),
+  ('Non-Pharmaceuticals', 'Pharmasal spray 150mls', 'other', 'bottle', false, 2),
+  ('Non-Pharmaceuticals', 'Normal saline drops', 'drops', 'bottle', false, 3),
+  ('Non-Pharmaceuticals', 'Ashton powder', 'other', 'sachet', false, 4),
+  ('Non-Pharmaceuticals', 'Glycerine 100mls', 'other', 'bottle', false, 5),
+  ('Non-Pharmaceuticals', 'HIV kits', 'other', 'unit', false, 6),
+  ('Non-Pharmaceuticals', 'HCG strips', 'other', 'unit', false, 7),
+  ('Non-Pharmaceuticals', 'Waterguard', 'other', 'unit', false, 8),
+  ('Non-Pharmaceuticals', 'Hydrogen peroxide 200mls', 'other', 'bottle', false, 9),
+  ('Non-Pharmaceuticals', 'Methylated spirit 500mls', 'other', 'bottle', false, 10),
+  ('Non-Pharmaceuticals', '2cc syringes', 'other', 'unit', false, 11),
+  ('Non-Pharmaceuticals', '5cc syringes', 'other', 'unit', false, 12),
+  ('Non-Pharmaceuticals', '10cc syringes', 'other', 'unit', false, 13),
+  ('Non-Pharmaceuticals', 'Lifeguard', 'other', 'unit', false, 14),
+  ('Non-Pharmaceuticals', 'Sensodyne', 'other', 'unit', false, 15),
+  ('Non-Pharmaceuticals', 'Deepheat spray', 'other', 'unit', false, 16),
+  ('Non-Pharmaceuticals', 'Deepheat ointment', 'cream_ointment', 'tube', false, 17),
+  ('Non-Pharmaceuticals', 'Iodine 50mls', 'other', 'bottle', false, 18),
+  ('Non-Pharmaceuticals', 'Iodine 100mls', 'other', 'bottle', false, 19),
+  ('Non-Pharmaceuticals', 'Liquid paraffin 100mls', 'other', 'bottle', false, 20),
+  ('Non-Pharmaceuticals', 'Surgical blade', 'other', 'unit', false, 21),
+  ('Non-Pharmaceuticals', 'Surgical spirit 50ml', 'other', 'bottle', false, 22),
+  ('Non-Pharmaceuticals', 'Cotton wool 50g', 'other', 'unit', false, 23),
+  ('Non-Pharmaceuticals', 'Cotton wool 100g', 'other', 'unit', false, 24),
+  ('Non-Pharmaceuticals', 'Cotton wool 200g', 'other', 'unit', false, 25),
+  ('Non-Pharmaceuticals', 'Sonapen', 'tablet', 'tablet', false, 26),
+  ('Non-Pharmaceuticals', 'Kaluma pain balm', 'cream_ointment', 'tube', false, 27),
+  ('Non-Pharmaceuticals', 'Gloves', 'other', 'unit', false, 28),
+  ('Others', 'Sildenafil citrate 50mg', 'tablet', 'tablet', true, 0),
+  ('Others', 'Sildenafil citrate 100mg', 'tablet', 'tablet', true, 1),
+  ('Others', 'Antirabies vaccine', 'injection', 'vial', true, 2),
+  ('Others', 'Calamine lotion', 'other', 'unit', false, 3),
+  ('Others', 'Gripe water 60ml', 'syrup', 'bottle', false, 4),
+  ('Others', 'Gripe water 100mls', 'syrup', 'bottle', false, 5),
+  ('Others', 'Neopeptine 15mls', 'syrup', 'bottle', false, 6),
+  ('Others', 'Steron', 'tablet', 'tablet', false, 7);

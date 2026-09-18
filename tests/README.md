@@ -79,6 +79,25 @@ node run_tests.js
   the exact role the owner picked; a used code can't be redeemed twice.
 - **Privilege escalation**: a non-owner cannot promote themselves to
   `owner` by updating their own profile row directly.
+- **Role enforcement on restock/correction/write-off/void/return**: an
+  attendant is rejected by all five (matching `app.js`'s own
+  `ATTENDANT_ACTIONS` allow-list); a pharmacist can do all five; selling
+  remains open to every role, unaffected.
+- **`record_restock` has exactly one overload**: a regression guard against
+  a real bug this project hit — a second overload was briefly added (to
+  support an optional/unknown expiry) instead of extending the original
+  function, which made every restock call from the app ambiguous
+  ("function record_restock(...) is not unique", since Supabase/PostgREST
+  calls RPCs with named parameters). Fixed by keeping one function with a
+  defaulted `p_expiry_unknown` argument; this test just makes sure it stays
+  that way.
+- **`sync_master_drugs`** (the "Sync common drugs" fast-onboarding flow):
+  owner/pharmacist only, same as restock; a synced item with no expiry
+  given gets a placeholder date 3 years out flagged `expiry_unknown`, never
+  a fabricated real date; syncing a drug the pharmacy already has by name
+  reuses that drug and adds a batch instead of creating a duplicate, and
+  never overwrites its reorder level (only refreshes the price, like any
+  restock); missing quantity/price or an empty selection is rejected.
 
 ## What this does *not* cover
 

@@ -202,6 +202,147 @@ async function main() {
     );
 
     // --------------------------------------------------------------
+    console.log('\n== Role enforcement: restock/correction/write-off/void/return require owner or pharmacist ==');
+    await asUser(c, ownerId); // the previous block left the session as a non-owner staff member
+    const pharmacistCodeRes = await c.query("select create_staff_invite($1, 'pharmacist') as code", [pharmacyId]);
+    const pharmacistCode = pharmacistCodeRes.rows[0].code;
+    const pharmacistRes = await c.query("insert into auth.users default values returning id");
+    const pharmacistId = pharmacistRes.rows[0].id;
+    await asUser(c, pharmacistId);
+    await c.query("select join_pharmacy_with_code($1, 'Test Pharmacist', '0733333333')", [pharmacistCode]);
+
+    // staffId is already an 'attendant' from the invite redeemed above.
+    await asUser(c, staffId);
+    await assertThrows(
+      c.query(
+        "select record_restock($1,$2,10,5,10,(current_date + interval '30 days')::date,'RB1','Sup')",
+        [pharmacyId, drugId]
+      ),
+      'an attendant cannot restock',
+      'an attendant should NOT have been able to restock, but the call succeeded'
+    );
+
+    await asUser(c, pharmacistId);
+    const roleBatchRes = await c.query(
+      "select record_restock($1,$2,10,5,10,(current_date + interval '30 days')::date,'RB1','Sup') as id",
+      [pharmacyId, drugId]
+    );
+    const roleBatchId = roleBatchRes.rows[0].id;
+    assert(!!roleBatchId, 'a pharmacist can restock');
+
+    await asUser(c, staffId);
+    await assertThrows(
+      c.query("select record_correction($1,$2,8,'recount')", [pharmacyId, roleBatchId]),
+      'an attendant cannot correct stock',
+      'an attendant should NOT have been able to correct stock, but the call succeeded'
+    );
+    await assertThrows(
+      c.query("select record_write_off($1,$2,1,'damaged','write_off')", [pharmacyId, roleBatchId]),
+      'an attendant cannot write off stock',
+      'an attendant should NOT have been able to write off stock, but the call succeeded'
+    );
+
+    const attendantSaleRes = await c.query(
+      `select record_sale($1,
+         jsonb_build_array(jsonb_build_object('drug_id', $2::text, 'quantity', 1)),
+         jsonb_build_array(jsonb_build_object('method','cash','amount',10))
+       ) as id`,
+      [pharmacyId, drugId]
+    );
+    assert(!!attendantSaleRes.rows[0].id, 'an attendant can still record a sale (unrestricted by design)');
+    const attendantSaleId = attendantSaleRes.rows[0].id;
+
+    await assertThrows(
+      c.query("select void_sale($1,$2,'attendant trying to void')", [pharmacyId, attendantSaleId]),
+      'an attendant cannot void a sale',
+      'an attendant should NOT have been able to void a sale, but the call succeeded'
+    );
+    const attendantSaleItemRes = await c.query('select id from sale_items where sale_id = $1 limit 1', [attendantSaleId]);
+    await assertThrows(
+      c.query("select record_return($1,$2,1,'wrong item')", [pharmacyId, attendantSaleItemRes.rows[0].id]),
+      'an attendant cannot record a return',
+      'an attendant should NOT have been able to record a return, but the call succeeded'
+    );
+
+    await asUser(c, pharmacistId);
+    await c.query("select void_sale($1,$2,'pharmacist voiding')", [pharmacyId, attendantSaleId]);
+    const voidedRoleSale = await c.query('select voided from sales where id = $1', [attendantSaleId]);
+    assert(voidedRoleSale.rows[0].voided === true, 'a pharmacist can void a sale');
+
+    // --------------------------------------------------------------
+    console.log('\n== record_restock has exactly one overload (regression guard) ==');
+    // Two overloads once existed live (the original, and a second one added
+    // to support p_expiry_unknown instead of extending the first) and broke
+    // every restock call from the app: Supabase/PostgREST calls RPCs with
+    // named parameters, and Postgres couldn't choose a unique candidate
+    // between them — "function record_restock(...) is not unique". This
+    // guards against that regressing silently again.
+    const restockOverloads = await c.query("select count(*) from pg_proc where proname = 'record_restock'");
+    assert(Number(restockOverloads.rows[0].count) === 1, 'record_restock exists as exactly one function, not multiple overloads');
+
+    // --------------------------------------------------------------
+    console.log('\n== sync_master_drugs: fast onboarding from the shared catalog ==');
+    const masterAmoxRes = await c.query("select id, name from master_drugs where name = 'Amoxicillin 500mg'");
+    const masterAmox = masterAmoxRes.rows[0];
+    const masterDropsRes = await c.query("select id from master_drugs where name = 'Gentamicin drops'");
+    const masterDrops = masterDropsRes.rows[0];
+
+    await asUser(c, ownerId);
+    const syncRes1 = await c.query(
+      "select sync_master_drugs($1, $2::jsonb) as result",
+      [pharmacyId, JSON.stringify([
+        { master_drug_id: masterAmox.id, quantity: 20, sell_price: 50, reorder_level: 8 },
+        { master_drug_id: masterDrops.id, quantity: 5, sell_price: 300 }
+      ])]
+    );
+    assert(Array.isArray(syncRes1.rows[0].result) && syncRes1.rows[0].result.length === 2, 'owner can sync two drugs from the master catalog in one call');
+
+    const syncedAmox = await c.query(
+      "select d.reorder_level, d.default_price, b.quantity_remaining, b.expiry_unknown, (b.expiry_date = (current_date + interval '3 years')::date) as is_placeholder " +
+      "from drugs d join batches b on b.drug_id = d.id where d.pharmacy_id = $1 and d.name = 'Amoxicillin 500mg'",
+      [pharmacyId]
+    );
+    assert(syncedAmox.rows[0].is_placeholder === true && syncedAmox.rows[0].expiry_unknown === true,
+      'a synced item with no expiry given gets a placeholder date flagged expiry_unknown, never a fake real date');
+    assert(Number(syncedAmox.rows[0].quantity_remaining) === 20, 'the synced batch has the quantity entered');
+
+    await asUser(c, ownerId);
+    const syncedAgainRes = await c.query(
+      "select sync_master_drugs($1, $2::jsonb) as result",
+      [pharmacyId, JSON.stringify([{ master_drug_id: masterAmox.id, quantity: 10, sell_price: 55 }])]
+    );
+    assert(!!syncedAgainRes.rows[0].result, 'syncing the same catalog item again succeeds (adds a batch, does not error)');
+    const amoxDrugCount = await c.query("select count(*) from drugs where pharmacy_id = $1 and name = 'Amoxicillin 500mg'", [pharmacyId]);
+    assert(Number(amoxDrugCount.rows[0].count) === 1, 'syncing an already-synced drug again reuses the same drug row, never duplicates it');
+    const amoxAfterResync = await c.query("select reorder_level, default_price from drugs where pharmacy_id = $1 and name = 'Amoxicillin 500mg'", [pharmacyId]);
+    assert(Number(amoxAfterResync.rows[0].reorder_level) === 8, 're-syncing an existing drug never overwrites its reorder level (still 8 from the first sync)');
+    assert(Number(amoxAfterResync.rows[0].default_price) === 55, 're-syncing an existing drug does refresh its default price, same as any restock');
+
+    await assertThrows(
+      c.query("select sync_master_drugs($1, $2::jsonb)", [pharmacyId, JSON.stringify([{ master_drug_id: masterAmox.id, quantity: 5 }])]),
+      'syncing without a sell price is rejected',
+      'syncing without a sell price should have been rejected but succeeded'
+    );
+    await assertThrows(
+      c.query("select sync_master_drugs($1, $2::jsonb)", [pharmacyId, '[]']),
+      'syncing an empty selection is rejected',
+      'syncing an empty selection should have been rejected but succeeded'
+    );
+
+    await asUser(c, staffId); // attendant
+    await assertThrows(
+      c.query("select sync_master_drugs($1, $2::jsonb)", [pharmacyId, JSON.stringify([{ master_drug_id: masterAmox.id, quantity: 1, sell_price: 10 }])]),
+      'an attendant cannot sync drugs',
+      'an attendant should NOT have been able to sync drugs, but the call succeeded'
+    );
+    await asUser(c, pharmacistId);
+    const pharmacistSyncRes = await c.query(
+      "select sync_master_drugs($1, $2::jsonb) as result",
+      [pharmacyId, JSON.stringify([{ master_drug_id: masterAmox.id, quantity: 1, sell_price: 60 }])]
+    );
+    assert(!!pharmacistSyncRes.rows[0].result, 'a pharmacist can sync drugs');
+
+    // --------------------------------------------------------------
     console.log('\n== Privilege escalation: a staff member cannot promote themselves ==');
     await asUser(c, staffId);
     await assertThrows(

@@ -9,7 +9,7 @@
   --red-light: #FBE9E7;
   --ink: #201E1B;
   --ink-soft: #6B6560;
-  --paper: #FAF9F7;
+  --paper: #EFE8D8;
   --card: #FFFFFF;
   --line: #E7E2DC;
   --radius: 14px;
@@ -28,13 +28,15 @@ body { -webkit-font-smoothing: antialiased; padding-bottom: env(safe-area-inset-
 button { font: inherit; cursor: pointer; }
 input, select, textarea { font: inherit; }
 
-/* A small reusable badge: the capsule glyph on a rounded green square. Used
-   on the topbar and every auth screen so the brand has one consistent mark
+/* A small reusable badge: the "H" mark on a rounded green square, matching
+   the app icon (icons/icon-512.png). Used on the topbar, the loading
+   screen and every auth screen so the brand has one consistent mark
    instead of plain unstyled "Hodhi" text. */
 .brand-badge {
   flex-shrink: 0; display: flex; align-items: center; justify-content: center;
   background: linear-gradient(155deg, var(--green), var(--green-dark));
   color: #fff; border-radius: 30%; box-shadow: var(--shadow-sm);
+  font-weight: 800; line-height: 1;
 }
 .ic-svg { display: block; }
 
