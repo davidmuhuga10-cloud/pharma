@@ -12,12 +12,13 @@
   --paper: #EFE8D8;
   --card: #FFFFFF;
   --line: #E7E2DC;
-  --radius: 14px;
+  --radius: 15px;
   --radius-sm: 10px;
   --radius-lg: 20px;
   --shadow-sm: 0 1px 2px rgba(32,30,27,0.05), 0 1px 1px rgba(32,30,27,0.04);
   --shadow-md: 0 6px 20px rgba(15,81,50,0.09), 0 2px 6px rgba(32,30,27,0.05);
   --shadow-lg: 0 16px 40px rgba(15,81,50,0.16);
+  --sidebar-w: 264px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 * { box-sizing: border-box; }
@@ -29,9 +30,9 @@ button { font: inherit; cursor: pointer; }
 input, select, textarea { font: inherit; }
 
 /* A small reusable badge: the "H" mark on a rounded green square, matching
-   the app icon (icons/icon-512.png). Used on the topbar, the loading
-   screen and every auth screen so the brand has one consistent mark
-   instead of plain unstyled "Hodhi" text. */
+   the app icon (icons/icon-512.png). Used on the topbar, the sidebar, the
+   loading screen and every auth screen so the brand has one consistent
+   mark instead of plain unstyled "Hodhi" text. */
 .brand-badge {
   flex-shrink: 0; display: flex; align-items: center; justify-content: center;
   background: linear-gradient(155deg, var(--green), var(--green-dark));
@@ -40,6 +41,12 @@ input, select, textarea { font: inherit; }
 }
 .ic-svg { display: block; }
 
+/* ---------------------------------------------------------------------- */
+/* TOPBAR — on a phone this is the brand bar (green, holds the identity).  */
+/* On desktop the brand moves into the sidebar instead (see below), so     */
+/* the topbar becomes a slim, quiet utility strip: just the current        */
+/* pharmacy name and account controls, not a second copy of the logo.      */
+/* ---------------------------------------------------------------------- */
 .topbar {
   display: flex; align-items: center; justify-content: space-between;
   padding: 12px 16px; background: var(--green); color: #fff;
@@ -54,29 +61,44 @@ input, select, textarea { font: inherit; }
 
 .content { flex: 1; padding: 16px; padding-bottom: 90px; max-width: 720px; margin: 0 auto; width: 100%; }
 
+/* ---------------------------------------------------------------------- */
+/* NAV — a bottom tab bar on a phone, the same element becomes the full   */
+/* left sidebar on desktop (see the min-width:860px block below). Brand   */
+/* and account blocks are written into it too, but stay hidden until      */
+/* the desktop layout has room for them.                                  */
+/* ---------------------------------------------------------------------- */
 .navbar {
-  position: fixed; bottom: 0; left: 0; right: 0; background: #fff;
-  border-top: 1px solid var(--line); display: flex; z-index: 10;
+  position: fixed; bottom: 0; left: 0; right: 0; background: linear-gradient(165deg, var(--green) 0%, var(--green-dark) 100%);
+  display: flex; z-index: 10;
   padding-bottom: env(safe-area-inset-bottom);
 }
+.navbar-brand, .navbar-foot { display: none; }
 .navbar button {
-  flex: 1; background: none; border: none; padding: 10px 4px 8px; color: var(--ink-soft);
-  display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 11px;
+  flex: 1; background: none; border: none; padding: 9px 4px 8px; color: rgba(255,255,255,0.62);
+  display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 600;
 }
-.navbar button .ic { display: flex; }
-.navbar button.active { color: var(--green); font-weight: 600; }
+.navbar button .ic {
+  display: flex; padding: 4px 14px; border-radius: 999px; transition: background 0.15s, color 0.15s;
+}
+.navbar button.active { color: #fff; }
+.navbar button.active .ic { background: var(--amber); color: #241A03; }
 
 .card {
   background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
   padding: 14px; margin-bottom: 12px; box-shadow: var(--shadow-sm);
 }
 .kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.kpi { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; box-shadow: var(--shadow-sm); }
-.kpi .label { font-size: 12px; color: var(--ink-soft); }
-.kpi .value { font-size: 22px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
-.kpi.warn { background: var(--amber-light); border-color: #EAD9A6; }
-.kpi.bad { background: var(--red-light); border-color: #EFC3BE; }
-.kpi.good { background: var(--green-light); border-color: #BFE0CC; }
+.kpi { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow-sm); }
+.kpi .label { font-size: 12px; color: var(--ink-soft); font-weight: 600; }
+.kpi .value { font-size: 23px; font-weight: 800; margin-top: 5px; font-variant-numeric: tabular-nums; letter-spacing: -0.2px; }
+.kpi.warn { background: var(--amber); border-color: transparent; box-shadow: 0 4px 14px rgba(184,134,11,0.28); }
+.kpi.warn .label { color: rgba(36,26,3,0.7); }
+.kpi.warn .value { color: #241A03; }
+.kpi.bad { background: #fff; border: 1.5px solid #EFC3BE; }
+.kpi.bad .value { color: var(--red); }
+.kpi.good { background: linear-gradient(155deg, var(--green), var(--green-dark)); border-color: transparent; box-shadow: 0 4px 14px rgba(15,81,50,0.28); }
+.kpi.good .label { color: rgba(255,255,255,0.78); }
+.kpi.good .value { color: #fff; }
 
 h1, h2, h3 { margin: 0 0 10px; }
 h2 { font-size: 16px; }
@@ -91,7 +113,18 @@ h2 { font-size: 16px; }
 .list-row .meta { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
 .list-row .right { text-align: right; white-space: nowrap; }
 
-.badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 600; }
+/* A small round initial badge, colour-coded by status (good/warn/bad),
+   used in front of a list row's name (drug rows, first on the Stock tab)
+   instead of leaving every row as plain text with nothing to scan by eye. */
+.row-avatar {
+  width: 36px; height: 36px; border-radius: 10px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 700; background: var(--green-light); color: var(--green);
+}
+.row-avatar.warn { background: var(--amber-light); color: var(--amber); }
+.row-avatar.bad { background: var(--red-light); color: var(--red); }
+
+.badge { display: inline-block; font-size: 11px; padding: 3px 9px; border-radius: 999px; font-weight: 700; }
 .badge.bad { background: var(--red-light); color: var(--red); }
 .badge.warn { background: var(--amber-light); color: var(--amber); }
 .badge.good { background: var(--green-light); color: var(--green); }
@@ -99,10 +132,10 @@ h2 { font-size: 16px; }
 
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  border: none; border-radius: 10px; padding: 12px 16px; font-weight: 600; width: 100%;
-  transition: filter 0.12s, transform 0.05s;
+  border: none; border-radius: 12px; padding: 12px 16px; font-weight: 600; width: 100%;
+  transition: filter 0.12s, transform 0.05s, background 0.12s;
 }
-.btn.primary { background: var(--green); color: #fff; box-shadow: 0 2px 8px rgba(15,81,50,0.25); }
+.btn.primary { background: var(--green); color: #fff; box-shadow: 0 3px 10px rgba(15,81,50,0.28); }
 .btn.secondary { background: var(--green-light); color: var(--green); }
 .btn.ghost { background: #EFEDEA; color: var(--ink); }
 .btn.danger { background: var(--red-light); color: var(--red); }
@@ -184,29 +217,71 @@ h2 { font-size: 16px; }
 .auth-wrap-simple .tag { font-size: 13px; color: var(--ink-soft); margin-top: 2px; }
 .auth-wrap-simple .card { text-align: left; }
 
-.toolbar-row { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
-.toolbar-row .btn { width: auto; flex: 1; min-width: 130px; }
+/* A row of auxiliary action buttons (Sync/Import/Excel/Print — secondary
+   to the page's one primary action) as a single bordered, dividered strip
+   instead of separate boxes that wrap unevenly when a label runs long. */
+.toolbar-row { display: flex; align-items: stretch; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.toolbar-row .btn { width: auto; flex: 1 1 auto; min-width: 0; white-space: nowrap; }
+.toolbar-segment {
+  display: flex; align-items: stretch; background: #fff; border: 1px solid var(--line);
+  border-radius: 12px; overflow: hidden; flex-wrap: wrap;
+}
+.toolbar-segment .btn {
+  width: auto; flex: 1 1 auto; white-space: nowrap; background: transparent; color: var(--ink);
+  border-radius: 0; border-right: 1px solid var(--line);
+}
+.toolbar-segment .btn:last-child { border-right: none; }
+.toolbar-segment .btn:hover { background: #F5F2EA; }
+.toolbar-primary { flex-shrink: 0; width: auto; }
+.inline-notice {
+  display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 700;
+  color: var(--amber); margin-bottom: 12px;
+}
+.inline-notice a { color: inherit; text-decoration: none; }
 
 /* ---------------------------------------------------------------------- */
-/* DESKTOP LAYOUT — phone-style bottom nav becomes a left sidebar, content */
-/* gets real page width instead of a stretched single column.             */
+/* DESKTOP LAYOUT — the bottom tab bar becomes a full-height branded       */
+/* sidebar (dark green, gold active state), and the topbar becomes a      */
+/* slim white utility strip beside it rather than a second brand bar.     */
 /* ---------------------------------------------------------------------- */
 @media (min-width: 860px) {
-  .topbar { padding-left: 24px; padding-right: 24px; }
+  .topbar {
+    margin-left: var(--sidebar-w); padding-left: 28px; padding-right: 28px;
+    background: #fff; color: var(--ink); box-shadow: none; border-bottom: 1px solid var(--line);
+  }
+  .topbar-id .brand-badge, .topbar .brand { display: none; }
+  .topbar .sub { color: var(--ink); font-size: 14px; font-weight: 700; opacity: 1; }
+  .topbar button { background: var(--green-light); color: var(--green); font-weight: 600; }
+  .topbar button:hover { background: #DCEEE2; }
+
   .navbar {
-    top: 57px; bottom: 0; left: 0; right: auto; width: 220px;
+    top: 0; bottom: 0; left: 0; right: auto; width: var(--sidebar-w);
     flex-direction: column; align-items: stretch; justify-content: flex-start;
-    border-top: none; border-right: 1px solid var(--line); padding-top: 10px;
+    padding: 22px 16px; gap: 2px; box-shadow: 4px 0 20px rgba(10,59,36,0.12);
   }
+  .navbar-brand {
+    display: flex; align-items: center; gap: 11px; padding: 0 8px; margin-bottom: 30px;
+  }
+  .navbar-brand .brand-badge { width: 38px; height: 38px; font-size: 17px; background: #fff; color: var(--green); }
+  .navbar-brand .word { font-size: 21px; font-weight: 800; color: #fff; letter-spacing: 0.2px; }
   .navbar button {
-    flex-direction: row; justify-content: flex-start; gap: 10px;
-    padding: 12px 22px; font-size: 14px; border-radius: 0;
+    flex: none; flex-direction: row; justify-content: flex-start; gap: 12px;
+    padding: 11px 14px; font-size: 14px; font-weight: 600; border-radius: 999px;
   }
-  .navbar button.active { background: var(--green-light); }
-  .content { margin-left: 220px; max-width: 900px; padding: 24px 32px 60px; }
+  .navbar button .ic { padding: 0; background: none !important; color: inherit !important; }
+  .navbar button.active { background: var(--amber); color: #241A03; box-shadow: 0 4px 12px rgba(184,134,11,0.35); }
+  .navbar-spacer { flex-grow: 1; }
+  .navbar-foot {
+    display: flex; flex-direction: column; gap: 2px; background: rgba(255,255,255,0.09);
+    border-radius: 16px; padding: 14px 16px; margin-top: 10px;
+  }
+  .navbar-foot .who { font-size: 13.5px; font-weight: 700; color: #fff; }
+  .navbar-foot .role { font-size: 12px; color: rgba(255,255,255,0.62); }
+
+  .content { margin-left: var(--sidebar-w); max-width: 900px; padding: 24px 32px 60px; }
   .kpi-grid { grid-template-columns: repeat(4, 1fr); }
   .row-2, .row-3 { max-width: 560px; }
-  .fab { left: 244px; right: auto; bottom: 28px; }
+  .fab { left: calc(var(--sidebar-w) + 24px); right: auto; bottom: 28px; }
 
   /* The auth screen becomes a real two-column layout instead of a small
      card adrift in empty space — a brand panel that fills its full column,

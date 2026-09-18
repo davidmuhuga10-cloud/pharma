@@ -284,6 +284,10 @@ function render() {
   renderTab();
 }
 
+// Same markup renders as the phone's bottom tab bar and the desktop's full
+// left sidebar (see style.css's .navbar rules) — the brand block and the
+// account footer are written here too, but stay hidden (display:none)
+// until the desktop layout has room for them.
 function navBar() {
   var items = [
     ['dashboard', 'home', t('home')],
@@ -292,10 +296,18 @@ function navBar() {
     ['reports', 'reports', t('reports')],
     ['settings', 'settings', t('settings')]
   ];
-  return '<div class="navbar">' + items.map(function (i) {
-    return '<button class="' + (STATE.tab === i[0] ? 'active' : '') + '" onclick="setTab(\'' + i[0] + '\')">' +
-      '<span class="ic">' + icon(i[1], 20) + '</span>' + i[2] + '</button>';
-  }).join('') + '</div>';
+  var p = STATE.profile || {};
+  var pharmacy = STATE.pharmacy || {};
+  return '<div class="navbar">' +
+    '<div class="navbar-brand">' + logoMarkHtml(38) + '<div class="word">Hodhi</div></div>' +
+    items.map(function (i) {
+      return '<button class="' + (STATE.tab === i[0] ? 'active' : '') + '" onclick="setTab(\'' + i[0] + '\')">' +
+        '<span class="ic">' + icon(i[1], 20) + '</span>' + i[2] + '</button>';
+    }).join('') +
+    '<div class="navbar-spacer"></div>' +
+    '<div class="navbar-foot"><div class="who">' + esc(pharmacy.name || '') + '</div>' +
+    '<div class="role">' + esc(p.full_name || '') + (p.role ? ' · ' + esc(p.role) : '') + '</div></div>' +
+    '</div>';
 }
 
 function cartFab() {
@@ -684,24 +696,28 @@ function drawInventory() {
   var q = invFilter.toLowerCase();
   var allRows = STATE.drugsCache.filter(function (d) { return d.name.toLowerCase().indexOf(q) !== -1; });
   var rows = allRows.slice(0, invPage * INV_PAGE_SIZE);
+  var reorderCount = STATE.drugsCache.filter(function (d) { return d.qty_in_stock <= d.reorder_level; }).length;
   c.innerHTML =
     '<div class="searchbox field"><input placeholder="Search drugs…" value="' + esc(invFilter) + '" oninput="invFilter=this.value;invPage=1;drawInventory()"></div>' +
     '<div class="toolbar-row">' +
-    (can('edit_inventory') ? '<button class="btn secondary" onclick="openAddDrug()">' + t('addDrug') + '</button>' : '') +
-    (can('edit_inventory') ? '<button class="btn ghost" onclick="openSyncMasterDrugs()">' + icon('box',15) + ' Sync common drugs</button>' : '') +
-    (can('edit_inventory') ? '<button class="btn ghost" onclick="openImportExcel()">' + icon('upload',15) + ' Import</button>' : '') +
-    '<button class="btn ghost" onclick="exportInventoryExcel()">' + icon('download',15) + ' Excel</button>' +
-    '<button class="btn ghost" onclick="printInventory()">' + icon('printer',15) + ' Print</button>' +
+    '<div class="toolbar-segment">' +
+    (can('edit_inventory') ? '<button class="btn" onclick="openSyncMasterDrugs()">' + icon('box',15) + ' Sync common drugs</button>' : '') +
+    (can('edit_inventory') ? '<button class="btn" onclick="openImportExcel()">' + icon('upload',15) + ' Import</button>' : '') +
+    '<button class="btn" onclick="exportInventoryExcel()">' + icon('download',15) + ' Excel</button>' +
+    '<button class="btn" onclick="printInventory()">' + icon('printer',15) + ' Print</button>' +
     '</div>' +
-    (can('restock') ? '<div class="toolbar-row"><button class="btn ghost" onclick="openReorderList()">' + icon('clipboard',15) + ' Reorder list</button></div>' : '') +
+    (can('edit_inventory') ? '<button class="btn primary toolbar-primary" style="margin-left:auto" onclick="openAddDrug()">' + t('addDrug') + '</button>' : '') +
+    '</div>' +
+    (can('restock') && reorderCount ? '<div class="inline-notice">' + icon('clipboard',15) +
+      '<a href="#" onclick="openReorderList();return false;">' + reorderCount + (reorderCount === 1 ? ' drug needs' : ' drugs need') + ' reordering — view list</a></div>' : '') +
     '<div class="card">' + (rows.length ? rows.map(function (d) {
-      var badge = d.qty_in_stock === 0 ? '<span class="badge bad">Out</span>'
-        : d.qty_in_stock <= d.reorder_level ? '<span class="badge warn">Low</span>'
-        : '<span class="badge good">OK</span>';
+      var kind = d.qty_in_stock === 0 ? 'bad' : d.qty_in_stock <= d.reorder_level ? 'warn' : 'good';
+      var badge = kind === 'bad' ? '<span class="badge bad">Out</span>' : kind === 'warn' ? '<span class="badge warn">Low</span>' : '<span class="badge good">OK</span>';
       var expBadge = d.soonest_expiry ? (daysUntil(d.soonest_expiry) <= (STATE.pharmacy.expiry_warn_days || 90)
         ? ' <span class="badge ' + (daysUntil(d.soonest_expiry) <= 30 ? 'bad' : 'warn') + '">exp ' + fmtDate(d.soonest_expiry) + '</span>' : '') : '';
       return '<div class="list-row" onclick="openDrugDetail(\'' + d.drug_id + '\')" style="cursor:pointer">' +
-        '<div><div class="name">' + esc(d.name) + '</div><div class="meta">' + fmt(d.stock_value_retail) + ' in stock value' + expBadge + '</div></div>' +
+        '<div style="display:flex;align-items:center;gap:12px"><div class="row-avatar ' + (kind === 'good' ? '' : kind) + '">' + esc((d.name || '?').charAt(0).toUpperCase()) + '</div>' +
+        '<div><div class="name">' + esc(d.name) + '</div><div class="meta">' + fmt(d.stock_value_retail) + ' in stock value' + expBadge + '</div></div></div>' +
         '<div class="right">' + badge + '<div class="meta">' + d.qty_in_stock + ' ' + esc(d.unit) + '</div></div></div>';
     }).join('') : '<div class="empty">No drugs match. Try clearing the search or add a new one.</div>') + '</div>' +
     (allRows.length > rows.length ? '<button class="btn ghost" style="margin-top:10px" onclick="invPage++;drawInventory()">Load more (' + (allRows.length - rows.length) + ' more)</button>' : '');
@@ -1115,10 +1131,10 @@ function openReorderList() {
   pendingReorderList = needed;
   var body = sheet('Reorder list', '');
   body.innerHTML =
-    '<div class="toolbar-row">' +
-    '<button class="btn ghost" onclick="exportReorderExcel()">' + icon('download',15) + ' Excel</button>' +
-    '<button class="btn ghost" onclick="printReorderList()">' + icon('printer',15) + ' Print</button>' +
-    '</div>' +
+    '<div class="toolbar-row"><div class="toolbar-segment">' +
+    '<button class="btn" onclick="exportReorderExcel()">' + icon('download',15) + ' Excel</button>' +
+    '<button class="btn" onclick="printReorderList()">' + icon('printer',15) + ' Print</button>' +
+    '</div></div>' +
     '<div class="card">' + (needed.length ? needed.map(function (n) {
       return listRow(n.name, 'Have ' + n.current + ' ' + n.unit + ' · reorder level ' + n.reorderLevel, '<b>Order ' + n.suggested + '</b>');
     }).join('') : '<div class="empty">Nothing needs reordering right now.</div>') + '</div>';
@@ -1622,10 +1638,10 @@ function drawReportsShell() {
     ['today', 'week', 'month'].map(function (r) {
       return '<button class="btn ' + (reportRange === r ? 'primary' : 'ghost') + ' small" onclick="reportRange=\'' + r + '\';loadReport()">' + r[0].toUpperCase() + r.slice(1) + '</button>';
     }).join('') + '</div>' +
-    '<div class="toolbar-row">' +
-    '<button class="btn ghost" onclick="exportReportExcel()">' + icon('download',15) + ' Excel</button>' +
-    '<button class="btn ghost" onclick="printReport()">' + icon('printer',15) + ' Print</button>' +
-    '</div>' +
+    '<div class="toolbar-row"><div class="toolbar-segment">' +
+    '<button class="btn" onclick="exportReportExcel()">' + icon('download',15) + ' Excel</button>' +
+    '<button class="btn" onclick="printReport()">' + icon('printer',15) + ' Print</button>' +
+    '</div></div>' +
     '<div id="reportBody"><div class="empty">Loading…</div></div>';
 }
 
