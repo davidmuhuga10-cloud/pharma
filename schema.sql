@@ -1411,3 +1411,233 @@ create table sms_platform_config (
 );
 
 alter table sms_platform_config enable row level security;
+
+-- ============================================================================
+-- 12. SUPPLIERS MODULE (added this session — PHARMA_PROJECT_STATUS.md item
+-- 21) — opening balances, LPOs (Local Purchase Orders) that record a
+-- delivery AND restock inventory in one step (integrated, per the owner's
+-- choice — one entry records both the debt and the stock received), payments
+-- against a supplier's running balance, and a full running-ledger statement
+-- per supplier. See record_supplier_lpo/record_supplier_payment below and
+-- app.js's Suppliers tab.
+-- ============================================================================
+
+alter table pharmacies add column if not exists next_lpo_no integer not null default 1;  -- atomically incremented per LPO -> LPO-000001, ...
+
+alter table suppliers add column if not exists opening_balance numeric(10,2) not null default 0;       -- debt owed to this supplier before Hodhi started tracking it
+alter table suppliers add column if not exists opening_balance_date date;                                -- as-of date for the opening balance, shown as the ledger's first line
+
+-- One row per delivery. Creating an LPO also creates the batches (see
+-- record_supplier_lpo below) — a single entry records both the debt and the
+-- stock received, avoiding double data entry between Suppliers and Stock.
+create table supplier_lpos (
+  id            uuid primary key default gen_random_uuid(),
+  pharmacy_id   uuid not null references pharmacies(id) on delete cascade,
+  supplier_id   uuid not null references suppliers(id) on delete cascade,
+  lpo_number    text not null,                        -- "LPO-000001", sequential per pharmacy via next_lpo_no
+  delivered_at  date not null default current_date,
+  total_amount  numeric(10,2) not null default 0,      -- sum of line item totals, set by record_supplier_lpo
+  notes         text,
+  created_by    uuid references profiles(id),
+  created_at    timestamptz not null default now()
+);
+
+create index on supplier_lpos (pharmacy_id);
+create index on supplier_lpos (pharmacy_id, supplier_id, delivered_at desc);
+create index supplier_lpos_created_by_idx on supplier_lpos (created_by);
+
+-- Line items — one per drug on the delivery. batch_id points at the batch
+-- this line created, so a ledger entry can be traced straight to the stock
+-- it added (and, later, to what was sold from it).
+create table supplier_lpo_items (
+  id            uuid primary key default gen_random_uuid(),
+  lpo_id        uuid not null references supplier_lpos(id) on delete cascade,
+  pharmacy_id   uuid not null references pharmacies(id) on delete cascade,
+  drug_id       uuid not null references drugs(id),
+  batch_id      uuid references batches(id) on delete set null,
+  quantity      integer not null check (quantity > 0),
+  cost_price    numeric(10,2) not null,
+  line_total    numeric(10,2) not null,
+  created_at    timestamptz not null default now()
+);
+
+create index on supplier_lpo_items (lpo_id);
+create index on supplier_lpo_items (pharmacy_id);
+create index supplier_lpo_items_batch_id_idx on supplier_lpo_items (batch_id);
+
+create type supplier_payment_method as enum ('cash', 'mpesa', 'bank', 'cheque', 'other');
+
+-- Money paid against a supplier's running balance, as it comes in.
+create table supplier_payments (
+  id            uuid primary key default gen_random_uuid(),
+  pharmacy_id   uuid not null references pharmacies(id) on delete cascade,
+  supplier_id   uuid not null references suppliers(id) on delete cascade,
+  amount        numeric(10,2) not null check (amount > 0),
+  method        supplier_payment_method not null default 'cash',
+  reference     text,
+  paid_at       date not null default current_date,
+  notes         text,
+  created_by    uuid references profiles(id),
+  created_at    timestamptz not null default now()
+);
+
+create index on supplier_payments (pharmacy_id);
+create index on supplier_payments (pharmacy_id, supplier_id, paid_at desc);
+create index supplier_payments_created_by_idx on supplier_payments (created_by);
+
+alter table supplier_lpos enable row level security;
+alter table supplier_lpo_items enable row level security;
+alter table supplier_payments enable row level security;
+
+create policy "tenant all supplier_lpos" on supplier_lpos for all using (pharmacy_id = my_pharmacy_id());
+create policy "tenant all supplier_lpo_items" on supplier_lpo_items for all using (pharmacy_id = my_pharmacy_id());
+create policy "tenant all supplier_payments" on supplier_payments for all using (pharmacy_id = my_pharmacy_id());
+
+grant select, insert, update, delete on supplier_lpos to authenticated;
+grant select, insert, update, delete on supplier_lpo_items to authenticated;
+grant select, insert, update, delete on supplier_payments to authenticated;
+
+-- Records one delivery: an LPO header, its line items, AND one `batches` row
+-- per item (same insert record_restock does) — integrated by design so the
+-- pharmacist enters a delivery once and both the debt and the stock update
+-- together. Same authorization tier as record_restock (owner/pharmacist).
+create or replace function record_supplier_lpo(
+  p_pharmacy_id uuid,
+  p_supplier_id uuid,
+  p_items jsonb,
+  p_delivered_at date default null,
+  p_notes text default null
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_lpo_id uuid;
+  v_lpo_seq integer;
+  v_supplier_name text;
+  v_item jsonb;
+  v_drug_id uuid;
+  v_quantity integer;
+  v_cost_price numeric(10,2);
+  v_sell_price numeric(10,2);
+  v_expiry_unknown boolean;
+  v_batch_no text;
+  v_batch_id uuid;
+  v_expiry date;
+  v_line_total numeric(10,2);
+  v_total numeric(10,2) := 0;
+begin
+  if p_pharmacy_id is distinct from my_pharmacy_id() then
+    raise exception 'Not authorized for this pharmacy';
+  end if;
+  if my_role() not in ('owner', 'pharmacist') then
+    raise exception 'Only the owner or a pharmacist can record a supplier delivery';
+  end if;
+  if jsonb_array_length(p_items) = 0 then
+    raise exception 'An LPO needs at least one item';
+  end if;
+
+  select name into v_supplier_name from suppliers where id = p_supplier_id and pharmacy_id = p_pharmacy_id;
+  if v_supplier_name is null then
+    raise exception 'Supplier not found';
+  end if;
+
+  update pharmacies set next_lpo_no = next_lpo_no + 1
+  where id = p_pharmacy_id
+  returning next_lpo_no - 1 into v_lpo_seq;
+
+  insert into supplier_lpos (pharmacy_id, supplier_id, lpo_number, delivered_at, notes, created_by)
+  values (p_pharmacy_id, p_supplier_id, 'LPO-' || lpad(v_lpo_seq::text, 6, '0'), coalesce(p_delivered_at, current_date), p_notes, auth.uid())
+  returning id into v_lpo_id;
+
+  for v_item in select * from jsonb_array_elements(p_items) loop
+    v_drug_id := (v_item->>'drug_id')::uuid;
+    v_quantity := (v_item->>'quantity')::integer;
+    v_cost_price := (v_item->>'cost_price')::numeric;
+    v_sell_price := coalesce(nullif(v_item->>'sell_price', '')::numeric, v_cost_price);
+    v_batch_no := v_item->>'batch_no';
+    v_expiry_unknown := coalesce((v_item->>'expiry_unknown')::boolean, false);
+
+    if v_quantity is null or v_quantity <= 0 then
+      raise exception 'Each line item needs a quantity greater than zero';
+    end if;
+    if v_cost_price is null then
+      raise exception 'Each line item needs a cost price';
+    end if;
+
+    if v_expiry_unknown then
+      v_expiry := (current_date + interval '3 years')::date;
+    else
+      v_expiry := nullif(v_item->>'expiry_date', '')::date;
+      if v_expiry is null then
+        raise exception 'Expiry date is required unless expiry is marked unknown';
+      end if;
+    end if;
+
+    insert into batches (pharmacy_id, drug_id, batch_no, supplier, supplier_id, quantity_received,
+                          quantity_remaining, cost_price, sell_price, expiry_date, expiry_unknown, created_by)
+    values (p_pharmacy_id, v_drug_id, v_batch_no, v_supplier_name, p_supplier_id, v_quantity,
+            v_quantity, v_cost_price, v_sell_price, v_expiry, v_expiry_unknown, auth.uid())
+    returning id into v_batch_id;
+
+    insert into stock_adjustments (pharmacy_id, drug_id, batch_id, type, quantity_delta, created_by)
+    values (p_pharmacy_id, v_drug_id, v_batch_id, 'restock', v_quantity, auth.uid());
+
+    update drugs set default_price = v_sell_price where id = v_drug_id;
+
+    v_line_total := round(v_quantity * v_cost_price, 2);
+    v_total := v_total + v_line_total;
+
+    insert into supplier_lpo_items (lpo_id, pharmacy_id, drug_id, batch_id, quantity, cost_price, line_total)
+    values (v_lpo_id, p_pharmacy_id, v_drug_id, v_batch_id, v_quantity, v_cost_price, v_line_total);
+  end loop;
+
+  update supplier_lpos set total_amount = v_total where id = v_lpo_id;
+
+  return v_lpo_id;
+end;
+$$;
+
+-- Records a payment against a supplier's running balance.
+create or replace function record_supplier_payment(
+  p_pharmacy_id uuid,
+  p_supplier_id uuid,
+  p_amount numeric,
+  p_method text default 'cash',
+  p_reference text default null,
+  p_paid_at date default null,
+  p_notes text default null
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_payment_id uuid;
+begin
+  if p_pharmacy_id is distinct from my_pharmacy_id() then
+    raise exception 'Not authorized for this pharmacy';
+  end if;
+  if my_role() not in ('owner', 'pharmacist') then
+    raise exception 'Only the owner or a pharmacist can record a supplier payment';
+  end if;
+  if p_amount is null or p_amount <= 0 then
+    raise exception 'Payment amount must be greater than zero';
+  end if;
+  if not exists (select 1 from suppliers where id = p_supplier_id and pharmacy_id = p_pharmacy_id) then
+    raise exception 'Supplier not found';
+  end if;
+
+  insert into supplier_payments (pharmacy_id, supplier_id, amount, method, reference, paid_at, notes, created_by)
+  values (p_pharmacy_id, p_supplier_id, p_amount, p_method::supplier_payment_method, p_reference, coalesce(p_paid_at, current_date), p_notes, auth.uid())
+  returning id into v_payment_id;
+
+  return v_payment_id;
+end;
+$$;
+
+grant execute on function record_supplier_lpo(uuid, uuid, jsonb, date, text) to authenticated;
+grant execute on function record_supplier_payment(uuid, uuid, numeric, text, text, date, text) to authenticated;
