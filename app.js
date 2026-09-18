@@ -25,7 +25,7 @@ var STATE = {
 // only sells and looks things up, nothing that changes stock or money rules.
 // ---------------------------------------------------------------------------
 var PHARMACIST_ACTIONS = ['sell', 'view_dashboard', 'view_inventory', 'view_reports', 'print', 'export',
-  'edit_inventory', 'restock', 'write_off', 'correct_stock', 'return', 'void', 'discount', 'claims', 'suppliers'];
+  'edit_inventory', 'restock', 'write_off', 'correct_stock', 'return', 'void', 'discount', 'claims', 'suppliers', 'expenses'];
 var ATTENDANT_ACTIONS = ['sell', 'view_dashboard', 'view_inventory', 'view_reports', 'print', 'export'];
 
 function can(action) {
@@ -48,7 +48,7 @@ var STRINGS = {
     salesWeek: 'Sales this week', salesMonth: 'Sales this month', needsAttention: 'Needs attention',
     outOfStock: 'Out of stock', lowStock: 'Low stock', expiringSoon: 'Expiring soon',
     logOut: 'Log out', addDrug: '+ Add new drug', checkout: 'Checkout', total: 'Total',
-    suppliers: 'Suppliers'
+    suppliers: 'Suppliers', expenses: 'Expenses'
   },
   sw: {
     home: 'Nyumbani', stock: 'Bidhaa', sell: 'Uza', reports: 'Ripoti', settings: 'Mipangilio',
@@ -56,7 +56,7 @@ var STRINGS = {
     salesWeek: 'Mauzo wiki hii', salesMonth: 'Mauzo mwezi huu', needsAttention: 'Yanayohitaji uangalizi',
     outOfStock: 'Bidhaa zilizoisha', lowStock: 'Bidhaa chache', expiringSoon: 'Zinakaribia kuisha muda',
     logOut: 'Toka', addDrug: '+ Ongeza dawa mpya', checkout: 'Lipa', total: 'Jumla',
-    suppliers: 'Wasambazaji'
+    suppliers: 'Wasambazaji', expenses: 'Matumizi'
   }
 };
 // English only for now, enforced regardless of what's stored on the
@@ -88,7 +88,8 @@ var ICONS = {
   warn: '<path d="M12 3 22 20H2Z"/><line x1="12" y1="9.5" x2="12" y2="13.5"/><circle cx="12" cy="16.5" r="1"/>',
   close: '<line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/>',
   box: '<rect x="4" y="8" width="16" height="12" rx="2"/><path d="M8 8V6.5a4 4 0 0 1 8 0V8"/>',
-  truck: '<rect x="2.5" y="7" width="11" height="9" rx="1"/><path d="M13.5 10h4l3 3v3h-7z"/><circle cx="7" cy="18.5" r="1.6"/><circle cx="16.5" cy="18.5" r="1.6"/>'
+  truck: '<rect x="2.5" y="7" width="11" height="9" rx="1"/><path d="M13.5 10h4l3 3v3h-7z"/><circle cx="7" cy="18.5" r="1.6"/><circle cx="16.5" cy="18.5" r="1.6"/>',
+  wallet: '<path d="M3 7a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v1H5a2 2 0 0 0-2 2Z"/><path d="M3 8v10a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2H5a2 2 0 0 1-2-2Z"/><circle cx="16" cy="14.5" r="1.4"/>'
 };
 function icon(name, size) {
   var s = size || 18;
@@ -301,6 +302,7 @@ function navBar() {
     ['settings', 'settings', t('settings')]
   ];
   if (can('suppliers')) items.splice(2, 0, ['suppliers', 'truck', t('suppliers')]);
+  if (can('expenses')) items.splice(can('suppliers') ? 3 : 2, 0, ['expenses', 'wallet', t('expenses')]);
   var p = STATE.profile || {};
   var pharmacy = STATE.pharmacy || {};
   return '<div class="navbar">' +
@@ -332,6 +334,7 @@ function renderTab() {
   else if (STATE.tab === 'reports') renderReports();
   else if (STATE.tab === 'settings') renderSettings();
   else if (STATE.tab === 'suppliers') renderSuppliers();
+  else if (STATE.tab === 'expenses') renderExpenses();
 }
 
 // ---------------------------------------------------------------------------
@@ -2802,6 +2805,158 @@ async function saveSupplier() {
     toast('Supplier added.', 'good');
     closeSheet();
     renderSuppliers();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// EXPENSES — a general pharmacy-expenses ledger (rent, utilities, salaries,
+// transport, licenses, marketing, maintenance, supplies, other), separate
+// from Suppliers (which is specifically about drug-stock deliveries and
+// supplier debt). Same Today/Week/Month/Year range filter as the dashboard
+// (filtered client-side against one fetch — expense volume for a single
+// pharmacy is small, so a second RPC isn't worth the complexity). Voiding
+// follows the same soft-delete pattern as void_sale — see schema.sql §14.
+// ---------------------------------------------------------------------------
+
+var expRange = 'month';
+var expensesAllCache = [];  // every expense (incl. voided) for this pharmacy, newest first; filtered client-side by expRange
+var EXP_CATEGORY_LABELS = {
+  rent: 'Rent', utilities: 'Utilities', salaries: 'Salaries', transport: 'Transport',
+  licenses: 'Licenses & permits', marketing: 'Marketing', maintenance: 'Maintenance & repairs',
+  supplies: 'Supplies', other: 'Other'
+};
+
+async function renderExpenses() {
+  var c = $('#content');
+  if (!can('expenses')) { c.innerHTML = '<div class="card empty">You do not have access to Expenses.</div>'; return; }
+  c.innerHTML = '<div class="empty">Loading expenses…</div>';
+  try {
+    var { data, error } = await sb.from('expenses').select('*').eq('pharmacy_id', STATE.profile.pharmacy_id)
+      .order('expense_date', { ascending: false }).order('created_at', { ascending: false });
+    if (error) throw error;
+    expensesAllCache = data || [];
+  } catch (e) {
+    errorCard(c, friendlyError(e), 'renderExpenses');
+    return;
+  }
+  drawExpensesList();
+}
+
+function expRangeStart(r) {
+  var now = new Date();
+  if (r === 'today') return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (r === 'week') return new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay());
+  if (r === 'year') return new Date(now.getFullYear(), 0, 1);
+  return new Date(now.getFullYear(), now.getMonth(), 1); // month (default)
+}
+
+function setExpRange(r) {
+  if (r === expRange) return;
+  expRange = r;
+  drawExpensesList();
+}
+
+function drawExpensesList() {
+  var c = $('#content');
+  var startStr = expRangeStart(expRange).toISOString().slice(0, 10);
+  var inRange = expensesAllCache.filter(function (e) { return e.expense_date >= startStr; });
+  var active = inRange.filter(function (e) { return !e.voided; });
+  var total = active.reduce(function (a, e) { return a + Number(e.amount || 0); }, 0);
+
+  var byCategory = {};
+  active.forEach(function (e) { byCategory[e.category] = (byCategory[e.category] || 0) + Number(e.amount || 0); });
+  var catRows = Object.keys(byCategory).map(function (k) { return { cat: k, total: byCategory[k] }; })
+    .sort(function (a, b) { return b.total - a.total; });
+  var breakdownHtml = catRows.length
+    ? catRows.map(function (r) { return listRow(EXP_CATEGORY_LABELS[r.cat] || r.cat, '', fmt(r.total)); }).join('')
+    : '<div class="empty">No expenses recorded yet for this period.</div>';
+
+  var listHtml = inRange.length ? inRange.map(expenseRowHtml).join('') : '<div class="empty">No expenses recorded yet for this period.</div>';
+
+  c.innerHTML =
+    '<div class="toolbar-row"><button class="btn primary" onclick="openAddExpense()">+ New expense</button></div>' +
+    '<div class="dash-filter-row"><div class="dash-tabs">' +
+      ['today', 'week', 'month', 'year'].map(function (r) {
+        return '<button class="dash-tab' + (expRange === r ? ' active' : '') + '" onclick="setExpRange(\'' + r + '\')">' + DASH_RANGE_LABELS[r] + '</button>';
+      }).join('') +
+    '</div><div class="dash-period-label">' + DASH_PERIOD_LABEL[expRange] + '</div></div>' +
+    '<div class="kpi-grid" style="margin-bottom:14px">' +
+      kpi('Total spent', fmt(total), 'bad') +
+      kpi('Entries', active.length, '') +
+    '</div>' +
+    '<div class="section-title">By category</div>' +
+    '<div class="card" style="margin-bottom:14px">' + breakdownHtml + '</div>' +
+    '<div class="section-title">All expenses — ' + esc(DASH_PERIOD_LABEL[expRange].toLowerCase()) + '</div>' +
+    '<div class="card">' + listHtml + '</div>';
+}
+
+function expenseRowHtml(e) {
+  var meta = [fmtDate(e.expense_date), EXP_CATEGORY_LABELS[e.category] || e.category, supplierPaymentMethodLabel(e.method)].join(' · ');
+  var right = fmt(e.amount) + (e.voided ? '' : ' <button class="btn ghost small" onclick="openVoidExpense(\'' + e.id + '\')">Void</button>');
+  return '<div class="list-row">' +
+    '<div><div class="name">' + esc(e.description) + (e.voided ? ' <span class="badge bad">Voided</span>' : '') + '</div><div class="meta">' + esc(meta) + '</div></div>' +
+    '<div class="right">' + right + '</div></div>';
+}
+
+function openAddExpense() {
+  var body = sheet('New expense', '');
+  body.innerHTML =
+    '<div class="field"><label>Description</label><input id="exDescription" placeholder="e.g. September rent"></div>' +
+    '<div class="row-2">' +
+    '<div class="field"><label>Amount</label><input id="exAmount" type="number" step="0.01" min="0"></div>' +
+    '<div class="field"><label>Category</label><select id="exCategory">' +
+      Object.keys(EXP_CATEGORY_LABELS).map(function (k) { return '<option value="' + k + '"' + (k === 'other' ? ' selected' : '') + '>' + esc(EXP_CATEGORY_LABELS[k]) + '</option>'; }).join('') +
+    '</select></div></div>' +
+    '<div class="row-2">' +
+    '<div class="field"><label>Method</label><select id="exMethod">' +
+      '<option value="cash">Cash</option><option value="mpesa">M-Pesa</option><option value="bank">Bank</option><option value="cheque">Cheque</option><option value="other">Other</option>' +
+    '</select></div>' +
+    '<div class="field"><label>Date</label><input id="exDate" type="date" value="' + esc(new Date().toISOString().slice(0, 10)) + '"></div></div>' +
+    '<div class="field"><label>Notes (optional)</label><input id="exNotes"></div>' +
+    '<button class="btn primary" id="exSaveBtn" onclick="saveExpense()">Save expense</button>';
+}
+
+async function saveExpense() {
+  var btn = $('#exSaveBtn');
+  act(btn, async function () {
+    var description = $('#exDescription').value.trim();
+    if (!description) { toast('Give the expense a short description.', 'bad'); return; }
+    var amount = parseFloat($('#exAmount').value);
+    if (!amount || amount <= 0) { toast('Enter a valid amount.', 'bad'); return; }
+    var { error } = await sb.rpc('record_expense', {
+      p_pharmacy_id: STATE.profile.pharmacy_id,
+      p_category: $('#exCategory').value,
+      p_description: description,
+      p_amount: amount,
+      p_method: $('#exMethod').value,
+      p_expense_date: $('#exDate').value || null,
+      p_notes: $('#exNotes').value.trim() || null
+    });
+    if (error) { toast(friendlyError(error), 'bad'); return; }
+    toast('Expense recorded.', 'good');
+    closeSheet();
+    renderExpenses();
+  });
+}
+
+function openVoidExpense(expenseId) {
+  var body = sheet('Void this expense?', '');
+  body.innerHTML =
+    '<div class="tiny" style="margin-bottom:10px">This marks the expense voided so it drops out of totals — it stays in the list for the record. Cannot be undone.</div>' +
+    '<div class="field"><label>Reason</label><input id="exVoidReason" placeholder="Required"></div>' +
+    '<button class="btn danger" id="exVoidBtn" onclick="doVoidExpense(\'' + expenseId + '\')">Void expense</button>';
+}
+
+async function doVoidExpense(expenseId) {
+  var btn = $('#exVoidBtn');
+  act(btn, async function () {
+    var reason = $('#exVoidReason').value.trim();
+    if (!reason) { toast('A reason is required.', 'bad'); return; }
+    var { error } = await sb.rpc('void_expense', { p_pharmacy_id: STATE.profile.pharmacy_id, p_expense_id: expenseId, p_reason: reason });
+    if (error) { toast(friendlyError(error), 'bad'); return; }
+    toast('Expense voided.', 'good');
+    closeSheet();
+    renderExpenses();
   });
 }
 

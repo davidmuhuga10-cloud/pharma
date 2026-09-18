@@ -1786,3 +1786,117 @@ end;
 $$;
 
 grant execute on function dashboard_data(uuid, text) to authenticated;
+
+-- ============================================================================
+-- 14. EXPENSES (added this session — PHARMA_PROJECT_STATUS.md item 23)
+-- — a general pharmacy-expenses ledger (rent, utilities, salaries, transport,
+-- licenses, marketing, maintenance, supplies, other), separate from Suppliers
+-- (which is specifically about drug-stock deliveries and supplier debt).
+-- Same soft-void pattern as sales (voided/voided_at/void_reason) rather than
+-- a hard delete, so a mistaken entry stays in the audit trail. Same
+-- authorization tier as Suppliers: owner/pharmacist only, not attendants —
+-- see app.js's Expenses tab and record_expense/void_expense below.
+-- ============================================================================
+
+create type expense_category as enum
+  ('rent', 'utilities', 'salaries', 'transport', 'licenses', 'marketing', 'maintenance', 'supplies', 'other');
+
+create table expenses (
+  id             uuid primary key default gen_random_uuid(),
+  pharmacy_id    uuid not null references pharmacies(id) on delete cascade,
+  category       expense_category not null default 'other',
+  description    text not null,
+  amount         numeric(10,2) not null check (amount > 0),
+  method         supplier_payment_method not null default 'cash',   -- reuses the same cash/mpesa/bank/cheque/other type Suppliers already uses
+  expense_date   date not null default current_date,
+  notes          text,
+  voided         boolean not null default false,
+  voided_at      timestamptz,
+  void_reason    text,
+  created_by     uuid references profiles(id),
+  created_at     timestamptz not null default now()
+);
+
+create index on expenses (pharmacy_id);
+create index on expenses (pharmacy_id, expense_date desc);
+create index on expenses (pharmacy_id, category);
+create index expenses_created_by_idx on expenses (created_by);
+
+alter table expenses enable row level security;
+create policy "tenant all expenses" on expenses for all using (pharmacy_id = my_pharmacy_id());
+grant select, insert, update, delete on expenses to authenticated;
+
+create or replace function record_expense(
+  p_pharmacy_id uuid,
+  p_category text,
+  p_description text,
+  p_amount numeric,
+  p_method text default 'cash',
+  p_expense_date date default null,
+  p_notes text default null
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_expense_id uuid;
+begin
+  if p_pharmacy_id is distinct from my_pharmacy_id() then
+    raise exception 'Not authorized for this pharmacy';
+  end if;
+  if my_role() not in ('owner', 'pharmacist') then
+    raise exception 'Only the owner or a pharmacist can record an expense';
+  end if;
+  if p_description is null or trim(p_description) = '' then
+    raise exception 'Give the expense a short description';
+  end if;
+  if p_amount is null or p_amount <= 0 then
+    raise exception 'Expense amount must be greater than zero';
+  end if;
+
+  insert into expenses (pharmacy_id, category, description, amount, method, expense_date, notes, created_by)
+  values (p_pharmacy_id, coalesce(nullif(p_category, '')::expense_category, 'other'), trim(p_description), p_amount,
+          coalesce(nullif(p_method, '')::supplier_payment_method, 'cash'), coalesce(p_expense_date, current_date), p_notes, auth.uid())
+  returning id into v_expense_id;
+
+  return v_expense_id;
+end;
+$$;
+
+-- Same soft-void pattern as void_sale: marks the row voided rather than
+-- deleting it, so a mistaken entry never silently disappears from the books.
+create or replace function void_expense(p_pharmacy_id uuid, p_expense_id uuid, p_reason text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_already_voided boolean;
+begin
+  if p_pharmacy_id is distinct from my_pharmacy_id() then
+    raise exception 'Not authorized for this pharmacy';
+  end if;
+  if my_role() not in ('owner', 'pharmacist') then
+    raise exception 'Only the owner or a pharmacist can void an expense';
+  end if;
+  if p_reason is null or trim(p_reason) = '' then
+    raise exception 'A reason is required';
+  end if;
+
+  select voided into v_already_voided from expenses where id = p_expense_id and pharmacy_id = p_pharmacy_id;
+  if v_already_voided is null then
+    raise exception 'Expense not found';
+  end if;
+  if v_already_voided then
+    raise exception 'This expense is already voided';
+  end if;
+
+  update expenses set voided = true, voided_at = now(), void_reason = trim(p_reason) where id = p_expense_id;
+end;
+$$;
+
+grant execute on function record_expense(uuid, text, text, numeric, text, date, text) to authenticated;
+grant execute on function void_expense(uuid, uuid, text) to authenticated;
