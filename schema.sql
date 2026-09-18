@@ -1364,3 +1364,50 @@ insert into master_drugs (category_name, name, form, unit, is_prescription, sort
   ('Others', 'Gripe water 100mls', 'syrup', 'bottle', false, 5),
   ('Others', 'Neopeptine 15mls', 'syrup', 'bottle', false, 6),
   ('Others', 'Steron', 'tablet', 'tablet', false, 7);
+
+-- ============================================================================
+-- 11. PHONE OTP VERIFICATION (added this session — PHARMA_PROJECT_STATUS.md
+-- item 18, closing roadmap A.1(b): a real SMS OTP was the actual fix for
+-- reset-password-by-phone, the rate limit alone only slowed brute-forcing.
+-- Ported from Shule Web's proven phone_otps design. Both tables are
+-- server-only (RLS enabled, zero policies) — reachable only via the
+-- service-role key inside the send-otp/verify-otp/reset-password-by-phone
+-- Edge Functions, never a browser session directly, same pattern this
+-- project already uses for password_reset_attempts.
+-- ============================================================================
+
+create table phone_otps (
+  id uuid primary key default gen_random_uuid(),
+  phone text not null,
+  purpose text not null check (purpose in ('password_reset')),
+  code_hash text not null,
+  expires_at timestamptz not null,
+  attempts integer not null default 0,
+  consumed_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+-- send-otp's rate-limit check and verify-otp's "latest live code for this
+-- phone+purpose" lookup are both `where phone = ? and purpose = ? order by
+-- created_at desc` — this index serves both directly.
+create index idx_phone_otps_lookup on phone_otps (phone, purpose, created_at desc);
+
+alter table phone_otps enable row level security;
+
+-- SMS provider credentials, kept in the database (not an Edge Function
+-- secret) so they aren't tied to any one deploy mechanism — same reasoning
+-- as Shule Web's own sms_platform_config, which this project's row was
+-- seeded from (reusing Shule Web's Africa's Talking account/sender ID, at
+-- the user's explicit direction, rather than a separate Pharma-specific
+-- account).
+create table sms_platform_config (
+  id integer primary key default 1,
+  provider text not null default 'africas_talking',
+  username text,
+  api_key text,
+  sender_id text,
+  updated_at timestamptz not null default now(),
+  constraint sms_platform_config_singleton check (id = 1)
+);
+
+alter table sms_platform_config enable row level security;

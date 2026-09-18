@@ -442,40 +442,109 @@ function renderJoin() {
 // inside WhatsApp) block it outright. A normal form field, like every other
 // screen in the app, fixes both problems.
 // Phone-based accounts have no email on file to send a reset link to.
-// Interim design (explicitly requested, to be tightened later): anyone who
-// knows the phone number registered on a Hodhi account can set it a brand
-// new password immediately, no code/OTP. That lookup + password change
-// happens server-side in the reset-password-by-phone Edge Function, which
-// is the only place allowed to hold the service-role key this needs — see
-// that function's own comments for why this can't be done directly from
-// the browser.
+// UPDATED (PHARMA_PROJECT_STATUS.md item 18, closing roadmap A.1(b)): this
+// used to let anyone who knew the phone number set a brand-new password
+// immediately, no code. Now a real 3-step flow — phone -> SMS code ->
+// new password — proves phone ownership first. send-otp/verify-otp are
+// public Edge Functions; the short-lived verified_token verify-otp returns
+// is what reset-password-by-phone now requires before it will touch the
+// account. The actual account lookup + password change still happens
+// server-side in that Edge Function, the only place allowed to hold the
+// service-role key this needs.
+var fpStep = 'phone';
+var fpPhoneVal = '';
+var fpToken = '';
+
 function renderForgotPassword() {
   STATE.authMode = 'forgot';
-  var body = $('#authBody') || (function () { render(); return $('#authBody'); })();
-  body.innerHTML =
-    '<div class="card">' +
-    '<div class="tiny" style="margin-bottom:10px">Enter the phone number on the account and choose a new password.</div>' +
-    '<div class="field"><label>Phone number</label><input id="fpPhone" type="tel" placeholder="07XXXXXXXX"></div>' +
-    '<div class="field"><label>New password</label><input id="fpPw" type="password" placeholder="At least 8 characters"></div>' +
-    '<div id="fpErr" class="error-text"></div>' +
-    '<button class="btn primary" id="fpBtn" onclick="doForgotPassword()">Set new password</button>' +
-    '</div><div class="auth-toggle"><a href="#" onclick="renderLogin();return false;">Back to log in</a></div>';
+  fpStep = 'phone'; fpPhoneVal = ''; fpToken = '';
+  drawForgotPassword();
 }
 
-async function doForgotPassword() {
+function drawForgotPassword() {
+  var body = $('#authBody') || (function () { render(); return $('#authBody'); })();
+  if (fpStep === 'phone') {
+    body.innerHTML =
+      '<div class="card">' +
+      '<div class="tiny" style="margin-bottom:10px">Enter the phone number on the account — we\'ll text you a 6-digit code.</div>' +
+      '<div class="field"><label>Phone number</label><input id="fpPhone" type="tel" placeholder="07XXXXXXXX" value="' + esc(fpPhoneVal) + '"></div>' +
+      '<div id="fpErr" class="error-text"></div>' +
+      '<button class="btn primary" id="fpBtn" onclick="doSendResetCode()">Send code</button>' +
+      '</div><div class="auth-toggle"><a href="#" onclick="renderLogin();return false;">Back to log in</a></div>';
+  } else if (fpStep === 'code') {
+    body.innerHTML =
+      '<div class="card">' +
+      '<div class="tiny" style="margin-bottom:10px">Enter the 6-digit code sent to ' + esc(fpPhoneVal) + '.</div>' +
+      '<div class="field"><label>Code</label><input id="fpCode" type="tel" maxlength="6" placeholder="123456"></div>' +
+      '<div id="fpErr" class="error-text"></div>' +
+      '<button class="btn primary" id="fpBtn" onclick="doVerifyResetCode()">Verify</button>' +
+      '</div><div class="auth-toggle"><a href="#" onclick="renderForgotPassword();return false;">Use a different number</a>' +
+      ' · <a href="#" onclick="doSendResetCode();return false;">Resend code</a></div>';
+  } else {
+    body.innerHTML =
+      '<div class="card">' +
+      '<div class="tiny" style="margin-bottom:10px">Phone number verified. Choose a new password.</div>' +
+      '<div class="field"><label>New password</label><input id="fpPw" type="password" placeholder="At least 8 characters"></div>' +
+      '<div id="fpErr" class="error-text"></div>' +
+      '<button class="btn primary" id="fpBtn" onclick="doSetResetPassword()">Set new password</button>' +
+      '</div><div class="auth-toggle"><a href="#" onclick="renderLogin();return false;">Back to log in</a></div>';
+  }
+}
+
+async function doSendResetCode() {
+  var btn = $('#fpBtn'); var err = $('#fpErr'); if (err) err.textContent = '';
+  act(btn, async function () {
+    var phone = fpStep === 'phone' ? $('#fpPhone').value.trim() : fpPhoneVal;
+    if (!phone) { err.textContent = 'Enter the phone number on the account.'; return; }
+    var { data, error } = await sb.functions.invoke('send-otp', {
+      body: { phone: phone, purpose: 'password_reset' }
+    });
+    if (error || !data || data.ok === false) {
+      err.textContent = (data && data.message) || friendlyError(error);
+      return;
+    }
+    if (data.sent === false) {
+      err.textContent = data.message || 'Could not send a code right now. Try again shortly.';
+      return;
+    }
+    fpPhoneVal = phone;
+    fpStep = 'code';
+    drawForgotPassword();
+    toast('Code sent — check your phone.', 'good');
+  });
+}
+
+async function doVerifyResetCode() {
   var btn = $('#fpBtn'); var err = $('#fpErr'); err.textContent = '';
   act(btn, async function () {
-    var phone = $('#fpPhone').value.trim();
+    var code = $('#fpCode').value.trim();
+    if (!/^\d{6}$/.test(code)) { err.textContent = 'Enter the 6-digit code.'; return; }
+    var { data, error } = await sb.functions.invoke('verify-otp', {
+      body: { phone: fpPhoneVal, purpose: 'password_reset', code: code }
+    });
+    if (error || !data || data.ok === false) {
+      err.textContent = (data && data.message) || friendlyError(error);
+      return;
+    }
+    fpToken = data.verified_token;
+    fpStep = 'password';
+    drawForgotPassword();
+  });
+}
+
+async function doSetResetPassword() {
+  var btn = $('#fpBtn'); var err = $('#fpErr'); err.textContent = '';
+  act(btn, async function () {
     var pw = $('#fpPw').value;
-    if (!phone) { err.textContent = 'Enter the phone number on the account.'; return; }
     if (pw.length < 8) { err.textContent = 'Use at least 8 characters.'; return; }
     var { data, error } = await sb.functions.invoke('reset-password-by-phone', {
-      body: { phone: phone, newPassword: pw }
+      body: { phone: fpPhoneVal, newPassword: pw, otp_verified_token: fpToken }
     });
     if (error || (data && data.error)) {
       err.textContent = (data && data.error) || friendlyError(error);
       return;
     }
+    fpStep = 'phone'; fpPhoneVal = ''; fpToken = '';
     renderLogin();
     toast('Password updated — log in with your new password.', 'good');
   });
