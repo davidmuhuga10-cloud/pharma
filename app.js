@@ -712,7 +712,7 @@ var dashSnap = null;   // point-in-time snapshot: stock value/health, expiring, 
 
 var DCOLOR = {
   sales: '#008300', salesLight: '#E3F3E3',
-  blue: '#4D7AB3',
+  blue: '#4D7AB3', blueLight: '#E7EEF6',
   violet: '#6F5FA0', violetLight: '#ECE8F7',
   orange: '#eb6834', orangeLight: '#FDEBE3',
   magenta: '#e87ba4', magentaLight: '#FCEAF1',
@@ -794,17 +794,24 @@ async function setDashRange(r) {
 function drawDashboard() {
   var c = $('#content');
   var refetching = dashLoading ? ' dash-refetching' : '';
+  // Item 30: tinted card backgrounds (same treatment/palette as the pill
+  // row and the other modules' kpi tiles — see PHARMA_PROJECT_STATUS.md) —
+  // each graph/list card gets a light tint from the same DCOLOR token its
+  // own chart already draws with, so the whole dashboard reads as one
+  // consistent color language instead of the pill row being the only
+  // tinted thing on the page. Item 31 adds the matching left/right accent
+  // border (ported from ShuleTop's .stat tiles — see .card's base rule).
   c.innerHTML =
     dashQuickAccessHtml() +
     dashFilterRowHtml() +
     '<div class="dash-row">' +
-      '<div class="dash-col"><div class="card dash-graph-card' + refetching + '">' + dashSalesGraphHtml(dashData) + '</div></div>' +
-      '<div class="dash-col"><div class="card dash-graph-card' + refetching + '">' + dashRushGraphHtml(dashData) + '</div></div>' +
+      '<div class="dash-col"><div class="card dash-graph-card' + refetching + '" style="background:' + DCOLOR.salesLight + ';border-color:' + DCOLOR.sales + '">' + dashSalesGraphHtml(dashData) + '</div></div>' +
+      '<div class="dash-col"><div class="card dash-graph-card' + refetching + '" style="background:' + DCOLOR.violetLight + ';border-color:' + DCOLOR.violet + '">' + dashRushGraphHtml(dashData) + '</div></div>' +
     '</div>' +
     '<div class="dash-pill-row' + refetching + '">' + dashPillsHtml(dashData, dashSnap) + '</div>' +
     '<div class="dash-row">' +
-      '<div class="dash-col"><div class="card">' + dashStockHealthHtml(dashSnap) + '</div></div>' +
-      '<div class="dash-col"><div class="card' + refetching + '">' + dashProfitHtml(dashData) + '</div></div>' +
+      '<div class="dash-col"><div class="card" style="background:' + DCOLOR.orangeLight + ';border-color:' + DCOLOR.orange + '">' + dashStockHealthHtml(dashSnap) + '</div></div>' +
+      '<div class="dash-col"><div class="card' + refetching + '" style="background:' + DCOLOR.salesLight + ';border-color:' + DCOLOR.sales + '">' + dashProfitHtml(dashData) + '</div></div>' +
     '</div>' +
     '<div class="dash-row">' +
       '<div class="dash-col' + refetching + '">' + dashTopSellersCard(dashData) + '</div>' +
@@ -997,7 +1004,7 @@ function dashRushGraphHtml(d) {
   values.forEach(function (v, i) { if (v > values[maxI]) maxI = i; });
   var headline = isEmpty ? '—' : RUSH_LABELS[maxI];
   var share = isEmpty ? 0 : Math.round((values[maxI] / totalRush) * 100);
-  var chip = isEmpty ? '' : '<span class="dash-chip" style="color:' + DCOLOR.violet + ';background:' + DCOLOR.violetLight + '">' + share + '% of sales in this window</span>';
+  var chip = isEmpty ? '' : '<span class="dash-chip" style="color:' + DCOLOR.violet + '">' + share + '% of sales in this window</span>';
   return '<div class="dash-graph-head"><div class="section-title" style="text-align:center">Rush hours</div>' +
     '<div class="dash-graph-headline">' + esc(headline) + '</div>' +
     '<div class="dash-graph-chip-row">' + chip + '</div>' +
@@ -1023,7 +1030,10 @@ function dashPillsHtml(d, snap) {
       sub: (snap.suppliersOwedCount || 0) + ((snap.suppliersOwedCount || 0) === 1 ? ' supplier' : ' suppliers') }
   ];
   return pills.map(function (p) {
-    return '<div class="dash-pill" style="background:' + p.bg + '">' +
+    // Item 31: same hue also colors the left/right accent border (see
+    // .dash-pill's base rule in style.css) — a look ported from ShuleTop's
+    // .stat tiles.
+    return '<div class="dash-pill" style="background:' + p.bg + ';border-color:' + p.color + '">' +
       '<div class="dot" style="background:' + p.color + '"></div>' +
       '<div class="label" style="color:' + p.color + '">' + esc(p.label) + '</div>' +
       '<div class="value">' + p.value + '</div>' +
@@ -1122,7 +1132,7 @@ function dashTopSellersCard(d) {
   for (var i = top4.length; i < 4; i++) rows += dashPlaceholderRowHtml();
   var empty = all.length === 0 ? '<div class="tiny" style="text-align:center;margin-top:14px">No sales recorded yet this period.</div>' : '';
   var footer = all.length > 4 ? '<button class="dash-view-all" onclick="openTopSellersFull()">View all ' + all.length + ' &rarr;</button>' : '';
-  return '<div class="card dash-list-card"><div class="section-title dash-list-title">' + (DASH_TOPSELLERS_TITLE[dashRange] || 'Top sellers') + '</div>' + rows + empty + footer + '</div>';
+  return '<div class="card dash-list-card" style="background:' + DCOLOR.blueLight + ';border-color:' + DCOLOR.blue + '"><div class="section-title dash-list-title">' + (DASH_TOPSELLERS_TITLE[dashRange] || 'Top sellers') + '</div>' + rows + empty + footer + '</div>';
 }
 
 function dashExpiringCard(snap) {
@@ -1137,7 +1147,7 @@ function dashExpiringCard(snap) {
   for (var i = top4.length; i < 4; i++) rows += dashPlaceholderRowHtml();
   var empty = all.length === 0 ? '<div class="tiny" style="text-align:center;margin-top:14px">Nothing expiring soon.</div>' : '';
   var footer = all.length > 4 ? '<button class="dash-view-all" onclick="openExpiringFull()">View all ' + all.length + ' &rarr;</button>' : '';
-  return '<div class="card dash-list-card"><div class="section-title dash-list-title">Expiring soon</div>' + rows + empty + footer + '</div>';
+  return '<div class="card dash-list-card" style="background:var(--amber-light);border-color:var(--amber)"><div class="section-title dash-list-title">Expiring soon</div>' + rows + empty + footer + '</div>';
 }
 
 function openTopSellersFull() {
@@ -1793,8 +1803,8 @@ async function openDrugDetail(drugId) {
   var body = sheet(d.name, '');
   body.innerHTML =
     '<div class="kpi-grid" style="margin-bottom:14px">' +
-    kpi('In stock', d.qty_in_stock + ' ' + esc(d.unit), '') +
-    kpi('Stock value', fmt(d.stock_value_retail), '') +
+    kpi('In stock', d.qty_in_stock + ' ' + esc(d.unit), 't-sales') +
+    kpi('Stock value', fmt(d.stock_value_retail), 't-orange') +
     '</div>' +
     (can('restock') ? '<button class="btn primary" style="margin-bottom:14px" onclick="closeSheet();openRestock(' + "'" + encodeDrugForRestock(drugRow) + "'" + ')">+ Restock this drug</button>' : '') +
     '<div class="section-title">Batches</div>' +
@@ -2322,8 +2332,8 @@ function drawReportBody() {
   var visible = sales.slice(0, reportTxPage * TX_PAGE_SIZE);
   body.innerHTML =
     '<div class="kpi-grid" style="margin-bottom:14px">' +
-    kpi('Total sales', fmt(reportData.total), 'good') +
-    kpi('Transactions', sales.length, '') +
+    kpi('Total sales', fmt(reportData.total), 't-sales') +
+    kpi('Transactions', sales.length, 't-violet') +
     '</div>' +
     '<div class="section-title">By payment method</div>' +
     '<div class="card">' + (Object.keys(byMethod).length ? Object.keys(byMethod).map(function (m) {
@@ -2687,7 +2697,7 @@ function drawSupplierDetail() {
   var supplier = detail.supplier;
   var ledger = buildSupplierLedger(detail);
   STATE.currentSupplierLedger = ledger;
-  var balanceKind = ledger.balance > 0.5 ? 'bad' : (ledger.balance < -0.5 ? 'good' : '');
+  var balanceKind = ledger.balance > 0.5 ? 't-red' : (ledger.balance < -0.5 ? 't-sales' : 't-neutral');
   var contactLine = [supplier.phone, supplier.email, supplier.address].filter(Boolean).join(' · ');
 
   c.innerHTML =
@@ -2695,9 +2705,9 @@ function drawSupplierDetail() {
     '<div class="section-title" style="margin-top:0">' + esc(supplier.name) + '</div>' +
     (contactLine ? '<div class="tiny" style="margin-bottom:10px">' + esc(contactLine) + '</div>' : '') +
     '<div class="kpi-grid">' +
-    kpi('Opening balance', fmt(ledger.opening)) +
-    kpi('Total delivered', fmt(ledger.totalDelivered)) +
-    kpi('Total paid', fmt(ledger.totalPaid), 'good') +
+    kpi('Opening balance', fmt(ledger.opening), 't-violet') +
+    kpi('Total delivered', fmt(ledger.totalDelivered), 't-orange') +
+    kpi('Total paid', fmt(ledger.totalPaid), 't-sales') +
     kpi('Balance owed', fmt(ledger.balance), balanceKind) +
     '</div>' +
     '<div class="toolbar-row"><div class="toolbar-segment">' +
@@ -3037,8 +3047,8 @@ function drawExpensesList() {
       }).join('') +
     '</div><div class="dash-period-label">' + DASH_PERIOD_LABEL[expRange] + '</div></div>' +
     '<div class="kpi-grid" style="margin-bottom:14px">' +
-      kpi('Total spent', fmt(total), 'bad') +
-      kpi('Entries', active.length, '') +
+      kpi('Total spent', fmt(total), 't-red') +
+      kpi('Entries', active.length, 't-violet') +
     '</div>' +
     '<div class="section-title">By category</div>' +
     '<div class="card" style="margin-bottom:14px">' + breakdownHtml + '</div>' +

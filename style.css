@@ -27,7 +27,7 @@
      (--green/--amber/--red), which stay reserved for nav/buttons/badges
      everywhere else in the app and never carry chart/data meaning. */
   --d-sales: #008300;       --d-sales-light: #E3F3E3;
-  --d-blue: #4D7AB3;        /* Top sellers bars */
+  --d-blue: #4D7AB3;        --d-blue-light: #E7EEF6;   /* Top sellers bars */
   --d-violet: #6F5FA0;      --d-violet-light: #ECE8F7;  /* Rush hours bars */
   --d-orange: #eb6834;      --d-orange-light: #FDEBE3;  /* Stock value */
   --d-magenta: #e87ba4;     --d-magenta-light: #FCEAF1; /* Supplier debt */
@@ -97,22 +97,52 @@ input, select, textarea { font: inherit; }
 .navbar button.active { color: #fff; }
 .navbar button.active .ic { background: var(--amber); color: #241A03; }
 
+/* Item 31: the left/right colored-accent border pattern, ported over from
+   ShuleTop's .stat/.hub-tile tiles (src/styles/main.css) — a thin 1px
+   border all around plus a thicker 4px accent specifically on the left and
+   right edges, colored to match the tile's own hue. The base rule reserves
+   transparent 4px left/right borders so nothing shifts in width when a
+   .t-* (or dash-pill/dash-*) color class later recolors them. */
 .card {
-  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
-  padding: 14px; margin-bottom: 12px; box-shadow: var(--shadow-sm);
+  background: var(--card); border: 1px solid var(--line); border-left: 4px solid transparent; border-right: 4px solid transparent;
+  border-radius: var(--radius); padding: 14px; margin-bottom: 12px; box-shadow: var(--shadow-sm);
 }
 .kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.kpi { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow-sm); }
+.kpi {
+  background: var(--card); border: 1px solid var(--line); border-left: 4px solid transparent; border-right: 4px solid transparent;
+  border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow-sm);
+}
 .kpi .label { font-size: 12px; color: var(--ink-soft); font-weight: 600; }
 .kpi .value { font-size: 23px; font-weight: 800; margin-top: 5px; font-variant-numeric: tabular-nums; letter-spacing: -0.2px; }
-.kpi.warn { background: var(--amber); border-color: transparent; box-shadow: 0 4px 14px rgba(184,134,11,0.28); }
-.kpi.warn .label { color: rgba(36,26,3,0.7); }
-.kpi.warn .value { color: #241A03; }
-.kpi.bad { background: #fff; border: 1.5px solid #EFC3BE; }
-.kpi.bad .value { color: var(--red); }
-.kpi.good { background: linear-gradient(155deg, var(--green), var(--green-dark)); border-color: transparent; box-shadow: 0 4px 14px rgba(15,81,50,0.28); }
-.kpi.good .label { color: rgba(255,255,255,0.78); }
-.kpi.good .value { color: #fff; }
+
+/* Item 30 (tile color sketch, approved): every summary tile across the app
+   (drug detail, Reports, Suppliers, Expenses) now uses a light tint from
+   the same palette as the Dashboard's Sales/Stock value/Profit pills,
+   instead of plain white or the old bold solid-color "good/bad/warn"
+   treatment. Color is chosen by what the number means, not per-screen:
+   sales/green = money in or a healthy state, orange = stock & goods
+   movement, violet = a neutral count, red = money out/owed, amber =
+   needs attention, neutral gray = zero/not applicable. Item 31 adds the
+   matching accent border color on top (border-color recolors all four
+   sides at once, so the 1px top/bottom and the 4px left/right both pick up
+   the same hue in one declaration — same trick ShuleTop's CSS uses). */
+.kpi.t-sales   { background: var(--d-sales-light); border-color: var(--d-sales); }
+.kpi.t-sales .label { color: var(--d-sales); }
+.kpi.t-orange  { background: var(--d-orange-light); border-color: var(--d-orange); }
+.kpi.t-orange .label { color: var(--d-orange); }
+.kpi.t-violet  { background: var(--d-violet-light); border-color: var(--d-violet); }
+.kpi.t-violet .label { color: var(--d-violet); }
+.kpi.t-magenta { background: var(--d-magenta-light); border-color: var(--d-magenta); }
+.kpi.t-magenta .label { color: var(--d-magenta); }
+.kpi.t-green   { background: var(--green-light); border-color: var(--green); }
+.kpi.t-green .label { color: var(--green); }
+.kpi.t-amber   { background: var(--amber-light); border-color: var(--amber); }
+.kpi.t-amber .label { color: #8a6408; }
+.kpi.t-red     { background: var(--red-light); border-color: var(--red); }
+.kpi.t-red .label { color: var(--red); }
+.kpi.t-red .value { color: var(--red); }
+.kpi.t-neutral { background: #F1EEEA; border-color: var(--line); }
+.kpi.t-neutral .label { color: var(--ink-soft); }
 
 h1, h2, h3 { margin: 0 0 10px; }
 h2 { font-size: 16px; }
@@ -391,9 +421,13 @@ h2 { font-size: 16px; }
 .dash-graph-head { text-align: center; }
 .dash-graph-headline { font-size: 28px; font-weight: 800; color: var(--ink); margin-top: 4px; }
 .dash-graph-chip-row { margin-top: 8px; display: flex; justify-content: center; }
-.dash-chip { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; }
-.dash-chip.up { color: var(--d-sales); background: var(--d-sales-light); }
-.dash-chip.down { color: var(--d-critical); background: #FBEAEA; }
+/* Item 30: graph/list cards now carry a tinted background of their own (see
+   drawDashboard()), so a chip that used to fill with the same light tint
+   would disappear into it — chips are now a solid white pill with a hairline
+   ring instead, which stays legible on any card color. */
+.dash-chip { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; background: #fff; box-shadow: 0 0 0 1px rgba(32,30,27,0.08); }
+.dash-chip.up { color: var(--d-sales); }
+.dash-chip.down { color: var(--d-critical); }
 .dash-chart-wrap { margin-top: 14px; }
 .dash-chart-wrap svg { display: block; }
 .dash-axis-label-row { display: flex; margin-top: 6px; }
@@ -401,7 +435,10 @@ h2 { font-size: 16px; }
 
 .dash-pill-row { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
 @media (min-width: 860px) { .dash-pill-row { flex-direction: row; } }
-.dash-pill { flex: 1; border-radius: var(--radius); padding: 13px 16px; }
+/* Item 31: same left/right accent-border scaffold as .card/.kpi, so the
+   pill row (already tinted) also picks up the matching border via inline
+   border-color in dashPillsHtml(). */
+.dash-pill { flex: 1; border: 1px solid transparent; border-left: 4px solid transparent; border-right: 4px solid transparent; border-radius: var(--radius); padding: 13px 16px; }
 .dash-pill .dot { width: 8px; height: 8px; border-radius: 3px; margin-bottom: 8px; }
 .dash-pill .label { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; }
 .dash-pill .value { font-size: 18px; font-weight: 800; color: var(--ink); margin-top: 3px; }
