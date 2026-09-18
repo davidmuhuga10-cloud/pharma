@@ -338,7 +338,14 @@ select
   coalesce(sum(b.quantity_remaining) filter (where b.expiry_date < current_date), 0::bigint) as qty_expired,
   min(b.expiry_date) filter (where b.quantity_remaining > 0 and b.expiry_date >= current_date) as soonest_expiry,
   coalesce(sum(b.quantity_remaining::numeric * b.cost_price) filter (where b.expiry_date >= current_date), 0::numeric) as stock_value_cost,
-  coalesce(sum(b.quantity_remaining::numeric * b.sell_price) filter (where b.expiry_date >= current_date), 0::numeric) as stock_value_retail
+  coalesce(sum(b.quantity_remaining::numeric * b.sell_price) filter (where b.expiry_date >= current_date), 0::numeric) as stock_value_retail,
+  -- Added this session (item 26): true when this drug has stock sitting in
+  -- a batch whose expiry is a placeholder, not a real date (expiry_unknown
+  -- — set by "Sync common drugs", a supplier LPO marked unknown, or now an
+  -- Excel import row with no expiry column filled in). Backs the Inventory
+  -- "no expiry date set" notice so a pharmacist can find and fix these
+  -- without opening every drug one by one.
+  coalesce(bool_or(b.expiry_unknown) filter (where b.quantity_remaining > 0), false) as has_unknown_expiry
 from drugs d
 left join batches b on b.drug_id = d.id
 where d.active
@@ -1790,21 +1797,26 @@ grant execute on function dashboard_data(uuid, text) to authenticated;
 -- ============================================================================
 -- 14. EXPENSES (added this session — PHARMA_PROJECT_STATUS.md item 23)
 -- — a general pharmacy-expenses ledger (rent, utilities, salaries, transport,
--- licenses, marketing, maintenance, supplies, other), separate from Suppliers
--- (which is specifically about drug-stock deliveries and supplier debt).
--- Same soft-void pattern as sales (voided/voided_at/void_reason) rather than
--- a hard delete, so a mistaken entry stays in the audit trail. Same
+-- licenses, marketing, maintenance, supplies, other as a starting preset),
+-- separate from Suppliers (which is specifically about drug-stock deliveries
+-- and supplier debt). Same soft-void pattern as sales (voided/voided_at/
+-- void_reason — the UI calls this action "Reverse," item 25) rather than a
+-- hard delete, so a mistaken entry stays in the audit trail. Same
 -- authorization tier as Suppliers: owner/pharmacist only, not attendants —
 -- see app.js's Expenses tab and record_expense/void_expense below.
+--
+-- category is free text, not an enum (changed in item 25) — a pharmacy can
+-- type its own category beyond the 9-item preset (e.g. "PPB license fee"),
+-- and since a Postgres enum's values are shared across every pharmacy on
+-- this project, letting one pharmacy add a custom value to a shared enum
+-- would leak into every other pharmacy's dropdown. Free text with a small
+-- app.js-side preset list (as suggestions, not a constraint) avoids that.
 -- ============================================================================
-
-create type expense_category as enum
-  ('rent', 'utilities', 'salaries', 'transport', 'licenses', 'marketing', 'maintenance', 'supplies', 'other');
 
 create table expenses (
   id             uuid primary key default gen_random_uuid(),
   pharmacy_id    uuid not null references pharmacies(id) on delete cascade,
-  category       expense_category not null default 'other',
+  category       text not null default 'other' check (char_length(category) between 1 and 60),
   description    text not null,
   amount         numeric(10,2) not null check (amount > 0),
   method         supplier_payment_method not null default 'cash',   -- reuses the same cash/mpesa/bank/cheque/other type Suppliers already uses
@@ -1857,7 +1869,7 @@ begin
   end if;
 
   insert into expenses (pharmacy_id, category, description, amount, method, expense_date, notes, created_by)
-  values (p_pharmacy_id, coalesce(nullif(p_category, '')::expense_category, 'other'), trim(p_description), p_amount,
+  values (p_pharmacy_id, coalesce(nullif(trim(p_category), ''), 'other'), trim(p_description), p_amount,
           coalesce(nullif(p_method, '')::supplier_payment_method, 'cash'), coalesce(p_expense_date, current_date), p_notes, auth.uid())
   returning id into v_expense_id;
 
@@ -1900,3 +1912,38 @@ $$;
 
 grant execute on function record_expense(uuid, text, text, numeric, text, date, text) to authenticated;
 grant execute on function void_expense(uuid, uuid, text) to authenticated;
+
+-- ============================================================================
+-- 15. BATCH EXPIRY FOLLOW-UP (added this session — PHARMA_PROJECT_STATUS.md
+-- item 26) — lets a pharmacist go back and fill in a real expiry date on a
+-- batch that was created with expiry_unknown (most commonly now: an Excel
+-- import row that had no expiry column filled in — see item 26's relaxed
+-- import validation). Same authorization tier as record_restock, since this
+-- is functionally correcting restock data.
+-- ============================================================================
+
+create or replace function set_batch_expiry(p_pharmacy_id uuid, p_batch_id uuid, p_expiry_date date)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if p_pharmacy_id is distinct from my_pharmacy_id() then
+    raise exception 'Not authorized for this pharmacy';
+  end if;
+  if my_role() not in ('owner', 'pharmacist') then
+    raise exception 'Only the owner or a pharmacist can set a batch''s expiry date';
+  end if;
+  if p_expiry_date is null then
+    raise exception 'Enter an expiry date';
+  end if;
+  if not exists (select 1 from batches where id = p_batch_id and pharmacy_id = p_pharmacy_id) then
+    raise exception 'Batch not found';
+  end if;
+
+  update batches set expiry_date = p_expiry_date, expiry_unknown = false where id = p_batch_id;
+end;
+$$;
+
+grant execute on function set_batch_expiry(uuid, uuid, date) to authenticated;

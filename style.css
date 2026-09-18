@@ -292,7 +292,21 @@ h2 { font-size: 16px; }
   .navbar-foot .who { font-size: 13.5px; font-weight: 700; color: #fff; }
   .navbar-foot .role { font-size: 12px; color: rgba(255,255,255,0.62); }
 
-  .content { margin-left: var(--sidebar-w); max-width: 900px; padding: 24px 32px 60px; }
+  /* FIX (PHARMA_PROJECT_STATUS.md item 29 — desktop right-margin bug): the base .content rule below is written
+     for mobile, where "width:100%; margin:0 auto" is correct (no sidebar,
+     just center a capped column). On desktop, only margin-left got
+     overridden here (to clear the fixed sidebar) while width stayed a
+     literal 100% of the FULL #app width and margin-right stayed the base
+     rule's inherited "auto" — so the box was 100%-of-full-width-wide,
+     shifted right by the sidebar, and every last pixel of the resulting
+     overflow got absorbed into margin-right as one large empty gap on the
+     right instead of the content actually using that space. Fixed by
+     sizing width explicitly against the space actually left after the
+     sidebar (calc, not 100%) and zeroing margin-right instead of
+     inheriting auto. max-width raised from 900 to 1200 so wide desktop
+     monitors show more (inventory rows, dashboard cards) instead of
+     capping unnecessarily narrow. */
+  .content { margin-left: var(--sidebar-w); margin-right: 0; width: calc(100% - var(--sidebar-w)); max-width: 1200px; padding: 24px 32px 60px; }
   .kpi-grid { grid-template-columns: repeat(4, 1fr); }
   .row-2, .row-3 { max-width: 560px; }
   .fab { left: calc(var(--sidebar-w) + 24px); right: auto; bottom: 28px; }
@@ -329,6 +343,34 @@ h2 { font-size: 16px; }
 /* card sizes so a brand-new pharmacy with zero data sees clean           */
 /* placeholders instead of a layout that jumps once real data arrives.    */
 /* ---------------------------------------------------------------------- */
+/* Item 27: dashboard quick access — a one-tap Sell shortcut plus a live
+   "is this drug in stock?" search whose matches drop down right under the
+   box, so a pharmacist can check stock without leaving the dashboard. */
+.dash-quick-row { display: flex; gap: 10px; align-items: stretch; margin-bottom: 16px; }
+.dash-quick-sell { width: auto; flex-shrink: 0; padding: 12px 20px; }
+.dash-quick-search { position: relative; flex: 1; min-width: 0; }
+.dash-quick-search input {
+  width: 100%; height: 100%; padding: 11px 14px; border-radius: 999px; border: 1px solid var(--line); background: #fff;
+}
+.dash-quick-results {
+  display: none; position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 5;
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: var(--shadow-lg); max-height: 320px; overflow-y: auto; padding: 4px 14px;
+}
+.dash-quick-results.open { display: block; }
+.dash-quick-result-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 0; border-bottom: 1px solid var(--line); cursor: pointer;
+}
+.dash-quick-result-row:last-child { border-bottom: none; }
+.dash-quick-result-row:hover { background: #FAF9F7; }
+.dash-quick-result-row.empty { color: var(--ink-soft); cursor: default; justify-content: center; }
+.dash-quick-result-row.empty:hover { background: none; }
+.dash-quick-result-row .name { font-weight: 600; }
+.dash-quick-result-row .meta { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
+.dash-quick-result-row .right { display: flex; align-items: center; white-space: nowrap; }
+@media (max-width: 640px) { .dash-quick-row { flex-direction: column; } .dash-quick-sell { width: 100%; } }
+
 .dash-filter-row {
   display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;
   border-bottom: 1px solid var(--line); margin-bottom: 16px;

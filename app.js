@@ -104,6 +104,33 @@ function logoMarkHtml(size) {
 }
 
 function $(sel, ctx) { return (ctx || document).querySelector(sel); }
+
+// PHARMA_PROJECT_STATUS.md item 28: this app's render model rebuilds a
+// whole container's innerHTML on every state change — simple and fine for
+// most screens, but a live "search as you type" box redraws its own
+// container on every keystroke, which recreates the <input> DOM node from
+// scratch and drops focus/cursor position. That's what made typing feel
+// like it "blocks" after one character until you click back in — the box
+// wasn't actually broken, it was just losing focus on every redraw. This
+// restores focus (and cursor position, for text inputs) to the same
+// element by id across a redraw. Used by the handful of search boxes that
+// redraw their own container (Inventory, Sync common drugs, Sell, new LPO).
+function redrawKeepingFocus(container, html) {
+  var active = document.activeElement;
+  var activeId = (active && container.contains(active) && active.id) ? active.id : null;
+  var selStart = null, selEnd = null;
+  if (activeId && typeof active.selectionStart === 'number') { selStart = active.selectionStart; selEnd = active.selectionEnd; }
+  container.innerHTML = html;
+  if (activeId) {
+    var el = document.getElementById(activeId);
+    if (el) {
+      el.focus();
+      if (selStart !== null && el.setSelectionRange) {
+        try { el.setSelectionRange(selStart, selEnd); } catch (e) {}
+      }
+    }
+  }
+}
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
   return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
 }); }
@@ -704,7 +731,7 @@ async function renderDashboard() {
   c.innerHTML = '<div class="empty">Loading dashboard…</div>';
   try {
     var results = await Promise.all([
-      sb.from('v_drug_stock').select('stock_value_retail'),
+      sb.from('v_drug_stock').select('drug_id,name,unit,qty_in_stock,reorder_level,stock_value_retail'),
       sb.from('v_out_of_stock').select('drug_id,name,unit'),
       sb.from('v_low_stock').select('drug_id,name,unit,qty_in_stock,reorder_level'),
       sb.from('v_expiring_batches').select('*').order('expiry_date'),
@@ -734,7 +761,11 @@ async function renderDashboard() {
       lowStock: lowRes.data || [],
       expiring: expRes.data || [],
       supplierOwed: supplierOwed,
-      suppliersOwedCount: suppliersOwedCount
+      suppliersOwedCount: suppliersOwedCount,
+      // Item 27 (Dashboard quick access): a lightweight name/qty list kept
+      // around purely for the "is this drug in stock?" quick-search box —
+      // avoids a second round trip on every keystroke.
+      drugList: stockRes.data || []
     };
     dashData = dashRes.data;
   } catch (e) {
@@ -764,6 +795,7 @@ function drawDashboard() {
   var c = $('#content');
   var refetching = dashLoading ? ' dash-refetching' : '';
   c.innerHTML =
+    dashQuickAccessHtml() +
     dashFilterRowHtml() +
     '<div class="dash-row">' +
       '<div class="dash-col"><div class="card dash-graph-card' + refetching + '">' + dashSalesGraphHtml(dashData) + '</div></div>' +
@@ -778,6 +810,48 @@ function drawDashboard() {
       '<div class="dash-col' + refetching + '">' + dashTopSellersCard(dashData) + '</div>' +
       '<div class="dash-col">' + dashExpiringCard(dashSnap) + '</div>' +
     '</div>';
+}
+
+// Item 27: dashboard quick access — a one-tap "Sell" shortcut into the POS
+// screen, plus a live search box to instantly check whether a specific drug
+// is in stock without leaving the dashboard or opening full Inventory.
+function dashQuickAccessHtml() {
+  return '<div class="dash-quick-row">' +
+    '<button class="btn primary dash-quick-sell" onclick="setTab(\'sell\')">' + icon('sell', 16) + ' Sell</button>' +
+    '<div class="dash-quick-search">' +
+    '<input id="dashStockCheckInput" placeholder="Check if a drug is in stock…" autocomplete="off" oninput="dashStockCheckSearch(this.value)" onblur="setTimeout(function(){var b=document.getElementById(\'dashStockCheckResults\');if(b)b.classList.remove(\'open\');},150)">' +
+    '<div id="dashStockCheckResults" class="dash-quick-results"></div>' +
+    '</div></div>';
+}
+
+function dashStockCheckSearch(val) {
+  var box = $('#dashStockCheckResults');
+  if (!box) return;
+  var q = (val || '').trim().toLowerCase();
+  if (!q) { box.classList.remove('open'); box.innerHTML = ''; return; }
+  var matches = (dashSnap.drugList || []).filter(function (d) { return d.name.toLowerCase().indexOf(q) !== -1; }).slice(0, 8);
+  box.classList.add('open');
+  box.innerHTML = matches.length ? matches.map(function (d) {
+    var kind = d.qty_in_stock === 0 ? 'bad' : d.qty_in_stock <= (d.reorder_level || 0) ? 'warn' : 'good';
+    var badge = kind === 'bad' ? '<span class="badge bad">Out of stock</span>' : kind === 'warn' ? '<span class="badge warn">Low stock</span>' : '<span class="badge good">In stock</span>';
+    return '<div class="dash-quick-result-row" onclick="dashStockCheckGoInventory(\'' + d.drug_id + '\')">' +
+      '<div><div class="name">' + esc(d.name) + '</div><div class="meta">' + d.qty_in_stock + ' ' + esc(d.unit) + ' available</div></div>' +
+      '<div class="right">' + badge + '<button class="btn small secondary" style="margin-left:8px" onclick="event.stopPropagation();dashStockCheckSell(\'' + d.drug_id + '\')">Sell</button></div>' +
+      '</div>';
+  }).join('') : '<div class="dash-quick-result-row empty">No drug matches that search.</div>';
+}
+
+function dashStockCheckGoInventory(drugId) {
+  var d = (dashSnap.drugList || []).filter(function (x) { return x.drug_id === drugId; })[0];
+  invFilter = d ? d.name : '';
+  invPage = 1;
+  setTab('inventory');
+}
+
+function dashStockCheckSell(drugId) {
+  var d = (dashSnap.drugList || []).filter(function (x) { return x.drug_id === drugId; })[0];
+  sellFilter = d ? d.name : '';
+  setTab('sell');
 }
 
 function dashFilterRowHtml() {
@@ -1122,8 +1196,9 @@ function drawInventory() {
   var allRows = STATE.drugsCache.filter(function (d) { return d.name.toLowerCase().indexOf(q) !== -1; });
   var rows = allRows.slice(0, invPage * INV_PAGE_SIZE);
   var reorderCount = STATE.drugsCache.filter(function (d) { return d.qty_in_stock <= d.reorder_level; }).length;
-  c.innerHTML =
-    '<div class="searchbox field"><input placeholder="Search drugs…" value="' + esc(invFilter) + '" oninput="invFilter=this.value;invPage=1;drawInventory()"></div>' +
+  var unknownExpiryCount = STATE.drugsCache.filter(function (d) { return d.has_unknown_expiry; }).length;
+  redrawKeepingFocus(c,
+    '<div class="searchbox field"><input id="invSearchInput" placeholder="Search drugs…" value="' + esc(invFilter) + '" oninput="invFilter=this.value;invPage=1;drawInventory()"></div>' +
     '<div class="toolbar-row">' +
     '<div class="toolbar-segment">' +
     (can('edit_inventory') ? '<button class="btn" onclick="openSyncMasterDrugs()">' + icon('box',15) + ' Sync common drugs</button>' : '') +
@@ -1135,6 +1210,8 @@ function drawInventory() {
     '</div>' +
     (can('restock') && reorderCount ? '<div class="inline-notice">' + icon('clipboard',15) +
       '<a href="#" onclick="openReorderList();return false;">' + reorderCount + (reorderCount === 1 ? ' drug needs' : ' drugs need') + ' reordering — view list</a></div>' : '') +
+    (unknownExpiryCount ? '<div class="inline-notice">' + icon('warn',15) +
+      '<a href="#" onclick="openUnknownExpiryList();return false;">' + unknownExpiryCount + (unknownExpiryCount === 1 ? ' drug has' : ' drugs have') + ' a batch with no expiry date set — view list</a></div>' : '') +
     '<div class="card">' + (rows.length ? rows.map(function (d) {
       var kind = d.qty_in_stock === 0 ? 'bad' : d.qty_in_stock <= d.reorder_level ? 'warn' : 'good';
       var badge = kind === 'bad' ? '<span class="badge bad">Out</span>' : kind === 'warn' ? '<span class="badge warn">Low</span>' : '<span class="badge good">OK</span>';
@@ -1145,7 +1222,7 @@ function drawInventory() {
         '<div><div class="name">' + esc(d.name) + '</div><div class="meta">' + fmt(d.stock_value_retail) + ' in stock value' + expBadge + '</div></div></div>' +
         '<div class="right">' + badge + '<div class="meta">' + d.qty_in_stock + ' ' + esc(d.unit) + '</div></div></div>';
     }).join('') : '<div class="empty">No drugs match. Try clearing the search or add a new one.</div>') + '</div>' +
-    (allRows.length > rows.length ? '<button class="btn ghost" style="margin-top:10px" onclick="invPage++;drawInventory()">Load more (' + (allRows.length - rows.length) + ' more)</button>' : '');
+    (allRows.length > rows.length ? '<button class="btn ghost" style="margin-top:10px" onclick="invPage++;drawInventory()">Load more (' + (allRows.length - rows.length) + ' more)</button>' : ''));
 }
 
 function exportInventoryExcel() {
@@ -1310,30 +1387,47 @@ function previewImport(dataRows, colMap) {
       }
     }
 
+    // Only drug name and current stock quantity are actually required —
+    // everything else (price, expiry, category, batch no., supplier) is
+    // optional at import time, so a messy real-world stock-take sheet
+    // doesn't lose rows over incidental missing columns. A missing sell
+    // price defaults to cost price (or 0, visibly flaggable in Inventory —
+    // nobody misses a drug priced at KES 0). A missing expiry imports as
+    // "expiry unknown" (same placeholder-date pattern record_restock
+    // already supports for Sync common drugs / supplier LPOs) rather than
+    // being skipped — see openUnknownExpiryList() for how the pharmacy
+    // finds and fixes these afterward.
     var expiryRaw = cell('expiry');
     var expiry = parseFlexibleExpiry(expiryRaw);
-    if (!name || !qty || qty <= 0 || !sellPrice || !expiry) { skipped++; return; }
+    if (!name || !qty || qty <= 0) { skipped++; return; }
+    var costPrice = parseFloat(cell('costPrice')) || null;
     parsed.push({
       name: String(name).trim(),
       category: cell('category') || currentCategory || '',
       form: (cell('form') || 'other').toString().toLowerCase(),
       unit: cell('unit') || 'unit',
       qty: qty,
-      costPrice: parseFloat(cell('costPrice')) || null,
-      sellPrice: sellPrice,
+      costPrice: costPrice,
+      sellPrice: sellPrice || costPrice || 0,
       expiry: expiry,
+      expiryUnknown: !expiry,
       batchNo: cell('batchNo') || null,
       supplier: cell('supplier') || null
     });
   });
 
+  var noPriceCount = parsed.filter(function (p) { return !p.sellPrice; }).length;
+  var noExpiryCount = parsed.filter(function (p) { return p.expiryUnknown; }).length;
   var body = sheet('Import preview', '');
   body.innerHTML =
     '<div class="tiny" style="margin-bottom:10px">' + parsed.length + ' rows ready to import' +
-    (skipped ? ', ' + skipped + ' skipped (missing drug name, quantity, sell price, or a readable expiry date)' : '') + '.</div>' +
+    (skipped ? ', ' + skipped + ' skipped (missing drug name or quantity)' : '') + '.' +
+    (noExpiryCount ? ' ' + noExpiryCount + ' with no expiry date — they\'ll import as "expiry unknown," flagged in Inventory to fix later.' : '') +
+    (noPriceCount ? ' ' + noPriceCount + ' with no price — they\'ll import at KES 0 until you set a price.' : '') +
+    '</div>' +
     '<div class="card" style="max-height:260px;overflow-y:auto">' +
     (parsed.length ? parsed.slice(0, 50).map(function (p) {
-      return listRow(p.name, p.qty + ' ' + p.unit + ' · exp ' + fmtDate(p.expiry), fmt(p.sellPrice));
+      return listRow(p.name, p.qty + ' ' + p.unit + ' · exp ' + (p.expiryUnknown ? 'unknown' : fmtDate(p.expiry)), fmt(p.sellPrice));
     }).join('') : '<div class="empty">Nothing importable was found in that file.</div>') +
     (parsed.length > 50 ? '<div class="tiny" style="margin-top:8px">…and ' + (parsed.length - 50) + ' more</div>' : '') +
     '</div>' +
@@ -1384,7 +1478,8 @@ async function runImport(encoded) {
           p_sell_price: r.sellPrice,
           p_expiry_date: r.expiry,
           p_batch_no: r.batchNo,
-          p_supplier: r.supplier
+          p_supplier: r.supplier,
+          p_expiry_unknown: !r.expiry
         });
         if (rErr) throw rErr;
         imported++;
@@ -1451,9 +1546,9 @@ function drawSyncMasterDrugs() {
 
   var selectedCount = Object.keys(STATE.syncSelected).length;
 
-  body.innerHTML =
+  redrawKeepingFocus(body,
     '<div class="tiny" style="margin-bottom:10px">Tick the drugs this pharmacy sells and enter the current quantity, price and reorder threshold for each. Expiry date is optional.</div>' +
-    '<div class="searchbox field"><input placeholder="Search drugs…" value="' + esc(syncFilter) + '" oninput="syncFilter=this.value;drawSyncMasterDrugs()"></div>' +
+    '<div class="searchbox field"><input id="syncSearchInput" placeholder="Search drugs…" value="' + esc(syncFilter) + '" oninput="syncFilter=this.value;drawSyncMasterDrugs()"></div>' +
     (catNames.length ? catNames.map(function (cat) {
       var items = byCat[cat];
       var hasSelected = items.some(function (m) { return STATE.syncSelected[m.id]; });
@@ -1464,7 +1559,7 @@ function drawSyncMasterDrugs() {
         '</details>';
     }).join('') : '<div class="empty">No drugs match your search.</div>') +
     '<div class="tiny" style="margin:12px 0">' + selectedCount + ' drug' + (selectedCount === 1 ? '' : 's') + ' selected</div>' +
-    '<button class="btn primary" id="syncSubmitBtn" onclick="submitMasterDrugsSync()"' + (selectedCount ? '' : ' disabled') + '>Add to inventory</button>';
+    '<button class="btn primary" id="syncSubmitBtn" onclick="submitMasterDrugsSync()"' + (selectedCount ? '' : ' disabled') + '>Add to inventory</button>');
 }
 
 function drawSyncDrugRow(m) {
@@ -1579,6 +1674,67 @@ function printReorderList() {
     return [d.name, d.qty_in_stock + ' ' + d.unit, d.reorder_level, suggested];
   });
   printHtml('Reorder List', todayStr(), tableHtml(['Drug', 'Current stock', 'Reorder level', 'Suggested order'], rows), needed.length + ' items');
+}
+
+// Drugs brought into stock without a known expiry date (e.g. via a relaxed
+// Excel import, item 26) are flagged in v_drug_stock via has_unknown_expiry.
+// This lets the pharmacy come back later, look up the exact batch, and fill
+// in the real expiry date once they have it.
+function openUnknownExpiryList() {
+  sheet('Batches with no expiry date', '<div class="empty">Loading…</div>');
+  loadUnknownExpiryList();
+}
+
+async function loadUnknownExpiryList() {
+  var body = $('#sheetBody');
+  if (!body) return;
+  try {
+    var { data: batches, error } = await sb.from('batches')
+      .select('id, batch_no, quantity_remaining, drug_id, drugs(name, unit)')
+      .eq('pharmacy_id', STATE.profile.pharmacy_id)
+      .eq('expiry_unknown', true)
+      .gt('quantity_remaining', 0)
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    STATE.unknownExpiryBatches = batches || [];
+    renderUnknownExpiryList();
+  } catch (e) {
+    body.innerHTML = '<div class="empty">' + esc(friendlyError(e)) + '</div>';
+  }
+}
+
+function renderUnknownExpiryList() {
+  var body = $('#sheetBody');
+  if (!body) return;
+  var batches = STATE.unknownExpiryBatches || [];
+  body.innerHTML =
+    '<div class="tiny" style="margin-bottom:10px">These batches were brought into stock without an expiry date. Set the real date once you have it — this only needs doing once per batch.</div>' +
+    (batches.length ? '<div class="card">' + batches.map(function (b) {
+      var drugName = (b.drugs && b.drugs.name) || 'Unknown drug';
+      var unit = (b.drugs && b.drugs.unit) || 'unit';
+      return '<div class="list-row"><div><div class="name">' + esc(drugName) + '</div>' +
+        '<div class="meta">' + b.quantity_remaining + ' ' + esc(unit) + (b.batch_no ? ' · batch ' + esc(b.batch_no) : '') + '</div></div>' +
+        '<div class="right" style="display:flex;gap:8px;align-items:center">' +
+        '<input type="date" id="expInput_' + b.id + '">' +
+        '<button class="btn small" onclick="saveBatchExpiry(\'' + b.id + '\')">Save</button>' +
+        '</div></div>';
+    }).join('') + '</div>' : '<div class="empty">Nothing left to flag — every batch has an expiry date.</div>');
+}
+
+async function saveBatchExpiry(batchId) {
+  var input = $('#expInput_' + batchId);
+  var val = input ? input.value : '';
+  if (!val) { toast('Pick a date first.', 'bad'); return; }
+  var { error } = await sb.rpc('set_batch_expiry', {
+    p_pharmacy_id: STATE.profile.pharmacy_id,
+    p_batch_id: batchId,
+    p_expiry_date: val
+  });
+  if (error) { toast(friendlyError(error), 'bad'); return; }
+  toast('Expiry date saved.', 'good');
+  STATE.unknownExpiryBatches = (STATE.unknownExpiryBatches || []).filter(function (b) { return b.id !== batchId; });
+  renderUnknownExpiryList();
+  renderInventory();
 }
 
 function openAddDrug() {
@@ -1822,15 +1978,15 @@ function drawSell() {
   var c = $('#content');
   var q = sellFilter.toLowerCase();
   var rows = STATE.drugsCache.filter(function (d) { return d.name.toLowerCase().indexOf(q) !== -1; });
-  c.innerHTML =
+  redrawKeepingFocus(c,
     (heldSalesCache.length ? heldSalesCard() : '') +
-    '<div class="searchbox field"><input placeholder="Search a drug to sell…" value="' + esc(sellFilter) + '" oninput="sellFilter=this.value;drawSell()"></div>' +
+    '<div class="searchbox field"><input id="sellSearchInput" placeholder="Search a drug to sell…" value="' + esc(sellFilter) + '" oninput="sellFilter=this.value;drawSell()"></div>' +
     (STATE.cart.length ? cartSummaryCard() : '') +
     '<div class="card">' + (rows.length ? rows.map(function (d) {
       return '<div class="list-row" onclick="addToCart(\'' + d.drug_id + '\')" style="cursor:pointer">' +
         '<div><div class="name">' + esc(d.name) + (d.is_prescription ? ' <span class="badge warn">Rx</span>' : '') + '</div><div class="meta">' + d.qty_in_stock + ' ' + esc(d.unit) + ' available' + (d.default_price ? ' · ' + fmt(d.default_price) : '') + '</div></div>' +
         '<div class="right btn small secondary">Add</div></div>';
-    }).join('') : '<div class="empty">Nothing in stock matches that search.</div>') + '</div>';
+    }).join('') : '<div class="empty">Nothing in stock matches that search.</div>') + '</div>');
 }
 
 function heldSalesCard() {
@@ -2637,17 +2793,17 @@ function drawNewLpo(supplierId) {
     return sum + (parseFloat(sel.qty) || 0) * (parseFloat(sel.costPrice) || 0);
   }, 0);
 
-  body.innerHTML =
+  redrawKeepingFocus(body,
     '<div class="row-2">' +
     '<div class="field"><label>Delivery date</label><input type="date" value="' + esc(lpoDeliveredAt) + '" onchange="lpoDeliveredAt=this.value"></div>' +
     '<div class="field"><label>Notes (optional)</label><input value="' + esc(lpoNotes) + '" oninput="lpoNotes=this.value"></div>' +
     '</div>' +
     (selectedDrugs.length ? '<div class="tiny" style="margin-bottom:6px">On this delivery</div><div class="card" style="margin-bottom:12px">' +
       selectedDrugs.map(function (d) { return drawLpoDrugRow(d, supplierId, true); }).join('') + '</div>' : '') +
-    '<div class="searchbox field"><input placeholder="Search drugs to add…" value="' + esc(lpoFilter) + '" oninput="lpoFilter=this.value;drawNewLpo(\'' + supplierId + '\')"></div>' +
+    '<div class="searchbox field"><input id="lpoSearchInput" placeholder="Search drugs to add…" value="' + esc(lpoFilter) + '" oninput="lpoFilter=this.value;drawNewLpo(\'' + supplierId + '\')"></div>' +
     (q ? (searchMatches.length ? '<div class="card">' + searchMatches.map(function (d) { return drawLpoDrugRow(d, supplierId, false); }).join('') + '</div>' : '<div class="empty">No drugs match your search.</div>') : '') +
     '<div class="tiny" style="margin:12px 0">' + selectedIds.length + ' item' + (selectedIds.length === 1 ? '' : 's') + ' selected' + (selectedIds.length ? ' · running total ' + fmt(runningTotal) : '') + '</div>' +
-    '<button class="btn primary" id="lpoSaveBtn" onclick="saveLpo(\'' + supplierId + '\')"' + (selectedIds.length ? '' : ' disabled') + '>Save delivery</button>';
+    '<button class="btn primary" id="lpoSaveBtn" onclick="saveLpo(\'' + supplierId + '\')"' + (selectedIds.length ? '' : ' disabled') + '>Save delivery</button>');
 }
 
 function drawLpoDrugRow(d, supplierId, selected) {
@@ -2868,7 +3024,7 @@ function drawExpensesList() {
   var catRows = Object.keys(byCategory).map(function (k) { return { cat: k, total: byCategory[k] }; })
     .sort(function (a, b) { return b.total - a.total; });
   var breakdownHtml = catRows.length
-    ? catRows.map(function (r) { return listRow(EXP_CATEGORY_LABELS[r.cat] || r.cat, '', fmt(r.total)); }).join('')
+    ? catRows.map(function (r) { return listRow(expenseCategoryLabel(r.cat), '', fmt(r.total)); }).join('')
     : '<div class="empty">No expenses recorded yet for this period.</div>';
 
   var listHtml = inRange.length ? inRange.map(expenseRowHtml).join('') : '<div class="empty">No expenses recorded yet for this period.</div>';
@@ -2890,23 +3046,44 @@ function drawExpensesList() {
     '<div class="card">' + listHtml + '</div>';
 }
 
+function expenseCategoryLabel(cat) {
+  if (EXP_CATEGORY_LABELS[cat]) return EXP_CATEGORY_LABELS[cat];
+  var s = String(cat || '').trim();
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : 'Other';
+}
+
+// Every distinct category this pharmacy has actually used, beyond the
+// fixed preset — feeds the "New expense" category datalist so a custom
+// category someone typed once shows up as a quick pick next time, without
+// needing a separate categories table.
+function expCustomCategories() {
+  var seen = {};
+  (expensesAllCache || []).forEach(function (e) { if (e.category) seen[e.category] = true; });
+  return Object.keys(seen).filter(function (c) { return !EXP_CATEGORY_LABELS[c]; }).sort();
+}
+
 function expenseRowHtml(e) {
-  var meta = [fmtDate(e.expense_date), EXP_CATEGORY_LABELS[e.category] || e.category, supplierPaymentMethodLabel(e.method)].join(' · ');
-  var right = fmt(e.amount) + (e.voided ? '' : ' <button class="btn ghost small" onclick="openVoidExpense(\'' + e.id + '\')">Void</button>');
+  var meta = [fmtDate(e.expense_date), expenseCategoryLabel(e.category), supplierPaymentMethodLabel(e.method)].join(' · ');
+  var right = fmt(e.amount) + (e.voided ? '' : ' <button class="btn danger small" style="margin-left:14px" onclick="openReverseExpense(\'' + e.id + '\')">Reverse</button>');
   return '<div class="list-row">' +
-    '<div><div class="name">' + esc(e.description) + (e.voided ? ' <span class="badge bad">Voided</span>' : '') + '</div><div class="meta">' + esc(meta) + '</div></div>' +
+    '<div><div class="name">' + esc(e.description) + (e.voided ? ' <span class="badge bad">Reversed</span>' : '') + '</div><div class="meta">' + esc(meta) + '</div></div>' +
     '<div class="right">' + right + '</div></div>';
 }
 
 function openAddExpense() {
   var body = sheet('New expense', '');
+  var customCats = expCustomCategories();
   body.innerHTML =
     '<div class="field"><label>Description</label><input id="exDescription" placeholder="e.g. September rent"></div>' +
     '<div class="row-2">' +
     '<div class="field"><label>Amount</label><input id="exAmount" type="number" step="0.01" min="0"></div>' +
-    '<div class="field"><label>Category</label><select id="exCategory">' +
-      Object.keys(EXP_CATEGORY_LABELS).map(function (k) { return '<option value="' + k + '"' + (k === 'other' ? ' selected' : '') + '>' + esc(EXP_CATEGORY_LABELS[k]) + '</option>'; }).join('') +
-    '</select></div></div>' +
+    '<div class="field"><label>Category</label><input id="exCategory" list="exCategoryList" placeholder="e.g. Rent" value="Other">' +
+      '<datalist id="exCategoryList">' +
+        Object.keys(EXP_CATEGORY_LABELS).map(function (k) { return '<option value="' + esc(EXP_CATEGORY_LABELS[k]) + '">'; }).join('') +
+        customCats.map(function (c) { return '<option value="' + esc(expenseCategoryLabel(c)) + '">'; }).join('') +
+      '</datalist>' +
+    '</div></div>' +
+    '<div class="tiny" style="margin:-6px 0 12px">Pick one from the list or type your own — a new category is remembered for next time.</div>' +
     '<div class="row-2">' +
     '<div class="field"><label>Method</label><select id="exMethod">' +
       '<option value="cash">Cash</option><option value="mpesa">M-Pesa</option><option value="bank">Bank</option><option value="cheque">Cheque</option><option value="other">Other</option>' +
@@ -2923,9 +3100,15 @@ async function saveExpense() {
     if (!description) { toast('Give the expense a short description.', 'bad'); return; }
     var amount = parseFloat($('#exAmount').value);
     if (!amount || amount <= 0) { toast('Enter a valid amount.', 'bad'); return; }
+    // Free-text category (fixed presets and custom ones alike) — normalized
+    // to lowercase/trimmed for storage so "Rent" and "rent" group together;
+    // displayed back through expenseCategoryLabel(), which title-cases
+    // anything not in the fixed EXP_CATEGORY_LABELS preset.
+    var categoryRaw = $('#exCategory').value.trim();
+    var category = categoryRaw.toLowerCase().replace(/\s+/g, ' ') || 'other';
     var { error } = await sb.rpc('record_expense', {
       p_pharmacy_id: STATE.profile.pharmacy_id,
-      p_category: $('#exCategory').value,
+      p_category: category,
       p_description: description,
       p_amount: amount,
       p_method: $('#exMethod').value,
@@ -2939,22 +3122,22 @@ async function saveExpense() {
   });
 }
 
-function openVoidExpense(expenseId) {
-  var body = sheet('Void this expense?', '');
+function openReverseExpense(expenseId) {
+  var body = sheet('Reverse this expense?', '');
   body.innerHTML =
-    '<div class="tiny" style="margin-bottom:10px">This marks the expense voided so it drops out of totals — it stays in the list for the record. Cannot be undone.</div>' +
-    '<div class="field"><label>Reason</label><input id="exVoidReason" placeholder="Required"></div>' +
-    '<button class="btn danger" id="exVoidBtn" onclick="doVoidExpense(\'' + expenseId + '\')">Void expense</button>';
+    '<div class="tiny" style="margin-bottom:10px">This marks the expense reversed so it drops out of totals — it stays in the list for the record. Cannot be undone.</div>' +
+    '<div class="field"><label>Reason</label><input id="exReverseReason" placeholder="Required"></div>' +
+    '<button class="btn danger" id="exReverseBtn" onclick="doReverseExpense(\'' + expenseId + '\')">Reverse expense</button>';
 }
 
-async function doVoidExpense(expenseId) {
-  var btn = $('#exVoidBtn');
+async function doReverseExpense(expenseId) {
+  var btn = $('#exReverseBtn');
   act(btn, async function () {
-    var reason = $('#exVoidReason').value.trim();
+    var reason = $('#exReverseReason').value.trim();
     if (!reason) { toast('A reason is required.', 'bad'); return; }
     var { error } = await sb.rpc('void_expense', { p_pharmacy_id: STATE.profile.pharmacy_id, p_expense_id: expenseId, p_reason: reason });
     if (error) { toast(friendlyError(error), 'bad'); return; }
-    toast('Expense voided.', 'good');
+    toast('Expense reversed.', 'good');
     closeSheet();
     renderExpenses();
   });
