@@ -967,7 +967,7 @@ function drawDashboard() {
     dashFilterRowHtml() +
     '<div class="card dash-graph-card' + refetching + '">' + dashSalesGraphHtml(dashData) + '</div>' +
     '<div class="dash-stat-grid' + refetching + '">' + dashStatGridHtml(dashData, dashSnap) + '</div>' +
-    '<div class="card">' + dashStockHealthHtml(dashSnap) + '</div>' +
+    '<div class="card dash-list-card">' + dashStockHealthHtml(dashSnap) + '</div>' +
     '<div class="dash-row">' +
       '<div class="dash-col' + refetching + '">' + dashTopSellersCard(dashData) + '</div>' +
       '<div class="dash-col">' + dashExpiringCard(dashSnap) + '</div>' +
@@ -3410,7 +3410,7 @@ function drawSupplierDetail() {
     '<button class="btn ghost small" style="margin-bottom:10px" onclick="closeSupplierDetail()">&larr; All suppliers</button>' +
     '<div class="section-title" style="margin-top:0">' + esc(supplier.name) + '</div>' +
     (contactLine ? '<div class="tiny" style="margin-bottom:10px">' + esc(contactLine) + '</div>' : '') +
-    '<div class="kpi-grid">' +
+    '<div class="kpi-grid" style="margin-bottom:14px">' +
     kpi('Opening balance', fmt(ledger.opening), 't-violet') +
     kpi('Total delivered', fmt(ledger.totalDelivered), 't-orange') +
     kpi('Total paid', fmt(ledger.totalPaid), 't-sales') +

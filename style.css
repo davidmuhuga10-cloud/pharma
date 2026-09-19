@@ -20,6 +20,15 @@
   --paper: #EFE8D8;
   --card: #FFFFFF;
   --line: #E7E2DC;
+  /* --line on a plain white card barely reads against this app's warm
+     --bg page color — fine for cards that sit inside an already-white
+     sheet/modal, but on the page itself (Dashboard's search bar, Sales
+     graph, Top sellers) it looked borderless next to the boldly-bordered
+     stat tiles beside it. --line-strong is the same neutral family, just
+     dark enough to actually read as a border on --bg — a single source of
+     truth so every "make this plain card look like the other tiles" case
+     stays consistent. */
+  --line-strong: #D8D0C3;
   --radius: 15px;
   --radius-sm: 10px;
   --radius-lg: 20px;
@@ -246,7 +255,12 @@ h2 { font-size: 16px; }
 .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
 
-.searchbox input { width: 100%; padding: 11px 14px; border-radius: 999px; border: 1px solid var(--line); background: #fff; }
+/* Same border color every card/kpi/tile in the app already uses, plus their
+   shadow — the 1px var(--line) border alone barely reads on this input's
+   near-white background (especially inside a white sheet), so on its own it
+   looked like the filter bar had no border at all next to the tiles around
+   it. */
+.searchbox input { width: 100%; padding: 11px 14px; border-radius: 999px; border: 1px solid var(--line); background: #fff; box-shadow: var(--shadow-sm); }
 
 .fab {
   position: fixed; right: 16px; bottom: 78px; z-index: 11;
@@ -517,7 +531,7 @@ h2 { font-size: 16px; }
 .dash-actions .btn { width: auto; flex: 1; }
 .dash-quick-search { position: relative; margin-bottom: 12px; }
 .dash-quick-search input {
-  width: 100%; padding: 11px 14px; border-radius: 999px; border: 1px solid var(--line); background: #fff;
+  width: 100%; padding: 11px 14px; border-radius: 999px; border: 1px solid var(--line-strong); background: #fff; box-shadow: var(--shadow-sm);
 }
 .dash-quick-results {
   display: none; position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 5;
@@ -568,7 +582,7 @@ h2 { font-size: 16px; }
    space under a short chart. Card header is now .dash-card-head (compact,
    shared with Stock health/Top sellers/Expiring soon below) instead of
    the old centered section-title + big headline + centered chip row. */
-.dash-graph-card { display: flex; flex-direction: column; }
+.dash-graph-card { display: flex; flex-direction: column; border-top-color: var(--line-strong); border-bottom-color: var(--line-strong); }
 .dash-graph-head { text-align: center; }
 .dash-graph-headline { font-size: 28px; font-weight: 800; color: var(--ink); margin-top: 4px; }
 .dash-graph-chip-row { margin-top: 6px; display: flex; justify-content: flex-start; }
@@ -608,7 +622,7 @@ h2 { font-size: 16px; }
    two-column desktop pairing and, once cards mostly run 3-4 rows deep on
    phone, just left a lot of dead space below "View all". Cards now hug
    their own content at any width. */
-.dash-list-card { }
+.dash-list-card { border-top-color: var(--line-strong); border-bottom-color: var(--line-strong); }
 .dash-bar-row { display: flex; align-items: center; gap: 10px; margin-top: 11px; }
 .dash-bar-row.placeholder { opacity: 0.4; }
 .dash-bar-label { width: 150px; min-width: 0; font-size: 12px; color: var(--ink); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
