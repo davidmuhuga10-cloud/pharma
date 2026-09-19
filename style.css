@@ -8,7 +8,15 @@
   --red: #B3261E;
   --red-light: #FBE9E7;
   --ink: #201E1B;
-  --ink-soft: #6B6560;
+  /* Design rule (going forward, app-wide): no gray/muted text color anywhere
+     — light gray reads poorly in bright daylight, which is how this app is
+     mostly used. --ink-soft used to be a genuinely lighter gray-brown
+     (#6B6560) for "less important" text (meta lines, axis labels, timestamps);
+     it's now the same deep near-black as --ink itself. Every "soft"/muted
+     text style in the app inherits this automatically since they all read
+     the variable rather than a hardcoded color — visual hierarchy for that
+     text now comes from size/weight/letter-spacing, not from being lighter. */
+  --ink-soft: #201E1B;
   --paper: #EFE8D8;
   --card: #FFFFFF;
   --line: #E7E2DC;
@@ -18,7 +26,7 @@
   --shadow-sm: 0 1px 2px rgba(32,30,27,0.05), 0 1px 1px rgba(32,30,27,0.04);
   --shadow-md: 0 6px 20px rgba(15,81,50,0.09), 0 2px 6px rgba(32,30,27,0.05);
   --shadow-lg: 0 16px 40px rgba(15,81,50,0.16);
-  --sidebar-w: 264px;
+  --sidebar-w: 132px; /* was 264px — halved per feedback that the desktop nav column was too wide */
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 
   /* Dashboard data colors — validated for colorblind-safety with the
@@ -213,7 +221,7 @@ h2 { font-size: 16px; }
 .btn.ghost { background: #EFEDEA; color: var(--ink); }
 .btn.danger { background: var(--red-light); color: var(--red); }
 .btn.small { width: auto; padding: 8px 12px; font-size: 13px; }
-.btn:disabled { opacity: 0.5; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn:not(:disabled):hover { filter: brightness(1.06); }
 .btn:not(:disabled):active { transform: scale(0.98); }
 
@@ -260,23 +268,69 @@ h2 { font-size: 16px; }
 .toast.good { background: var(--green); }
 
 /* ---------------------------------------------------------------------- */
-/* AUTH — a proper split layout on desktop (brand panel + form) instead of */
-/* a tiny centered card in a sea of empty page; a simple centered card on  */
-/* mobile and for the one-off error/recovery screens.                     */
+/* AUTH — a proper split layout on desktop (green brand panel with floating */
+/* stat cards + form) instead of a tiny centered card in a sea of empty     */
+/* page; on mobile the same panel collapses into a curved-gradient hero     */
+/* above the form, with a trust line near the bottom. Sketched against      */
+/* Kodi's own login/signup screens and approved before being wired up.      */
 /* ---------------------------------------------------------------------- */
-.auth-wrap { min-height: 100vh; display: flex; flex-direction: column; }
-.auth-brand {
-  background: linear-gradient(155deg, var(--green) 0%, var(--green-dark) 100%);
-  color: #fff; padding: 32px 24px; text-align: center;
+/* position:relative + min-height so auth-bg-fill (below) and the pinned
+   trust line both anchor to the FULL screen, not to whichever child happens
+   to be tallest. dvh (with the vh fallback first for older browsers) tracks
+   the real visible viewport on mobile, same technique used elsewhere in
+   this app's own mobile-viewport handling. */
+/* z-index:0 (not just position:relative) is what actually matters here —
+   without it .auth-wrap never forms its own stacking context, so the
+   z-index:-1 background below escapes upward and paints behind the PAGE's
+   own background instead of behind just auth-wrap's in-flow content, which
+   is what made the whole green fill invisible the first time this was
+   wired up. */
+.auth-wrap { position: relative; z-index: 0; min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; padding-bottom: 74px; }
+/* One continuous green background behind auth-brand AND auth-form-col, so
+   the hero text, the floating card and the trust line all read as ONE green
+   screen — matching the approved sketch — instead of auth-brand's own green
+   box ending right after its text and the card floating in a separately
+   colored section below it. Desktop (900px query below) turns this off and
+   lets auth-brand paint its own green instead, since desktop is a genuine
+   two-color split (green left / paper right), not one continuous screen. */
+.auth-bg-fill {
+  position: absolute; inset: 0; z-index: -1;
+  background: linear-gradient(160deg, #17945C 0%, var(--green) 55%, var(--green-dark) 100%);
 }
-.auth-brand .brand-badge { margin: 0 auto 14px; }
-.auth-brand .mark { font-size: 26px; font-weight: 800; letter-spacing: 0.2px; }
-.auth-brand .tag { font-size: 13.5px; opacity: 0.88; margin-top: 4px; max-width: 320px; margin-left: auto; margin-right: auto; }
-.auth-brand-list { display: none; }
-.auth-form-col { flex: 1; display: flex; align-items: center; justify-content: center; padding: 28px 20px 40px; }
+.auth-brand { position: relative; padding: 40px 24px 8px; text-align: center; color: #fff; }
+.auth-brand-top { position: relative; z-index: 1; }
+.auth-brand .brand-badge { margin: 0 auto 16px; background: #fff; color: var(--green); box-shadow: none; }
+/* Headline and tag share the same fixed max-width, centered as a block with
+   margin:auto, so the browser wraps and centers both exactly the same way —
+   the headline no longer drifts off-center relative to the tag beneath it
+   the way independently-centered full-width lines could. */
+.auth-brand-headline {
+  font-size: 22px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.25;
+  margin: 0 auto 8px; max-width: 250px; text-align: center;
+}
+.auth-brand-tag { font-size: 13.5px; opacity: 0.88; max-width: 260px; margin: 0 auto; line-height: 1.5; }
+/* Dashed rule + floating stat cards: desktop-only (see the 900px query
+   below) — collapsed out of the flow on mobile, where there's no room for
+   them; the trust line (now a sibling of auth-brand, pinned to the bottom
+   of the whole screen — see below) takes their place instead. */
+.auth-brand-line { display: none; }
+.auth-stat-stack { display: none; }
+.auth-brand-trust {
+  position: absolute; left: 0; right: 0; bottom: 22px; z-index: 1;
+  text-align: center; color: #fff;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.04em; opacity: 0.9;
+}
+.auth-form-col { flex: 1; display: flex; align-items: center; justify-content: center; padding: 8px 20px 0; }
 .auth-card { width: 100%; max-width: 380px; }
-.auth-toggle { text-align: center; margin-top: 14px; font-size: 13px; color: var(--ink-soft); }
-.auth-toggle a { color: var(--green); font-weight: 600; text-decoration: none; }
+/* The sign-in card itself: a soft tint instead of plain white, per direct
+   feedback — reuses --green-light rather than a new one-off color. */
+.auth-form-col .card { background: var(--green-light); }
+/* auth-toggle sits below the card, on the continuous green fill on mobile
+   (see auth-bg-fill above) — so it needs light/white text there. Desktop
+   resets it back to dark-on-beige, since auth-form-col is plain paper
+   background there instead (see the 900px query below). */
+.auth-toggle { text-align: center; margin-top: 14px; font-size: 13px; color: rgba(255,255,255,0.85); }
+.auth-toggle a { color: #fff; font-weight: 700; text-decoration: underline; }
 .error-text { color: var(--red); font-size: 13px; margin-top: 6px; }
 .tiny { font-size: 12px; color: var(--ink-soft); }
 .spacer { height: 8px; }
@@ -335,18 +389,24 @@ h2 { font-size: 16px; }
   .navbar {
     top: 0; bottom: 0; left: 0; right: auto; width: var(--sidebar-w);
     flex-direction: column; align-items: stretch; justify-content: flex-start;
-    padding: 22px 16px; gap: 2px; box-shadow: 4px 0 20px rgba(10,59,36,0.12);
+    padding: 18px 10px; gap: 2px; box-shadow: 4px 0 20px rgba(10,59,36,0.12);
   }
   .navbar-brand {
-    display: flex; align-items: center; gap: 11px; padding: 0 8px; margin-bottom: 30px;
+    display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 0 4px; margin-bottom: 22px; text-align: center;
   }
-  .navbar-brand .brand-badge { width: 38px; height: 38px; font-size: 17px; background: #fff; color: var(--green); }
-  .navbar-brand .word { font-size: 21px; font-weight: 800; color: #fff; letter-spacing: 0.2px; }
+  .navbar-brand .brand-badge { width: 32px; height: 32px; font-size: 15px; background: #fff; color: var(--green); }
+  .navbar-brand .word { font-size: 14px; font-weight: 800; color: #fff; letter-spacing: 0.2px; }
+  /* A narrower column (halved from 264px per feedback) has no room for an
+     icon beside a full-width label without wrapping or overflow — icon
+     stacked above a small label reads cleanly at this width and still shows
+     the full word, just vertically instead of side by side. */
   .navbar button {
-    flex: none; flex-direction: row; justify-content: flex-start; gap: 12px;
-    padding: 11px 14px; font-size: 14px; font-weight: 600; border-radius: 999px;
+    flex: none; flex-direction: column; justify-content: center; gap: 4px;
+    padding: 9px 4px; font-size: 10.5px; font-weight: 700; border-radius: 12px;
+    line-height: 1.15; text-align: center;
   }
   .navbar button .ic { padding: 0; background: none !important; color: inherit !important; }
+  .navbar button .ic-svg { width: 18px; height: 18px; }
   .navbar button.active { background: var(--amber); color: #241A03; box-shadow: 0 4px 12px rgba(184,134,11,0.35); }
   .navbar-spacer { flex-grow: 1; }
   .navbar-foot {
@@ -377,28 +437,54 @@ h2 { font-size: 16px; }
 
   /* The auth screen becomes a real two-column layout instead of a small
      card adrift in empty space — a brand panel that fills its full column,
-     with the feature list only shown here where there's room for it. */
-  .auth-wrap { flex-direction: row; min-height: 100vh; }
+     with a dashed top/bottom rule and three floating, staggered stat cards
+     (the room a phone screen doesn't have) instead of the mobile trust line. */
+  .auth-wrap { flex-direction: row; min-height: 100vh; padding-bottom: 0; }
+  /* Desktop is a genuine two-color split (green left / paper right), not one
+     continuous screen, so the shared mobile background layer is turned off
+     and auth-brand goes back to painting its own green — same gradient,
+     sized to its own column instead of the full viewport. */
+  .auth-bg-fill { display: none; }
+  /* flex:1 on BOTH auth-brand and auth-form-col — an even 50/50 split, same
+     as the approved sketch (its desktop mockup was flex:1/flex:1 too). The
+     green panel had been left at the OLD pre-redesign 42-44%/capped-560px
+     split, which made the beige form side visibly wider than the green
+     side — the reverse of the sketch, where green was the bigger/equal
+     rectangle, not the smaller one. */
+  /* Centered (not left-aligned like Kodi's own desktop panel) and anchored
+     near the top instead of vertically centered — direct feedback: the
+     badge/headline/tag were sitting left-aligned with a big empty gap above
+     the badge from centering them in the full column height. */
   .auth-brand {
-    flex: 0 0 42%; max-width: 480px; display: flex; flex-direction: column;
-    justify-content: center; align-items: center; padding: 48px;
-    text-align: left;
+    flex: 1; display: flex; flex-direction: column; align-items: center;
+    justify-content: flex-start; padding: 40px 56px; text-align: center;
+    background: linear-gradient(160deg, #17945C 0%, var(--green) 55%, var(--green-dark) 100%);
   }
-  .auth-brand .brand-badge { margin: 0 0 20px; }
-  .auth-brand .mark { font-size: 34px; }
-  .auth-brand .tag { text-align: left; margin-left: 0; max-width: 340px; font-size: 15px; }
-  .auth-brand-list {
-    display: flex; flex-direction: column; gap: 14px; margin-top: 32px;
-    max-width: 340px; padding: 0; list-style: none;
+  .auth-brand-top { width: 100%; }
+  .auth-brand .brand-badge { margin: 0 auto 20px; }
+  .auth-brand-headline { text-align: center; margin: 0 auto 10px; max-width: 340px; font-size: 30px; }
+  .auth-brand-tag { text-align: center; margin: 0 auto; max-width: 340px; font-size: 15px; }
+  .auth-brand-trust { display: none; }
+  .auth-brand-line {
+    display: block; width: 100%; height: 4px;
+    background: repeating-linear-gradient(to right, rgba(255,255,255,0.5) 0 24px, transparent 24px 36px);
+    margin: 28px 0;
   }
-  .auth-brand-list li {
-    display: flex; align-items: center; gap: 10px; font-size: 13.5px;
-    opacity: 0.92; background: rgba(255,255,255,0.08); padding: 10px 12px;
-    border-radius: var(--radius-sm);
+  .auth-stat-stack { display: block; position: relative; width: 100%; max-width: 400px; height: 280px; margin-top: 6px; }
+  .auth-stat-card {
+    position: absolute; width: 88%; max-width: 330px; border-radius: 15px;
+    padding: 13px 26px; box-shadow: 0 12px 28px rgba(0,0,0,0.22); color: #fff;
   }
-  .auth-brand-list .ic-svg { flex-shrink: 0; }
-  .auth-form-col { flex: 1; }
+  .auth-stat-card.s1 { background: var(--green-dark); top: 0; left: 14px; transform: rotate(-5deg); z-index: 3; }
+  .auth-stat-card.s2 { background: #1E4E7A; top: 100px; left: 66px; transform: rotate(3.5deg); z-index: 2; }
+  .auth-stat-card.s3 { background: #7A3A6B; top: 200px; left: 28px; transform: rotate(-2.5deg); z-index: 1; }
+  .auth-stat-lab { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.75; }
+  .auth-stat-val { font-size: 22px; font-weight: 800; margin-top: 2px; letter-spacing: -0.01em; }
+  .auth-stat-sub { font-size: 11px; margin-top: 2px; opacity: 0.8; }
+  .auth-form-col { flex: 1; padding: 40px; }
   .auth-card { max-width: 400px; }
+  .auth-toggle { color: var(--ink-soft); }
+  .auth-toggle a { color: var(--green); text-decoration: none; }
 }
 
 /* ---------------------------------------------------------------------- */
@@ -558,5 +644,5 @@ h2 { font-size: 16px; }
   .print-table { width: 100%; border-collapse: collapse; font-size: 12px; }
   .print-table th, .print-table td { border: 1px solid #999; padding: 5px 7px; text-align: left; }
   .print-table th { background: #eee; }
-  .print-footer { margin-top: 16px; font-size: 11px; color: #333; }
+  .print-footer { margin-top: 16px; font-size: 11px; color: #000; }
 }

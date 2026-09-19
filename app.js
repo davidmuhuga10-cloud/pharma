@@ -130,11 +130,11 @@ function icon(name, size) {
   return '<svg class="ic-svg" width="' + s + '" height="' + s + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + (ICONS[name] || '') + '</svg>';
 }
 // The brand mark used on the auth screen, topbar and loading screen — a
-// rounded badge in brand green with the "H" letterform, matching the app's
+// rounded badge in brand green with the "P" letterform, matching the app's
 // icon set (icons/icon-*.png) instead of plain unstyled text.
 function logoMarkHtml(size) {
   var s = size || 44;
-  return '<div class="brand-badge" style="width:' + s + 'px;height:' + s + 'px;font-size:' + Math.round(s * 0.5) + 'px">H</div>';
+  return '<div class="brand-badge" style="width:' + s + 'px;height:' + s + 'px;font-size:' + Math.round(s * 0.5) + 'px">P</div>';
 }
 
 function $(sel, ctx) { return (ctx || document).querySelector(sel); }
@@ -466,27 +466,52 @@ function exportExcel(filename, sheetName, rows) {
 // AUTH
 // ---------------------------------------------------------------------------
 
-// Desktop gets a proper split layout (brand panel + form) instead of a small
-// centered card floating in a sea of empty page; mobile collapses to the
-// brand mark above the form, same as before. See style.css's
-// .auth-wrap/.auth-brand rules for the responsive behavior.
+// Desktop gets a proper split layout (green brand panel with floating stat
+// cards + form) instead of a small centered card floating in a sea of empty
+// page; mobile gets the same green panel collapsed into a curved-gradient
+// hero above the form, with a "Trusted by pharmacists worldwide" trust line.
+// Sketched against Kodi's own login/signup screens and approved (headline
+// wording, trust line, stat-card colors) before being wired up here — see
+// style.css's .auth-wrap/.auth-brand rules for the responsive behavior.
+// The headline and the tag below it share the same fixed max-width + centered
+// auto-wrap technique (see .auth-brand-headline/.auth-brand-tag in
+// style.css) specifically so the headline visually centers on the same axis
+// as the tag beneath it, instead of each line just centering inside the
+// full-width panel independently.
 function authScreen() {
   if (STATE.recoveryMode) return recoveryScreen();
   var msg = STATE.disabledMessage;
   STATE.disabledMessage = null;
+  // auth-bg-fill is a full-bleed absolutely-positioned green layer behind
+  // EVERYTHING (mobile only — disabled at 900px, where auth-brand paints its
+  // own green instead) so the hero text, the card and the trust line all sit
+  // on ONE continuous green screen, exactly like the approved sketch —
+  // instead of auth-brand's green box ending right after its own text and
+  // the card floating in a separate, differently-colored section below it.
+  // auth-brand-trust lives at the auth-wrap level (a sibling of auth-brand/
+  // auth-form-col, not nested inside auth-brand) so it can be pinned via
+  // position:absolute to the bottom of the FULL screen, not just to the
+  // bottom of the short text block.
   return '<div class="auth-wrap">' +
+    '<div class="auth-bg-fill"></div>' +
     '<div class="auth-brand">' +
+    '<div class="auth-brand-top">' +
     logoMarkHtml(56) +
-    '<div class="mark">Pharma</div><div class="tag">Know your stock. Never run dry, never run expired.</div>' +
-    '<ul class="auth-brand-list">' +
-    '<li>' + icon('stock', 16) + ' Batch-level stock with automatic expiry tracking</li>' +
-    '<li>' + icon('sell', 16) + ' Fast, cart-based selling with split payments</li>' +
-    '<li>' + icon('reports', 16) + ' Daily, weekly and monthly reports — no month-end wait</li>' +
-    '</ul>' +
+    '<h1 class="auth-brand-headline">Know Your Stock<br>Never Run Dry</h1>' +
+    '<div class="auth-brand-tag">Batches, sales, expiry tracking and reports &mdash; everything a pharmacy needs, in one place.</div>' +
+    '</div>' +
+    '<div class="auth-brand-line line-top"></div>' +
+    '<div class="auth-stat-stack">' +
+    '<div class="auth-stat-card s1"><div class="auth-stat-lab">Sales this month</div><div class="auth-stat-val">KES 480,500</div></div>' +
+    '<div class="auth-stat-card s2"><div class="auth-stat-lab">Drugs tracked</div><div class="auth-stat-val">312 Drugs</div></div>' +
+    '<div class="auth-stat-card s3"><div class="auth-stat-lab">Batches monitored</div><div class="auth-stat-val">1,140 Batches</div><div class="auth-stat-sub">Expiry-tracked</div></div>' +
+    '</div>' +
+    '<div class="auth-brand-line line-bottom"></div>' +
     '</div>' +
     '<div class="auth-form-col"><div class="auth-card">' +
     (msg ? '<div class="card" style="border-color:#EFC3BE;background:#FBE9E7;margin-bottom:12px">' + esc(msg) + '</div>' : '') +
     '<div id="authBody"></div></div></div>' +
+    '<div class="auth-brand-trust">Trusted by pharmacists worldwide &#127757;</div>' +
     '</div>';
 }
 
