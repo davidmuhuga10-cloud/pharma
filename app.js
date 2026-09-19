@@ -20,19 +20,51 @@ var STATE = {
 };
 
 // ---------------------------------------------------------------------------
-// ACCESS CONTROL — owner sees/does everything; pharmacist runs day-to-day
-// stock & sales but not business settings or staff; attendant ("seller")
-// only sells and looks things up, nothing that changes stock or money rules.
+// ACCESS CONTROL (item 3 — see schema.sql section 7 for the matching
+// database-level enforcement, which is the real gate: everything here is
+// just what the UI offers, so an action a role can't reach still can't be
+// forced through the RPC/RLS layer either) — fixed roles, preset
+// permissions (not a customizable per-role toggle screen):
+//   owner / co_owner — see/do everything; co_owner is full equal access
+//     to owner in every practical sense (only the literal 'owner' value
+//     itself, set once at pharmacy creation, is special — see schema.sql).
+//   pharmacist — day-to-day stock & sales, not business settings or staff.
+//   stock_taker — view & count inventory, restock, and view reports; no
+//     selling, no write-offs, no suppliers/expenses/financial access.
+//   attendant ("seller") — only sells and looks things up, nothing that
+//     changes stock or money rules.
+//   accountant — financial oversight only (reports/suppliers/expenses/
+//     claims), no write access anywhere; always a time-limited temporary
+//     account redeemed via the same staff-invite code flow as any other
+//     role, never a regular permanent account (see openInviteStaff).
+// Anyone not explicitly added (no profiles row at all) has no access —
+// enforced by loadProfileAndPharmacy() finding no row and by every RLS
+// policy requiring a matching profiles row via my_pharmacy_id()/my_role().
 // ---------------------------------------------------------------------------
 var PHARMACIST_ACTIONS = ['sell', 'view_dashboard', 'view_inventory', 'view_reports', 'print', 'export',
   'edit_inventory', 'restock', 'write_off', 'correct_stock', 'return', 'void', 'discount', 'claims', 'suppliers', 'expenses'];
 var ATTENDANT_ACTIONS = ['sell', 'view_dashboard', 'view_inventory', 'view_reports', 'print', 'export'];
+// Friendly labels for the 6 fixed roles — used anywhere a role is shown to
+// a person (staff list, invite picker, "signed in as", account-expired
+// messaging), so the raw enum value (e.g. 'stock_taker') is never printed.
+var ROLE_LABELS = { owner: 'Owner', co_owner: 'Co-owner', pharmacist: 'Pharmacist', stock_taker: 'Stock taker', attendant: 'Seller', accountant: 'Accountant' };
+function roleLabel(r) { return ROLE_LABELS[r] || r; }
+
+var STOCK_TAKER_ACTIONS = ['view_dashboard', 'view_inventory', 'view_reports', 'print', 'export', 'restock', 'correct_stock'];
+// 'view_suppliers'/'view_expenses' (read-only) are deliberately distinct
+// from 'suppliers'/'expenses' (full read+write, see PHARMACIST_ACTIONS) —
+// an accountant should see the Suppliers/Expenses tabs and every figure on
+// them, but never the write actions (new supplier, new LPO, record
+// payment, new expense, reverse expense) that live on those same screens.
+var ACCOUNTANT_ACTIONS = ['view_dashboard', 'view_reports', 'print', 'export', 'claims', 'view_suppliers', 'view_expenses'];
 
 function can(action) {
   if (!STATE.profile) return false;
   var role = STATE.profile.role;
-  if (role === 'owner') return true;
+  if (role === 'owner' || role === 'co_owner') return true;
   if (role === 'pharmacist') return PHARMACIST_ACTIONS.indexOf(action) !== -1;
+  if (role === 'stock_taker') return STOCK_TAKER_ACTIONS.indexOf(action) !== -1;
+  if (role === 'accountant') return ACCOUNTANT_ACTIONS.indexOf(action) !== -1;
   return ATTENDANT_ACTIONS.indexOf(action) !== -1;
 }
 
@@ -165,11 +197,23 @@ function sheet(title, bodyHtml) {
   document.body.appendChild(mask);
   return $('#sheetBody');
 }
+// Bug fix (system-wide): this already disabled the button on click, but
+// never changed what it SHOWED — a busy button looked identical to a live
+// one (same label, same near-full opacity), so an impatient tap while a
+// request was in flight looked like it hadn't registered, and people
+// tapped again. Now it visibly swaps to "Please wait…" the instant it's
+// clicked and only restores the original label (icon included — this uses
+// innerHTML, not textContent) once the request settles, so a duplicate tap
+// literally can't do anything: the element is disabled AND clearly busy the
+// whole time. Every "Save"/"Confirm"/"Record" button already goes through
+// this helper; using it is what makes a new action button safe by default.
 function act(btn, fn) {
-  var original = btn.textContent;
+  if (!btn) { fn().catch(function (e) { toast(friendlyError(e), 'bad'); }); return; }
+  var original = btn.innerHTML;
   btn.disabled = true;
+  btn.innerHTML = 'Please wait…';
   fn().catch(function (e) { toast(friendlyError(e), 'bad'); })
-    .finally(function () { btn.disabled = false; btn.textContent = original; });
+    .finally(function () { btn.disabled = false; btn.innerHTML = original; });
 }
 
 // Turns a raw network/Supabase error into something a pharmacist can act on,
@@ -288,6 +332,17 @@ async function loadProfileAndPharmacy() {
     STATE.disabledMessage = 'Your access to this pharmacy has been switched off by the owner. Ask them to reactivate your account.';
     return;
   }
+  // Item 3: a temporary account (e.g. an accountant's time-limited code)
+  // past its account_expires_at — my_pharmacy_id()/my_role() already
+  // refuse it everything at the database level, but the profile row
+  // itself is still readable (see schema.sql's "read colleagues in same
+  // pharmacy" policy) precisely so this specific message can be shown
+  // instead of a generic/blank one.
+  if (profile.account_expires_at && new Date(profile.account_expires_at) <= new Date()) {
+    STATE.profile = null;
+    STATE.disabledMessage = 'Your temporary access has expired. Ask the pharmacy owner for a new code.';
+    return;
+  }
   STATE.profile = profile;
   var { data: pharmacy } = await sb.from('pharmacies').select('*').eq('id', profile.pharmacy_id).maybeSingle();
   STATE.pharmacy = pharmacy;
@@ -323,15 +378,19 @@ function render() {
 // account footer are written here too, but stay hidden (display:none)
 // until the desktop layout has room for them.
 function navBar() {
-  var items = [
-    ['dashboard', 'home', t('home')],
-    ['inventory', 'stock', t('stock')],
-    ['sell', 'sell', t('sell')],
-    ['reports', 'reports', t('reports')],
-    ['settings', 'settings', t('settings')]
-  ];
-  if (can('suppliers')) items.splice(2, 0, ['suppliers', 'truck', t('suppliers')]);
-  if (can('expenses')) items.splice(can('suppliers') ? 3 : 2, 0, ['expenses', 'wallet', t('expenses')]);
+  // Item 3: dashboard/reports/settings are on every role's list, so they
+  // stay unconditional — but inventory and sell aren't (e.g. accountant
+  // has neither, stock_taker has no 'sell'), so they're now gated the same
+  // way suppliers/expenses already were.
+  var items = [['dashboard', 'home', t('home')]];
+  if (can('view_inventory')) items.push(['inventory', 'stock', t('stock')]);
+  if (can('sell')) items.push(['sell', 'sell', t('sell')]);
+  var seeSuppliers = can('suppliers') || can('view_suppliers');
+  var seeExpenses = can('expenses') || can('view_expenses');
+  if (seeSuppliers) items.push(['suppliers', 'truck', t('suppliers')]);
+  if (seeExpenses) items.push(['expenses', 'wallet', t('expenses')]);
+  items.push(['reports', 'reports', t('reports')]);
+  items.push(['settings', 'settings', t('settings')]);
   var p = STATE.profile || {};
   var pharmacy = STATE.pharmacy || {};
   return '<div class="navbar">' +
@@ -342,7 +401,7 @@ function navBar() {
     }).join('') +
     '<div class="navbar-spacer"></div>' +
     '<div class="navbar-foot"><div class="who">' + esc(pharmacy.name || '') + '</div>' +
-    '<div class="role">' + esc(p.full_name || '') + (p.role ? ' · ' + esc(p.role) : '') + '</div></div>' +
+    '<div class="role">' + esc(p.full_name || '') + (p.role ? ' · ' + esc(roleLabel(p.role)) : '') + '</div></div>' +
     '</div>';
 }
 
@@ -720,7 +779,12 @@ var DCOLOR = {
   magenta: '#e87ba4', magentaLight: '#FCEAF1',
   critical: '#d03b3b', serious: '#ec835a', warning: '#fab219', good: '#0ca30c',
   ctxWarm: '#BE8F87',
-  gridline: '#E7E2DC', inkSoft: '#6B6560'
+  // No-gray-text rule (app-wide, see style.css --ink-soft): chart axis
+  // ticks/labels and "No sales recorded yet" captions used to render in a
+  // lighter gray-brown, hard to read in daylight glare. Now the same deep
+  // near-black as regular body text (matches --ink) — only the hairline
+  // gridlines themselves stay light, since those are lines, not text.
+  gridline: '#E7E2DC', inkSoft: '#201E1B'
 };
 var DASH_RANGE_LABELS = { today: 'Today', week: 'Week', month: 'Month', year: 'Year', custom: 'Custom' };
 var DASH_PERIOD_LABEL = { today: 'Today', week: 'This week', month: 'This month', year: 'This year', custom: 'Custom range' };
@@ -971,12 +1035,20 @@ function dashFilterRowHtml() {
 // (inside the SAME fixed-size chart, not a layout swap) when a range has
 // no data — exactly what a brand-new pharmacy sees before its first sale.
 
+// Bug fix: the old thresholds (1.5 / 3 / 7) could pick a step where the top
+// tick (4 * step) fell BELOW the real max value — e.g. a max of 250 rounded
+// to a 0/50/100/150/200 axis, so a data point of 250 was plotted above the
+// chart's y=0 and rendered completely off-canvas (the "graph isn't showing"
+// bug: a real point that's simply invisible, clipped outside the SVG
+// viewBox, not missing data). Correct "nice number" boundaries are 1/2/5/10
+// — i.e. the smallest of those >= norm — which guarantees 4 * step is
+// always >= maxVal, so the highest data point always lands inside the axis.
 function niceTicks(maxVal) {
   if (!maxVal || maxVal <= 0) return [0, 250, 500, 750, 1000];
   var rough = maxVal / 4;
   var mag = Math.pow(10, Math.floor(Math.log(rough) / Math.LN10));
   var norm = rough / mag;
-  var step = norm < 1.5 ? mag : norm < 3 ? 2 * mag : norm < 7 ? 5 * mag : 10 * mag;
+  var step = norm <= 1 ? mag : norm <= 2 ? 2 * mag : norm <= 5 ? 5 * mag : 10 * mag;
   var ticks = [];
   for (var i = 0; i <= 4; i++) ticks.push(Math.round(i * step));
   return ticks;
@@ -1295,6 +1367,7 @@ var invFilter = '';
 
 async function renderInventory() {
   var c = $('#content');
+  if (!can('view_inventory')) { c.innerHTML = '<div class="card empty">You do not have access to Inventory.</div>'; return; }
   c.innerHTML = '<div class="empty">Loading inventory…</div>';
   try {
     var { data: stock } = await sb.from('v_drug_stock').select('*').order('name');
@@ -1837,25 +1910,28 @@ function renderUnknownExpiryList() {
         '<div class="meta">' + b.quantity_remaining + ' ' + esc(unit) + (b.batch_no ? ' · batch ' + esc(b.batch_no) : '') + '</div></div>' +
         '<div class="right" style="display:flex;gap:8px;align-items:center">' +
         '<input type="date" id="expInput_' + b.id + '">' +
-        '<button class="btn small" onclick="saveBatchExpiry(\'' + b.id + '\')">Save</button>' +
+        '<button class="btn small" id="expSaveBtn_' + b.id + '" onclick="saveBatchExpiry(\'' + b.id + '\')">Save</button>' +
         '</div></div>';
     }).join('') + '</div>' : '<div class="empty">Nothing left to flag — every batch has an expiry date.</div>');
 }
 
 async function saveBatchExpiry(batchId) {
-  var input = $('#expInput_' + batchId);
-  var val = input ? input.value : '';
-  if (!val) { toast('Pick a date first.', 'bad'); return; }
-  var { error } = await sb.rpc('set_batch_expiry', {
-    p_pharmacy_id: STATE.profile.pharmacy_id,
-    p_batch_id: batchId,
-    p_expiry_date: val
+  var btn = $('#expSaveBtn_' + batchId);
+  act(btn, async function () {
+    var input = $('#expInput_' + batchId);
+    var val = input ? input.value : '';
+    if (!val) { toast('Pick a date first.', 'bad'); return; }
+    var { error } = await sb.rpc('set_batch_expiry', {
+      p_pharmacy_id: STATE.profile.pharmacy_id,
+      p_batch_id: batchId,
+      p_expiry_date: val
+    });
+    if (error) { toast(friendlyError(error), 'bad'); return; }
+    toast('Expiry date saved.', 'good');
+    STATE.unknownExpiryBatches = (STATE.unknownExpiryBatches || []).filter(function (b) { return b.id !== batchId; });
+    renderUnknownExpiryList();
+    renderInventory();
   });
-  if (error) { toast(friendlyError(error), 'bad'); return; }
-  toast('Expiry date saved.', 'good');
-  STATE.unknownExpiryBatches = (STATE.unknownExpiryBatches || []).filter(function (b) { return b.id !== batchId; });
-  renderUnknownExpiryList();
-  renderInventory();
 }
 
 function openAddDrug() {
@@ -1929,10 +2005,20 @@ async function openDrugDetail(drugId) {
       var discountBadge = b.discount_percent > 0 ? ' <span class="badge warn">-' + b.discount_percent + '%</span>' : '';
       return '<div class="list-row"><div><div class="name">' + esc(b.batch_no || 'Batch') + ' · ' + expiryLabel + discountBadge + '</div>' +
         '<div class="meta">Received ' + fmtDate(b.received_at) + (b.supplier ? ' from ' + esc(b.supplier) : '') + '</div>' +
-        (can('write_off') && b.quantity_remaining > 0 ? '<div class="toolbar-row" style="margin-top:6px">' +
-          '<button class="btn ghost small" onclick="openWriteOff(\'' + b.id + '\',\'' + esc(d.name).replace(/'/g, "\\'") + '\',' + b.quantity_remaining + ')">Write off</button>' +
-          '<button class="btn ghost small" onclick="openCorrection(\'' + b.id + '\',\'' + esc(d.name).replace(/'/g, "\\'") + '\',' + b.quantity_remaining + ')">Correct count</button>' +
+        ((can('write_off') || can('correct_stock') || can('edit_expiry')) && b.quantity_remaining > 0 ? '<div class="toolbar-row" style="margin-top:6px">' +
+          (can('write_off') ? '<button class="btn ghost small" onclick="openWriteOff(\'' + b.id + '\',\'' + esc(d.name).replace(/'/g, "\\'") + '\',' + b.quantity_remaining + ')">Write off</button>' : '') +
+          // Was gated on can('write_off') — a real pre-existing bug: this
+          // button is "Correct count" (record_correction), a different
+          // action from write-off with its own backend permission tier,
+          // so it needs its own can('correct_stock') check. Fixed as part
+          // of item 3 since stock_taker can correct stock but not write
+          // off, and the old gate would have hidden this button from them.
+          (can('correct_stock') ? '<button class="btn ghost small" onclick="openCorrection(\'' + b.id + '\',\'' + esc(d.name).replace(/'/g, "\\'") + '\',' + b.quantity_remaining + ')">Correct count</button>' : '') +
           (can('discount') ? '<button class="btn ghost small" onclick="openDiscount(\'' + b.id + '\',\'' + esc(d.name).replace(/'/g, "\\'") + '\',' + b.discount_percent + ')">Mark down</button>' : '') +
+          // Item 34: owner-only — fixes a batch that already has a real (just
+          // wrong) expiry date, e.g. entered as already-past by mistake, which
+          // silently drops it out of "in stock" with no other way to correct it.
+          (can('edit_expiry') ? '<button class="btn ghost small" onclick="openEditExpiry(\'' + b.id + '\',\'' + esc(d.name).replace(/'/g, "\\'") + '\',\'' + (b.expiry_unknown ? '' : b.expiry_date) + '\')">Edit expiry</button>' : '') +
           '</div>' : '') +
         '</div><div class="right"><span class="badge ' + kind + '">' + b.quantity_remaining + ' left</span></div></div>';
     }).join('') : '<div class="empty">No batches yet.</div>');
@@ -2073,6 +2159,35 @@ async function saveDiscount(batchId) {
   });
 }
 
+// Item 34 — owner-only fix for a real bug report: a batch restocked with an
+// already-past expiry date (e.g. picked yesterday by mistake) silently drops
+// out of "in stock" everywhere (dashboard, Inventory, Sell) with no way to
+// correct it in the app — set_batch_expiry only covers batches marked
+// "expiry unknown", not one that already has a real-but-wrong date. Reopens
+// the same drug's detail sheet afterward so the fix is visible immediately.
+function openEditExpiry(batchId, drugName, currentExpiry) {
+  var body = sheet('Edit expiry: ' + drugName, '');
+  body.innerHTML =
+    '<div class="tiny" style="margin-bottom:10px">Only use this to correct a wrongly-entered date — for a batch that was never given a real expiry date, use "Batches with no expiry date" in Inventory instead.</div>' +
+    '<div class="field"><label>Correct expiry date</label><input id="eeDate" type="date" value="' + esc(currentExpiry) + '"></div>' +
+    '<button class="btn primary" id="eeSaveBtn" onclick="saveEditExpiry(\'' + batchId + '\')">Save</button>';
+}
+
+async function saveEditExpiry(batchId) {
+  var btn = $('#eeSaveBtn');
+  act(btn, async function () {
+    var val = $('#eeDate').value;
+    if (!val) { toast('Pick a date first.', 'bad'); return; }
+    var { error } = await sb.rpc('correct_batch_expiry', {
+      p_pharmacy_id: STATE.profile.pharmacy_id, p_batch_id: batchId, p_new_expiry_date: val
+    });
+    if (error) { toast(friendlyError(error), 'bad'); return; }
+    toast('Expiry date corrected.', 'good');
+    closeSheet();
+    renderInventory();
+  });
+}
+
 // ---------------------------------------------------------------------------
 // SELL
 // ---------------------------------------------------------------------------
@@ -2082,6 +2197,7 @@ var heldSalesCache = [];
 
 async function renderSell() {
   var c = $('#content');
+  if (!can('sell')) { c.innerHTML = '<div class="card empty">You do not have access to Sell.</div>'; return; }
   c.innerHTML = '<div class="empty">Loading drugs…</div>';
   try {
     var { data: stock } = await sb.from('v_drug_stock').select('*').gt('qty_in_stock', 0).order('name');
@@ -2116,38 +2232,43 @@ function heldSalesCard() {
       var cart = h.cart || [];
       var total = cart.reduce(function (a, c) { return a + c.qty * c.price; }, 0);
       return '<div class="list-row"><div><div class="name">' + esc(h.label || 'Held sale') + '</div><div class="meta">' + cart.length + ' item(s) · ' + fmt(total) + ' · ' + new Date(h.created_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) + '</div></div>' +
-        '<div class="right" style="display:flex;gap:6px"><button class="btn small secondary" onclick="resumeHeldSale(\'' + h.id + '\')">Resume</button><button class="btn small danger" onclick="deleteHeldSale(\'' + h.id + '\')">' + icon('close',14) + '</button></div></div>';
+        '<div class="right" style="display:flex;gap:6px"><button class="btn small secondary" onclick="resumeHeldSale(this,\'' + h.id + '\')">Resume</button><button class="btn small danger" onclick="deleteHeldSale(this,\'' + h.id + '\')">' + icon('close',14) + '</button></div></div>';
     }).join('') + '</div>';
 }
 
-async function holdSale() {
-  if (!STATE.cart.length) { toast('Cart is empty.', 'bad'); return; }
-  var label = prompt('Label for this held sale (optional) — e.g. customer name or counter number:') || null;
-  var { error } = await sb.from('held_sales').insert({
-    pharmacy_id: STATE.profile.pharmacy_id, label: label, cart: STATE.cart, created_by: STATE.session.user.id
+async function holdSale(btn) {
+  act(btn, async function () {
+    if (!STATE.cart.length) { toast('Cart is empty.', 'bad'); return; }
+    var label = prompt('Label for this held sale (optional) — e.g. customer name or counter number:') || null;
+    var { error } = await sb.from('held_sales').insert({
+      pharmacy_id: STATE.profile.pharmacy_id, label: label, cart: STATE.cart, created_by: STATE.session.user.id
+    });
+    if (error) { toast(friendlyError(error), 'bad'); return; }
+    STATE.cart = [];
+    toast('Sale held. Resume it any time from the Sell tab.', 'good');
+    renderSell();
   });
-  if (error) { toast(friendlyError(error), 'bad'); return; }
-  STATE.cart = [];
-  toast('Sale held. Resume it any time from the Sell tab.', 'good');
-  renderSell();
 }
 
-function resumeHeldSale(id) {
+function resumeHeldSale(btn, id) {
   var h = heldSalesCache.find(function (x) { return x.id === id; });
   if (!h) return;
   if (STATE.cart.length && !confirm('This will replace your current cart with the held sale. Continue?')) return;
-  STATE.cart = h.cart || [];
-  sb.from('held_sales').delete().eq('id', id).then(function () {
+  act(btn, async function () {
+    STATE.cart = h.cart || [];
+    await sb.from('held_sales').delete().eq('id', id);
     heldSalesCache = heldSalesCache.filter(function (x) { return x.id !== id; });
     drawSell();
   });
 }
 
-async function deleteHeldSale(id) {
+async function deleteHeldSale(btn, id) {
   if (!confirm('Discard this held sale? Its items are not deducted from stock, so nothing to undo.')) return;
-  await sb.from('held_sales').delete().eq('id', id);
-  heldSalesCache = heldSalesCache.filter(function (x) { return x.id !== id; });
-  drawSell();
+  act(btn, async function () {
+    await sb.from('held_sales').delete().eq('id', id);
+    heldSalesCache = heldSalesCache.filter(function (x) { return x.id !== id; });
+    drawSell();
+  });
 }
 
 function cartSummaryCard() {
@@ -2158,7 +2279,7 @@ function cartSummaryCard() {
         '<div class="qty-ctrl"><button onclick="changeQty(' + i + ',-1)">−</button><span>' + item.qty + '</span><button onclick="changeQty(' + i + ',1)">+</button></div></div>';
     }).join('') +
     '<div class="list-row"><div class="name">Total</div><div class="name">' + fmt(total) + '</div></div>' +
-    '<div class="toolbar-row" style="margin-top:10px"><button class="btn ghost" onclick="holdSale()">⏸ Hold</button><button class="btn primary" onclick="openCheckout()">Checkout</button></div></div>';
+    '<div class="toolbar-row" style="margin-top:10px"><button class="btn ghost" onclick="holdSale(this)">⏸ Hold</button><button class="btn primary" onclick="openCheckout()">Checkout</button></div></div>';
 }
 
 function addToCart(drugId) {
@@ -2821,14 +2942,18 @@ function drawClaims() {
     '</div>' +
     '<div class="card">' + (claimsCache.length ? claimsCache.map(function (c) {
       return '<div class="list-row"><div><div class="name">' + esc(c.scheme) + '</div><div class="meta">' + new Date(c.created_at).toLocaleDateString('en-GB') + (c.claim_number ? ' · ' + esc(c.claim_number) : '') + '</div></div>' +
-        '<div class="right"><div>' + fmt(c.amount) + '</div><select style="margin-top:4px" onchange="updateClaimStatus(\'' + c.id + '\',this.value)">' +
+        '<div class="right"><div>' + fmt(c.amount) + '</div><select style="margin-top:4px" onchange="updateClaimStatus(this,\'' + c.id + '\',this.value)">' +
         ['pending', 'submitted', 'paid', 'rejected'].map(function (s) { return '<option value="' + s + '"' + (c.status === s ? ' selected' : '') + '>' + s.charAt(0).toUpperCase() + s.slice(1) + '</option>'; }).join('') +
         '</select></div></div>';
     }).join('') : '<div class="empty">No insurance claims yet.</div>') + '</div>';
 }
 
-async function updateClaimStatus(id, status) {
+async function updateClaimStatus(sel, id, status) {
+  // Not a "Save" button, but the same double-fire risk applies to a select
+  // someone re-picks quickly — disable it for the round trip too.
+  sel.disabled = true;
   var { error } = await sb.from('insurance_claims').update({ status: status, updated_at: new Date().toISOString() }).eq('id', id);
+  sel.disabled = false;
   if (error) { toast(friendlyError(error), 'bad'); return; }
   var c = claimsCache.find(function (x) { return x.id === id; });
   if (c) c.status = status;
@@ -2860,7 +2985,9 @@ function printClaimsReport() {
 async function renderSettings() {
   var c = $('#content');
   var p = STATE.pharmacy || {};
-  var isOwner = STATE.profile.role === 'owner';
+  // Item 3: co_owner is full equal access to owner — same settings/staff
+  // capability everywhere this "isOwner" flag gates the UI.
+  var isOwner = STATE.profile.role === 'owner' || STATE.profile.role === 'co_owner';
   c.innerHTML = '<div class="empty">Loading settings…</div>';
 
   var staff = [];
@@ -2904,25 +3031,28 @@ async function renderSettings() {
       '<div class="card">' +
       (staff.length ? staff.map(function (s) {
         var isMe = s.id === STATE.profile.id;
-        var badge = s.active === false ? '<span class="badge bad">Disabled</span>' : '<span class="badge good">Active</span>';
+        var expired = s.account_expires_at && new Date(s.account_expires_at) <= new Date();
+        var badge = s.active === false ? '<span class="badge bad">Disabled</span>' :
+          expired ? '<span class="badge bad">Expired</span>' : '<span class="badge good">Active</span>';
+        var expiryNote = (s.account_expires_at && !expired) ? ' · expires ' + fmtDate(s.account_expires_at) : '';
         return '<div class="list-row"><div><div class="name">' + esc(s.full_name || '(no name)') + (isMe ? ' (you)' : '') + '</div>' +
-          '<div class="meta">' + esc(s.role) + (s.phone ? ' · ' + esc(s.phone) : '') + '</div></div>' +
+          '<div class="meta">' + esc(roleLabel(s.role)) + (s.phone ? ' · ' + esc(s.phone) : '') + esc(expiryNote) + '</div></div>' +
           '<div class="right">' + badge +
-          (isMe ? '' : '<div style="margin-top:6px"><button class="btn ghost small" onclick="toggleStaffActive(\'' + s.id + '\',' + (s.active === false) + ')">' +
+          (isMe ? '' : '<div style="margin-top:6px"><button class="btn ghost small" onclick="toggleStaffActive(this,\'' + s.id + '\',' + (s.active === false) + ')">' +
             (s.active === false ? 'Reactivate' : 'Disable') + '</button></div>') +
           '</div></div>';
       }).join('') : '<div class="tiny">Just you so far.</div>') +
       (invites.length ? '<div class="tiny" style="margin-top:10px">Unused invite codes: ' +
-        invites.map(function (i) { return '<b>' + esc(i.code) + '</b> (' + esc(i.role) + ')'; }).join(', ') + '</div>' : '') +
+        invites.map(function (i) { return '<b>' + esc(i.code) + '</b> (' + esc(roleLabel(i.role)) + (i.account_expires_hours ? ', ' + inviteExpiryLabel(i.account_expires_hours) : '') + ')'; }).join(', ') + '</div>' : '') +
       '<div class="toolbar-row" style="margin-top:10px">' +
-      '<button class="btn secondary small" onclick="openInviteStaff(\'pharmacist\')">+ Invite pharmacist</button>' +
-      '<button class="btn secondary small" onclick="openInviteStaff(\'attendant\')">+ Invite seller</button>' +
+      '<button class="btn secondary small" onclick="openInviteStaff(this)">+ Invite staff</button>' +
       '</div></div>'
     ) : '') +
 
     '<div class="section-title">Account</div>' +
     '<div class="card">' +
-    '<div class="tiny" style="margin-bottom:10px">Signed in as ' + esc(STATE.profile.full_name || '') + ' (' + esc(STATE.profile.role) + ')</div>' +
+    '<div class="tiny" style="margin-bottom:10px">Signed in as ' + esc(STATE.profile.full_name || '') + ' (' + esc(roleLabel(STATE.profile.role)) + ')' +
+    (STATE.profile.account_expires_at ? ' · temporary access, expires ' + fmtDate(STATE.profile.account_expires_at) : '') + '</div>' +
     '<div class="field"><label>Language</label><div class="tiny">English (Kiswahili is coming soon — turned off for now so the app doesn\'t mix half-translated screens)</div></div></div>';
 }
 
@@ -2944,7 +3074,7 @@ var lpoNotes = '';
 
 async function renderSuppliers() {
   var c = $('#content');
-  if (!can('suppliers')) { c.innerHTML = '<div class="card empty">You do not have access to Suppliers.</div>'; return; }
+  if (!can('suppliers') && !can('view_suppliers')) { c.innerHTML = '<div class="card empty">You do not have access to Suppliers.</div>'; return; }
   c.innerHTML = '<div class="empty">Loading suppliers…</div>';
   try {
     var { data: sups, error } = await sb.from('suppliers').select('*').eq('pharmacy_id', STATE.profile.pharmacy_id).order('name');
@@ -2973,7 +3103,7 @@ function drawSuppliersList() {
     return Number(s.opening_balance || 0) + delivered - paid;
   }
   c.innerHTML =
-    '<div class="toolbar-row"><button class="btn primary" onclick="openAddSupplier()">+ New supplier</button></div>' +
+    (can('suppliers') ? '<div class="toolbar-row"><button class="btn primary" onclick="openAddSupplier()">+ New supplier</button></div>' : '') +
     '<div class="card">' +
     (sups.length ? sups.map(function (s) {
       var bal = balanceFor(s);
@@ -3091,8 +3221,8 @@ function drawSupplierDetail() {
     kpi('Balance owed', fmt(ledger.balance), balanceKind) +
     '</div>' +
     '<div class="toolbar-row"><div class="toolbar-segment">' +
-    '<button class="btn primary small" onclick="openNewLpo(\'' + supplier.id + '\')">+ New LPO</button>' +
-    '<button class="btn secondary small" onclick="openRecordSupplierPayment(\'' + supplier.id + '\')">Record payment</button>' +
+    (can('suppliers') ? '<button class="btn primary small" onclick="openNewLpo(\'' + supplier.id + '\')">+ New LPO</button>' +
+    '<button class="btn secondary small" onclick="openRecordSupplierPayment(\'' + supplier.id + '\')">Record payment</button>' : '') +
     '</div><div class="toolbar-segment toolbar-end">' +
     '<button class="btn small" onclick="exportSupplierStatement()">' + icon('download', 15) + ' Excel</button>' +
     '<button class="btn small" onclick="printSupplierStatement()">' + icon('printer', 15) + ' Print</button>' +
@@ -3374,7 +3504,7 @@ var EXP_CATEGORY_LABELS = {
 
 async function renderExpenses() {
   var c = $('#content');
-  if (!can('expenses')) { c.innerHTML = '<div class="card empty">You do not have access to Expenses.</div>'; return; }
+  if (!can('expenses') && !can('view_expenses')) { c.innerHTML = '<div class="card empty">You do not have access to Expenses.</div>'; return; }
   c.innerHTML = '<div class="empty">Loading expenses…</div>';
   try {
     var { data, error } = await sb.from('expenses').select('*').eq('pharmacy_id', STATE.profile.pharmacy_id)
@@ -3420,7 +3550,7 @@ function drawExpensesList() {
   var listHtml = inRange.length ? inRange.map(expenseRowHtml).join('') : '<div class="empty">No expenses recorded yet for this period.</div>';
 
   c.innerHTML =
-    '<div class="toolbar-row"><button class="btn primary" onclick="openAddExpense()">+ New expense</button></div>' +
+    (can('expenses') ? '<div class="toolbar-row"><button class="btn primary" onclick="openAddExpense()">+ New expense</button></div>' : '') +
     '<div class="dash-filter-row"><div class="dash-tabs">' +
       ['today', 'week', 'month', 'year'].map(function (r) {
         return '<button class="dash-tab' + (expRange === r ? ' active' : '') + '" onclick="setExpRange(\'' + r + '\')">' + DASH_RANGE_LABELS[r] + '</button>';
@@ -3454,7 +3584,7 @@ function expCustomCategories() {
 
 function expenseRowHtml(e) {
   var meta = [fmtDate(e.expense_date), expenseCategoryLabel(e.category), supplierPaymentMethodLabel(e.method)].join(' · ');
-  var right = fmt(e.amount) + (e.voided ? '' : ' <button class="btn danger small" style="margin-left:14px" onclick="openReverseExpense(\'' + e.id + '\')">Reverse</button>');
+  var right = fmt(e.amount) + (!e.voided && can('expenses') ? ' <button class="btn danger small" style="margin-left:14px" onclick="openReverseExpense(\'' + e.id + '\')">Reverse</button>' : '');
   return '<div class="list-row">' +
     '<div><div class="name">' + esc(e.description) + (e.voided ? ' <span class="badge bad">Reversed</span>' : '') + '</div><div class="meta">' + esc(meta) + '</div></div>' +
     '<div class="right">' + right + '</div></div>';
@@ -3533,23 +3663,85 @@ async function doReverseExpense(expenseId) {
   });
 }
 
-function openInviteStaff(role) {
-  var body = sheet('Invite a ' + (role === 'pharmacist' ? 'pharmacist' : 'seller'), '');
-  body.innerHTML = '<div class="tiny">Generating a one-time code…</div>';
-  sb.rpc('create_staff_invite', { p_pharmacy_id: STATE.profile.pharmacy_id, p_role: role }).then(function (res) {
-    if (res.error) { body.innerHTML = '<div class="error-text">' + esc(res.error.message) + '</div>'; return; }
+// Item 3: was two hardcoded one-tap buttons (pharmacist/seller only) that
+// generated a permanent-account code immediately. Now a role picker
+// covering all 5 invitable roles, plus an account time-limit picker —
+// mandatory (and forced non-permanent) for accountant, optional for
+// everyone else — since the resulting account's lifespan is now a real
+// thing to choose, not just the 7-day code-redemption window.
+function openInviteStaff(btn) {
+  btn.disabled = true;
+  var body = sheet('Invite staff', '');
+  body.innerHTML =
+    '<div class="field"><label>Role</label>' +
+    '<select id="invRole" onchange="onInviteRoleChange()">' +
+    '<option value="pharmacist">Pharmacist</option>' +
+    '<option value="attendant">Seller</option>' +
+    '<option value="stock_taker">Stock taker</option>' +
+    '<option value="co_owner">Co-owner / director (full access)</option>' +
+    '<option value="accountant">Accountant (temporary)</option>' +
+    '</select></div>' +
+    '<div class="field"><label>Account time limit</label>' +
+    '<select id="invExpiry">' +
+    '<option value="" id="invExpiryPermanent">No time limit (permanent)</option>' +
+    '<option value="24">24 hours</option>' +
+    '<option value="72">3 days</option>' +
+    '<option value="168">7 days</option>' +
+    '<option value="720">30 days</option>' +
+    '</select>' +
+    '<div class="tiny" style="margin-top:6px">An accountant is always temporary — pick how long their access should last. The invite CODE itself is separately only redeemable for 7 days either way.</div>' +
+    '</div>' +
+    '<div id="invErr" class="error-text"></div>' +
+    '<button class="btn primary" id="invGenBtn" onclick="generateStaffInvite()">Generate code</button>';
+  btn.disabled = false;
+}
+
+function onInviteRoleChange() {
+  var role = $('#invRole').value;
+  var expSel = $('#invExpiry');
+  var permOpt = $('#invExpiryPermanent');
+  if (!expSel || !permOpt) return;
+  if (role === 'accountant') {
+    permOpt.disabled = true;
+    if (!expSel.value) expSel.value = '24';
+  } else {
+    permOpt.disabled = false;
+  }
+}
+
+function inviteExpiryLabel(hours) {
+  if (!hours) return 'permanent';
+  if (hours % 24 === 0 && hours >= 24) return (hours / 24) + (hours === 24 ? ' day' : ' days');
+  return hours + 'h';
+}
+
+function generateStaffInvite() {
+  var btn = $('#invGenBtn');
+  act(btn, async function () {
+    var err = $('#invErr'); err.textContent = '';
+    var role = $('#invRole').value;
+    var hoursVal = $('#invExpiry').value;
+    var hours = hoursVal ? parseInt(hoursVal, 10) : null;
+    if (role === 'accountant' && !hours) { err.textContent = "An accountant's account must have a time limit."; return; }
+    var res = await sb.rpc('create_staff_invite', { p_pharmacy_id: STATE.profile.pharmacy_id, p_role: role, p_expires_hours: hours });
+    if (res.error) { err.textContent = friendlyError(res.error); return; }
+    var body = $('#sheetBody');
+    if (!body) return;
     body.innerHTML =
-      '<div class="tiny" style="margin-bottom:10px">Share this code with them — they enter it under "Joining a pharmacy?" when they sign up. It expires in 7 days.</div>' +
+      '<div class="tiny" style="margin-bottom:10px">Share this code with them — they enter it under "Staff Login" when they sign up. The code itself expires in 7 days' +
+      (hours ? ', and once redeemed their account will stop working after ' + inviteExpiryLabel(hours) + '.' : '.') + '</div>' +
       '<div style="font-size:32px;font-weight:800;letter-spacing:4px;text-align:center;padding:20px;background:var(--green-light);border-radius:12px;color:var(--green)">' + esc(res.data) + '</div>' +
       '<button class="btn ghost" style="margin-top:14px" onclick="closeSheet()">Done</button>';
   });
 }
 
-async function toggleStaffActive(profileId, makeActive) {
-  var { error } = await sb.from('profiles').update({ active: makeActive }).eq('id', profileId);
-  if (error) { toast(friendlyError(error), 'bad'); return; }
-  toast(makeActive ? 'Reactivated.' : 'Access disabled.', 'good');
-  renderSettings();
+async function toggleStaffActive(btn, profileId, makeActive) {
+  act(btn, async function () {
+    var { error } = await sb.from('profiles').update({ active: makeActive }).eq('id', profileId);
+    if (error) { toast(friendlyError(error), 'bad'); return; }
+    toast(makeActive ? 'Reactivated.' : 'Access disabled.', 'good');
+    renderSettings();
+  });
 }
 
 async function saveSettings() {

@@ -25,7 +25,19 @@ create table pharmacies (
   created_at        timestamptz not null default now()
 );
 
+-- Item 3 (Access Control module): co_owner (full equal access to owner,
+-- see prevent_profile_privilege_escalation below for why the literal
+-- 'owner' value itself stays reserved), stock_taker (view & count
+-- inventory, restock, view reports), and accountant (financial-oversight
+-- only, always a time-limited temporary account — see account_expires_at)
+-- were added after initial launch. On a fresh install these ADD VALUEs
+-- must run as their own statement/transaction, separate from anything
+-- that references the new values (a Postgres enum-extension rule) — kept
+-- immediately after the enum's own creation for that reason.
 create type user_role as enum ('owner', 'pharmacist', 'attendant');
+alter type user_role add value if not exists 'co_owner';
+alter type user_role add value if not exists 'stock_taker';
+alter type user_role add value if not exists 'accountant';
 
 -- One row per auth.users id — extends Supabase auth with pharmacy + role.
 create table profiles (
@@ -36,18 +48,29 @@ create table profiles (
   role          user_role not null default 'attendant',
   language      text not null default 'en',              -- 'en' | 'sw' — UI language
   active        boolean not null default true,            -- owner can deactivate a staff account without deleting it
+  -- Item 3: when set, this is a temporary account (e.g. an accountant's
+  -- time-limited code) — my_pharmacy_id()/my_role() below stop granting
+  -- access the instant this passes, no cron job needed. Null = permanent.
+  account_expires_at timestamptz,
   created_at    timestamptz not null default now()
 );
 
 create index on profiles (pharmacy_id);
 
 -- Helper used by every RLS policy below: the caller's own pharmacy_id.
+-- Item 3: also requires the profile to be active and, if it has an
+-- expiry, not yet expired — previously neither was checked here at all,
+-- so disabling a staff member (Settings → Staff → Disable) only ever hid
+-- them in the UI; the RLS layer itself never actually cut off their
+-- access. This one change is what makes both deactivation and temp-account
+-- expiry a real, database-level lockout everywhere.
 create or replace function my_pharmacy_id()
 returns uuid
 language sql stable security definer
 set search_path = public
 as $$
-  select pharmacy_id from profiles where id = auth.uid();
+  select pharmacy_id from profiles
+  where id = auth.uid() and active and (account_expires_at is null or account_expires_at > now());
 $$;
 
 create or replace function my_role()
@@ -55,7 +78,8 @@ returns user_role
 language sql stable security definer
 set search_path = public
 as $$
-  select role from profiles where id = auth.uid();
+  select role from profiles
+  where id = auth.uid() and active and (account_expires_at is null or account_expires_at > now());
 $$;
 
 -- ----------------------------------------------------------------------------
@@ -283,7 +307,12 @@ create table staff_invites (
   role        user_role not null default 'attendant',
   created_by  uuid references profiles(id),
   created_at  timestamptz not null default now(),
-  expires_at  timestamptz not null default (now() + interval '7 days'),
+  expires_at  timestamptz not null default (now() + interval '7 days'),  -- how long the CODE itself is redeemable
+  -- Item 3: how long the ACCOUNT that redeems this code should last, once
+  -- redeemed (distinct from expires_at above, which only governs the
+  -- code). Null = permanent account. Mandatory for accountant invites,
+  -- enforced in create_staff_invite.
+  account_expires_hours integer,
   used_by     uuid references profiles(id),
   used_at     timestamptz
 );
@@ -436,6 +465,14 @@ begin
   if p_pharmacy_id is distinct from my_pharmacy_id() then
     raise exception 'Not authorized for this pharmacy';
   end if;
+  -- Item 3: record_sale had no role check at all before this — harmless
+  -- while every existing role (owner/pharmacist/attendant) could sell
+  -- anyway, but a real gap once stock_taker and accountant exist, since
+  -- neither should be able to sell (per the pharmacy owner's answer) and
+  -- nothing was stopping either from calling this RPC directly.
+  if my_role() not in ('owner', 'co_owner', 'pharmacist', 'attendant') then
+    raise exception 'Only the owner, a pharmacist, or a seller can record a sale';
+  end if;
   if jsonb_array_length(p_items) = 0 then
     raise exception 'A sale needs at least one item';
   end if;
@@ -537,7 +574,7 @@ begin
   if p_pharmacy_id is distinct from my_pharmacy_id() then
     raise exception 'Not authorized for this pharmacy';
   end if;
-  if my_role() not in ('owner', 'pharmacist') then
+  if my_role() not in ('owner', 'co_owner', 'pharmacist') then
     raise exception 'Only the owner or a pharmacist can record a return';
   end if;
 
@@ -582,7 +619,7 @@ begin
   if p_pharmacy_id is distinct from my_pharmacy_id() then
     raise exception 'Not authorized for this pharmacy';
   end if;
-  if my_role() not in ('owner', 'pharmacist') then
+  if my_role() not in ('owner', 'co_owner', 'pharmacist') then
     raise exception 'Only the owner or a pharmacist can void a sale';
   end if;
 
@@ -648,8 +685,8 @@ begin
   if p_pharmacy_id is distinct from my_pharmacy_id() then
     raise exception 'Not authorized for this pharmacy';
   end if;
-  if my_role() not in ('owner', 'pharmacist') then
-    raise exception 'Only the owner or a pharmacist can restock';
+  if my_role() not in ('owner', 'co_owner', 'pharmacist', 'stock_taker') then
+    raise exception 'Only the owner, a pharmacist, or a stock taker can restock';
   end if;
 
   if p_expiry_unknown then
@@ -722,8 +759,8 @@ begin
   if p_pharmacy_id is distinct from my_pharmacy_id() then
     raise exception 'Not authorized for this pharmacy';
   end if;
-  if my_role() not in ('owner', 'pharmacist') then
-    raise exception 'Only the owner or a pharmacist can sync drugs';
+  if my_role() not in ('owner', 'co_owner', 'pharmacist', 'stock_taker') then
+    raise exception 'Only the owner, a pharmacist, or a stock taker can sync drugs';
   end if;
   if p_items is null or jsonb_array_length(p_items) = 0 then
     raise exception 'Select at least one drug to sync';
@@ -811,8 +848,8 @@ begin
   if p_pharmacy_id is distinct from my_pharmacy_id() then
     raise exception 'Not authorized for this pharmacy';
   end if;
-  if my_role() not in ('owner', 'pharmacist') then
-    raise exception 'Only the owner or a pharmacist can correct stock';
+  if my_role() not in ('owner', 'co_owner', 'pharmacist', 'stock_taker') then
+    raise exception 'Only the owner, a pharmacist, or a stock taker can correct stock';
   end if;
   if p_new_quantity < 0 then
     raise exception 'Quantity cannot be negative';
@@ -853,7 +890,7 @@ begin
   if p_pharmacy_id is distinct from my_pharmacy_id() then
     raise exception 'Not authorized for this pharmacy';
   end if;
-  if my_role() not in ('owner', 'pharmacist') then
+  if my_role() not in ('owner', 'co_owner', 'pharmacist') then
     raise exception 'Only the owner or a pharmacist can write off stock';
   end if;
   if p_type not in ('write_off', 'expired_disposal') then
@@ -917,7 +954,10 @@ $$;
 -- In-app access control instead of a separate admin system: the owner
 -- generates a short-lived invite code for a role, and the staff member
 -- signs up and redeems it themselves — no separate admin UI needed.
-create or replace function create_staff_invite(p_pharmacy_id uuid, p_role user_role)
+-- Item 3: co_owner can invite too (full equal access); accepts an optional
+-- expiry duration for the resulting account, and requires one when
+-- inviting an accountant (their account must always be temporary).
+create or replace function create_staff_invite(p_pharmacy_id uuid, p_role user_role, p_expires_hours integer default null)
 returns text
 language plpgsql
 security definer
@@ -926,22 +966,30 @@ as $$
 declare
   v_code text;
 begin
-  if p_pharmacy_id is distinct from my_pharmacy_id() or my_role() <> 'owner' then
+  if p_pharmacy_id is distinct from my_pharmacy_id() or my_role() not in ('owner', 'co_owner') then
     raise exception 'Only the pharmacy owner can invite staff';
   end if;
   if p_role = 'owner' then
     raise exception 'Cannot invite another owner';
   end if;
+  if p_role = 'accountant' and (p_expires_hours is null or p_expires_hours <= 0) then
+    raise exception 'An accountant''s account must have a time limit';
+  end if;
+  if p_expires_hours is not null and p_expires_hours <= 0 then
+    raise exception 'The time limit must be greater than zero hours';
+  end if;
 
   v_code := upper(substr(md5(random()::text || clock_timestamp()::text), 1, 6));
 
-  insert into staff_invites (pharmacy_id, code, role, created_by)
-  values (p_pharmacy_id, v_code, p_role, auth.uid());
+  insert into staff_invites (pharmacy_id, code, role, created_by, account_expires_hours)
+  values (p_pharmacy_id, v_code, p_role, auth.uid(), p_expires_hours);
 
   return v_code;
 end;
 $$;
 
+-- Item 3: carries the invite's account-expiry duration (if any) through to
+-- the new profile.
 create or replace function join_pharmacy_with_code(p_code text, p_full_name text, p_phone text)
 returns uuid
 language plpgsql
@@ -950,6 +998,7 @@ set search_path = public
 as $$
 declare
   v_invite record;
+  v_expires_at timestamptz;
 begin
   if exists (select 1 from profiles where id = auth.uid()) then
     raise exception 'This account already belongs to a pharmacy';
@@ -963,8 +1012,14 @@ begin
     raise exception 'Invalid or expired invite code';
   end if;
 
-  insert into profiles (id, pharmacy_id, full_name, phone, role)
-  values (auth.uid(), v_invite.pharmacy_id, p_full_name, p_phone, v_invite.role);
+  if v_invite.account_expires_hours is not null then
+    v_expires_at := now() + (v_invite.account_expires_hours || ' hours')::interval;
+  else
+    v_expires_at := null;
+  end if;
+
+  insert into profiles (id, pharmacy_id, full_name, phone, role, account_expires_at)
+  values (auth.uid(), v_invite.pharmacy_id, p_full_name, p_phone, v_invite.role, v_expires_at);
 
   update staff_invites set used_by = auth.uid(), used_at = now() where id = v_invite.id;
 
@@ -983,9 +1038,16 @@ security definer
 set search_path = public
 as $$
 begin
-  if (new.role is distinct from old.role or new.active is distinct from old.active or new.pharmacy_id is distinct from old.pharmacy_id) then
-    if my_role() is distinct from 'owner' then
-      raise exception 'Only the pharmacy owner can change role or active status';
+  -- Item 3: also protects account_expires_at (so a user can't clear/extend
+  -- their own temp-account expiry), and now lets co_owner (not just
+  -- literal owner) make these privileged changes. Promotion to literal
+  -- 'owner' stays blocked for everyone — only bootstrap_pharmacy() ever
+  -- sets that, at pharmacy creation.
+  if (new.role is distinct from old.role or new.active is distinct from old.active
+      or new.pharmacy_id is distinct from old.pharmacy_id
+      or new.account_expires_at is distinct from old.account_expires_at) then
+    if my_role() not in ('owner', 'co_owner') then
+      raise exception 'Only the pharmacy owner can change role, active status, or account expiry';
     end if;
     if new.pharmacy_id is distinct from old.pharmacy_id then
       raise exception 'A profile cannot be moved to a different pharmacy';
@@ -1028,16 +1090,23 @@ alter table stock_adjustments enable row level security;
 alter table master_drugs enable row level security;
 
 create policy "own pharmacy read" on pharmacies for select using (id = my_pharmacy_id());
-create policy "owner updates own pharmacy" on pharmacies for update using (id = my_pharmacy_id() and my_role() = 'owner');
+-- Item 3: co_owner gets the same access as owner on every owner-tier policy.
+create policy "owner updates own pharmacy" on pharmacies for update using (id = my_pharmacy_id() and my_role() in ('owner', 'co_owner'));
 
-create policy "read colleagues in same pharmacy" on profiles for select using (pharmacy_id = my_pharmacy_id());
+-- Item 3: a user must still be able to read their OWN profile row even
+-- once disabled/expired (so the app can show them a specific "why can't I
+-- log in" message instead of a blank/generic screen) — my_pharmacy_id()
+-- now returns null for them, so "pharmacy_id = my_pharmacy_id()" alone
+-- would hide their own row too. Colleague visibility still requires being
+-- an active, non-expired member.
+create policy "read colleagues in same pharmacy" on profiles for select using (pharmacy_id = my_pharmacy_id() or id = auth.uid());
 -- A user can always update their own row (e.g. language preference), and an
 -- owner can update any staff row in their pharmacy (role/active/etc) — the
 -- trigger above still stops both paths from touching role/active/pharmacy_id
--- unless the caller really is the owner.
+-- unless the caller really is the owner (or co_owner).
 create policy "update own profile or staff as owner" on profiles
   for update
-  using (id = (select auth.uid()) or (pharmacy_id = my_pharmacy_id() and my_role() = 'owner'));
+  using (id = (select auth.uid()) or (pharmacy_id = my_pharmacy_id() and my_role() in ('owner', 'co_owner')));
 
 create policy "tenant read categories" on drug_categories for all using (pharmacy_id = my_pharmacy_id());
 create policy "tenant read drugs" on drugs for all using (pharmacy_id = my_pharmacy_id());
@@ -1049,7 +1118,7 @@ create policy "tenant all sales_payments" on sales_payments for all using (pharm
 create policy "tenant all held_sales" on held_sales for all using (pharmacy_id = my_pharmacy_id());
 create policy "tenant all returns" on returns for all using (pharmacy_id = my_pharmacy_id());
 create policy "tenant all insurance_claims" on insurance_claims for all using (pharmacy_id = my_pharmacy_id());
-create policy "owner manage invites" on staff_invites for all using (pharmacy_id = my_pharmacy_id() and my_role() = 'owner');
+create policy "owner manage invites" on staff_invites for all using (pharmacy_id = my_pharmacy_id() and my_role() in ('owner', 'co_owner'));
 create policy "tenant read stock_adjustments" on stock_adjustments for all using (pharmacy_id = my_pharmacy_id());
 create policy "read master_drugs" on master_drugs for select using (true);
 
@@ -1539,7 +1608,7 @@ begin
   if p_pharmacy_id is distinct from my_pharmacy_id() then
     raise exception 'Not authorized for this pharmacy';
   end if;
-  if my_role() not in ('owner', 'pharmacist') then
+  if my_role() not in ('owner', 'co_owner', 'pharmacist') then
     raise exception 'Only the owner or a pharmacist can record a supplier delivery';
   end if;
   if jsonb_array_length(p_items) = 0 then
@@ -1628,7 +1697,7 @@ begin
   if p_pharmacy_id is distinct from my_pharmacy_id() then
     raise exception 'Not authorized for this pharmacy';
   end if;
-  if my_role() not in ('owner', 'pharmacist') then
+  if my_role() not in ('owner', 'co_owner', 'pharmacist') then
     raise exception 'Only the owner or a pharmacist can record a supplier payment';
   end if;
   if p_amount is null or p_amount <= 0 then
@@ -1982,7 +2051,7 @@ begin
   if p_pharmacy_id is distinct from my_pharmacy_id() then
     raise exception 'Not authorized for this pharmacy';
   end if;
-  if my_role() not in ('owner', 'pharmacist') then
+  if my_role() not in ('owner', 'co_owner', 'pharmacist') then
     raise exception 'Only the owner or a pharmacist can record an expense';
   end if;
   if p_description is null or trim(p_description) = '' then
@@ -2015,7 +2084,7 @@ begin
   if p_pharmacy_id is distinct from my_pharmacy_id() then
     raise exception 'Not authorized for this pharmacy';
   end if;
-  if my_role() not in ('owner', 'pharmacist') then
+  if my_role() not in ('owner', 'co_owner', 'pharmacist') then
     raise exception 'Only the owner or a pharmacist can void an expense';
   end if;
   if p_reason is null or trim(p_reason) = '' then
@@ -2056,8 +2125,8 @@ begin
   if p_pharmacy_id is distinct from my_pharmacy_id() then
     raise exception 'Not authorized for this pharmacy';
   end if;
-  if my_role() not in ('owner', 'pharmacist') then
-    raise exception 'Only the owner or a pharmacist can set a batch''s expiry date';
+  if my_role() not in ('owner', 'co_owner', 'pharmacist', 'stock_taker') then
+    raise exception 'Only the owner, a pharmacist, or a stock taker can set a batch''s expiry date';
   end if;
   if p_expiry_date is null then
     raise exception 'Enter an expiry date';
@@ -2071,3 +2140,39 @@ end;
 $$;
 
 grant execute on function set_batch_expiry(uuid, uuid, date) to authenticated;
+
+-- Item 34: fixes a real bug report — a restock entered with an
+-- already-past expiry date (e.g. picked yesterday by mistake instead of
+-- the intended future date) makes that batch's stock silently stop
+-- counting as "in stock" (v_drug_stock only counts unexpired batches),
+-- with no way in the app to correct it — set_batch_expiry above only
+-- covers batches marked expiry_unknown, not a batch that already has a
+-- real-but-wrong date. Deliberately owner-only (stricter than
+-- set_batch_expiry/record_restock's owner-or-pharmacist), since a wrong
+-- expiry date silently changes whether stock counts as sellable without
+-- changing the physical count on the shelf.
+create or replace function correct_batch_expiry(p_pharmacy_id uuid, p_batch_id uuid, p_new_expiry_date date)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if p_pharmacy_id is distinct from my_pharmacy_id() then
+    raise exception 'Not authorized for this pharmacy';
+  end if;
+  if my_role() not in ('owner', 'co_owner') then
+    raise exception 'Only the owner or co-owner can correct a batch''s expiry date';
+  end if;
+  if p_new_expiry_date is null then
+    raise exception 'Enter an expiry date';
+  end if;
+  if not exists (select 1 from batches where id = p_batch_id and pharmacy_id = p_pharmacy_id) then
+    raise exception 'Batch not found';
+  end if;
+
+  update batches set expiry_date = p_new_expiry_date, expiry_unknown = false where id = p_batch_id;
+end;
+$$;
+
+grant execute on function correct_batch_expiry(uuid, uuid, date) to authenticated;
