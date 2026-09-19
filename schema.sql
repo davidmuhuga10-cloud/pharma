@@ -1794,6 +1794,130 @@ $$;
 
 grant execute on function dashboard_data(uuid, text) to authenticated;
 
+-- Item 33 (mobile dashboard redesign): a custom date-range variant of
+-- dashboard_data, added as a SEPARATE function (not an overload of the
+-- existing one) so the original today/week/month/year path is completely
+-- untouched — this is purely additive. Powers the calendar-picker on the
+-- dashboard's range control. Bucket granularity is chosen from the span
+-- itself (a single day buckets by hour, up to a month by day, up to a year
+-- by week, anything longer by month), and the "vs previous period" comparison
+-- uses an equal-length window immediately before the chosen range.
+create or replace function dashboard_data_custom(p_pharmacy_id uuid, p_start date, p_end date)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_start timestamptz;
+  v_end timestamptz;
+  v_prev_start timestamptz;
+  v_prev_end timestamptz;
+  v_span_days numeric;
+  v_bucket text;
+  v_sales_total numeric;
+  v_sales_prev_total numeric;
+  v_cost_total numeric;
+  v_cost_prev_total numeric;
+  v_profit_total numeric;
+  v_profit_prev_total numeric;
+  v_trend jsonb;
+  v_rush jsonb;
+  v_top_sellers jsonb;
+begin
+  if p_pharmacy_id is distinct from my_pharmacy_id() then
+    raise exception 'Not authorized for this pharmacy';
+  end if;
+  if p_start is null or p_end is null or p_end < p_start then
+    raise exception 'Invalid date range';
+  end if;
+
+  v_start := p_start::timestamptz;
+  v_end := (p_end + 1)::timestamptz; -- exclusive, so the end date's whole day is included
+  v_span_days := extract(epoch from (v_end - v_start)) / 86400;
+  v_prev_start := v_start - (v_end - v_start);
+  v_prev_end := v_start;
+
+  v_bucket := case
+    when v_span_days <= 1 then 'hour'
+    when v_span_days <= 31 then 'day'
+    when v_span_days <= 366 then 'week'
+    else 'month'
+  end;
+
+  select coalesce(sum(total_amount), 0) into v_sales_total
+    from sales
+    where pharmacy_id = p_pharmacy_id and voided = false and sold_at >= v_start and sold_at < v_end;
+
+  select coalesce(sum(total_amount), 0) into v_sales_prev_total
+    from sales
+    where pharmacy_id = p_pharmacy_id and voided = false and sold_at >= v_prev_start and sold_at < v_prev_end;
+
+  select coalesce(sum(si.quantity * coalesce(b.cost_price, 0)), 0) into v_cost_total
+    from sale_items si
+    join sales sa on sa.id = si.sale_id
+    join batches b on b.id = si.batch_id
+    where si.pharmacy_id = p_pharmacy_id and sa.voided = false and sa.sold_at >= v_start and sa.sold_at < v_end;
+
+  select coalesce(sum(si.quantity * coalesce(b.cost_price, 0)), 0) into v_cost_prev_total
+    from sale_items si
+    join sales sa on sa.id = si.sale_id
+    join batches b on b.id = si.batch_id
+    where si.pharmacy_id = p_pharmacy_id and sa.voided = false and sa.sold_at >= v_prev_start and sa.sold_at < v_prev_end;
+
+  v_profit_total := v_sales_total - v_cost_total;
+  v_profit_prev_total := v_sales_prev_total - v_cost_prev_total;
+
+  select coalesce(jsonb_agg(jsonb_build_object('bucket_start', bucket_start, 'total', total) order by bucket_start), '[]'::jsonb)
+    into v_trend
+  from (
+    select date_trunc(v_bucket, sold_at) as bucket_start, sum(total_amount) as total
+    from sales
+    where pharmacy_id = p_pharmacy_id and voided = false and sold_at >= v_start and sold_at < v_end
+    group by 1
+  ) t;
+
+  select coalesce(jsonb_agg(jsonb_build_object('idx', idx, 'total', total) order by idx), '[]'::jsonb)
+    into v_rush
+  from (
+    select floor(extract(hour from sold_at) / 3)::int as idx, sum(total_amount) as total
+    from sales
+    where pharmacy_id = p_pharmacy_id and voided = false and sold_at >= v_start and sold_at < v_end
+    group by 1
+  ) r;
+
+  select coalesce(jsonb_agg(jsonb_build_object('drug_id', drug_id, 'name', name, 'units', units, 'revenue', revenue) order by units desc), '[]'::jsonb)
+    into v_top_sellers
+  from (
+    select si.drug_id, d.name, sum(si.quantity) as units, sum(si.line_total) as revenue
+    from sale_items si
+    join sales sa on sa.id = si.sale_id
+    join drugs d on d.id = si.drug_id
+    where si.pharmacy_id = p_pharmacy_id and sa.voided = false and sa.sold_at >= v_start and sa.sold_at < v_end
+    group by si.drug_id, d.name
+    order by units desc
+    limit 50
+  ) ts;
+
+  return jsonb_build_object(
+    'range', 'custom',
+    'start', v_start,
+    'end', v_end,
+    'bucket', v_bucket,
+    'sales_total', v_sales_total,
+    'sales_prev_total', v_sales_prev_total,
+    'cost_total', v_cost_total,
+    'profit_total', v_profit_total,
+    'profit_prev_total', v_profit_prev_total,
+    'trend', v_trend,
+    'rush', v_rush,
+    'top_sellers', v_top_sellers
+  );
+end;
+$$;
+
+grant execute on function dashboard_data_custom(uuid, date, date) to authenticated;
+
 -- ============================================================================
 -- 14. EXPENSES (added this session — PHARMA_PROJECT_STATUS.md item 23)
 -- — a general pharmacy-expenses ledger (rent, utilities, salaries, transport,

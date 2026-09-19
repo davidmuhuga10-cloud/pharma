@@ -89,7 +89,9 @@ var ICONS = {
   close: '<line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/>',
   box: '<rect x="4" y="8" width="16" height="12" rx="2"/><path d="M8 8V6.5a4 4 0 0 1 8 0V8"/>',
   truck: '<rect x="2.5" y="7" width="11" height="9" rx="1"/><path d="M13.5 10h4l3 3v3h-7z"/><circle cx="7" cy="18.5" r="1.6"/><circle cx="16.5" cy="18.5" r="1.6"/>',
-  wallet: '<path d="M3 7a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v1H5a2 2 0 0 0-2 2Z"/><path d="M3 8v10a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2H5a2 2 0 0 1-2-2Z"/><circle cx="16" cy="14.5" r="1.4"/>'
+  wallet: '<path d="M3 7a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v1H5a2 2 0 0 0-2 2Z"/><path d="M3 8v10a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2H5a2 2 0 0 1-2-2Z"/><circle cx="16" cy="14.5" r="1.4"/>',
+  // Item 33 (mobile dashboard redesign): the date-range calendar-picker button.
+  calendar: '<rect x="3.5" y="5" width="17" height="15" rx="2"/><line x1="3.5" y1="9.5" x2="20.5" y2="9.5"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/>'
 };
 function icon(name, size) {
   var s = size || 18;
@@ -720,11 +722,28 @@ var DCOLOR = {
   ctxWarm: '#BE8F87',
   gridline: '#E7E2DC', inkSoft: '#6B6560'
 };
-var DASH_RANGE_LABELS = { today: 'Today', week: 'Week', month: 'Month', year: 'Year' };
-var DASH_PERIOD_LABEL = { today: 'Today', week: 'This week', month: 'This month', year: 'This year' };
-var DASH_VS_LABEL = { today: 'yesterday', week: 'last week', month: 'last month', year: 'last year' };
-var DASH_TOPSELLERS_TITLE = { today: 'Top sellers today', week: 'Top sellers this week', month: 'Top sellers this month', year: 'Top sellers this year' };
+var DASH_RANGE_LABELS = { today: 'Today', week: 'Week', month: 'Month', year: 'Year', custom: 'Custom' };
+var DASH_PERIOD_LABEL = { today: 'Today', week: 'This week', month: 'This month', year: 'This year', custom: 'Custom range' };
+var DASH_VS_LABEL = { today: 'yesterday', week: 'last week', month: 'last month', year: 'last year', custom: 'the previous period' };
+var DASH_TOPSELLERS_TITLE = { today: 'Top sellers today', week: 'Top sellers this week', month: 'Top sellers this month', year: 'Top sellers this year', custom: 'Top sellers' };
 var RUSH_LABELS = ['12-3am', '3-6am', '6-9am', '9am-12pm', '12-3pm', '3-6pm', '6-9pm', '9pm-12am'];
+// Item 33: a custom date range picked via the dashboard's calendar button.
+// Set together with dashRange = 'custom'; cleared whenever a preset range
+// tab is tapped instead. See openDashDateRangePicker()/applyDashCustomRange().
+var dashCustomStart = null;
+var dashCustomEnd = null;
+
+// Item 33: branches between the original preset-range RPC and the new
+// custom-date-range one (dashboard_data_custom, schema.sql) added for the
+// dashboard's calendar picker — kept as a completely separate SQL function
+// rather than an overload, so the existing today/week/month/year path is
+// untouched. Shared by the initial load and every range switch.
+function fetchDashboardData() {
+  if (dashRange === 'custom' && dashCustomStart && dashCustomEnd) {
+    return sb.rpc('dashboard_data_custom', { p_pharmacy_id: STATE.profile.pharmacy_id, p_start: dashCustomStart, p_end: dashCustomEnd });
+  }
+  return sb.rpc('dashboard_data', { p_pharmacy_id: STATE.profile.pharmacy_id, p_range: dashRange === 'custom' ? 'today' : dashRange });
+}
 
 async function renderDashboard() {
   var c = $('#content');
@@ -738,7 +757,7 @@ async function renderDashboard() {
       sb.from('suppliers').select('id,opening_balance').eq('pharmacy_id', STATE.profile.pharmacy_id),
       sb.from('supplier_lpos').select('supplier_id,total_amount').eq('pharmacy_id', STATE.profile.pharmacy_id),
       sb.from('supplier_payments').select('supplier_id,amount').eq('pharmacy_id', STATE.profile.pharmacy_id),
-      sb.rpc('dashboard_data', { p_pharmacy_id: STATE.profile.pharmacy_id, p_range: dashRange })
+      fetchDashboardData()
     ]);
     var stockRes = results[0], outRes = results[1], lowRes = results[2], expRes = results[3],
         supsRes = results[4], lposRes = results[5], paysRes = results[6], dashRes = results[7];
@@ -778,10 +797,11 @@ async function renderDashboard() {
 async function setDashRange(r) {
   if (r === dashRange || dashLoading) return;
   dashRange = r;
+  dashCustomStart = null; dashCustomEnd = null; // a preset tab always clears any picked custom range
   dashLoading = true;
   drawDashboard(); // instant tab feedback; range-dependent cards stay on the previous range's data, dimmed, until the refetch lands — no skeleton flash
   try {
-    var res = await sb.rpc('dashboard_data', { p_pharmacy_id: STATE.profile.pharmacy_id, p_range: dashRange });
+    var res = await fetchDashboardData();
     if (res.error) throw res.error;
     dashData = res.data;
   } catch (e) {
@@ -791,44 +811,111 @@ async function setDashRange(r) {
   drawDashboard();
 }
 
+// Item 33: the calendar button on the dashboard's range control opens this
+// small from/to picker instead of being limited to the four preset tabs.
+function openDashDateRangePicker() {
+  var start = dashCustomStart || new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10);
+  var end = dashCustomEnd || new Date().toISOString().slice(0, 10);
+  var body = sheet('Custom date range', '');
+  body.innerHTML =
+    '<div class="field"><label>From</label><input id="dashRangeFrom" type="date" value="' + esc(start) + '"></div>' +
+    '<div class="field"><label>To</label><input id="dashRangeTo" type="date" value="' + esc(end) + '"></div>' +
+    '<button class="btn primary" id="dashRangeApplyBtn" onclick="applyDashCustomRange()">Apply</button>';
+}
+
+async function applyDashCustomRange() {
+  var from = $('#dashRangeFrom').value, to = $('#dashRangeTo').value;
+  if (!from || !to) { toast('Pick both a from and a to date.', 'bad'); return; }
+  if (to < from) { toast('The "to" date is before the "from" date.', 'bad'); return; }
+  var btn = $('#dashRangeApplyBtn');
+  act(btn, async function () {
+    dashCustomStart = from; dashCustomEnd = to;
+    dashRange = 'custom';
+    dashLoading = true;
+    closeSheet();
+    drawDashboard();
+    try {
+      var res = await fetchDashboardData();
+      if (res.error) throw res.error;
+      dashData = res.data;
+    } catch (e) {
+      toast(friendlyError(e), 'bad');
+    }
+    dashLoading = false;
+    drawDashboard();
+  });
+}
+
+// Item 33: the "Restock" quick-access button — reuses the exact same
+// reorder-list sheet/logic Inventory already has (openReorderList), just
+// fed from the dashboard's own already-loaded stock snapshot instead of
+// re-querying, so it opens instantly.
+function dashQuickRestock() {
+  if (dashSnap && dashSnap.drugList && dashSnap.drugList.length) {
+    STATE.drugsCache = dashSnap.drugList;
+    openReorderList();
+  } else {
+    setTab('inventory');
+  }
+}
+
+// Item 33 (mobile dashboard redesign, approved via sketch — see
+// PHARMA_PROJECT_STATUS.md): combines pieces from three sketched concepts —
+// the urgent-alert strip and stock-check search box, a Sell+Restock action
+// pair and the 4-tile stat grid + stock health, and the sales trend graph
+// (now a compact single-line header instead of a big centered headline)
+// placed above the stat grid with plain white cards throughout — only the
+// stat grid keeps the item-30/31 tinted-tile treatment now. Rush hours and
+// the Sales→Cost→Profit breakdown were dropped from this layout (not asked
+// for in the approved sketch); their draw functions are left in place
+// below, unused, rather than deleted, in case they're wanted back.
 function drawDashboard() {
   var c = $('#content');
   var refetching = dashLoading ? ' dash-refetching' : '';
-  // Item 30: tinted card backgrounds (same treatment/palette as the pill
-  // row and the other modules' kpi tiles — see PHARMA_PROJECT_STATUS.md) —
-  // each graph/list card gets a light tint from the same DCOLOR token its
-  // own chart already draws with, so the whole dashboard reads as one
-  // consistent color language instead of the pill row being the only
-  // tinted thing on the page. Item 31 adds the matching left/right accent
-  // border (ported from ShuleTop's .stat tiles — see .card's base rule).
   c.innerHTML =
+    dashAlertHtml(dashSnap) +
     dashQuickAccessHtml() +
     dashFilterRowHtml() +
-    '<div class="dash-row">' +
-      '<div class="dash-col"><div class="card dash-graph-card' + refetching + '" style="background:' + DCOLOR.salesLight + ';border-color:' + DCOLOR.sales + '">' + dashSalesGraphHtml(dashData) + '</div></div>' +
-      '<div class="dash-col"><div class="card dash-graph-card' + refetching + '" style="background:' + DCOLOR.violetLight + ';border-color:' + DCOLOR.violet + '">' + dashRushGraphHtml(dashData) + '</div></div>' +
-    '</div>' +
-    '<div class="dash-pill-row' + refetching + '">' + dashPillsHtml(dashData, dashSnap) + '</div>' +
-    '<div class="dash-row">' +
-      '<div class="dash-col"><div class="card" style="background:' + DCOLOR.orangeLight + ';border-color:' + DCOLOR.orange + '">' + dashStockHealthHtml(dashSnap) + '</div></div>' +
-      '<div class="dash-col"><div class="card' + refetching + '" style="background:' + DCOLOR.salesLight + ';border-color:' + DCOLOR.sales + '">' + dashProfitHtml(dashData) + '</div></div>' +
-    '</div>' +
+    '<div class="card dash-graph-card' + refetching + '">' + dashSalesGraphHtml(dashData) + '</div>' +
+    '<div class="dash-stat-grid' + refetching + '">' + dashStatGridHtml(dashData, dashSnap) + '</div>' +
+    '<div class="card">' + dashStockHealthHtml(dashSnap) + '</div>' +
     '<div class="dash-row">' +
       '<div class="dash-col' + refetching + '">' + dashTopSellersCard(dashData) + '</div>' +
       '<div class="dash-col">' + dashExpiringCard(dashSnap) + '</div>' +
     '</div>';
 }
 
-// Item 27: dashboard quick access — a one-tap "Sell" shortcut into the POS
-// screen, plus a live search box to instantly check whether a specific drug
-// is in stock without leaving the dashboard or opening full Inventory.
+// The urgent-alerts strip from the first sketch — out-of-stock count and
+// the single soonest-expiring batch (if within 30 days), tap-through to
+// Inventory. Renders nothing when there's nothing urgent to flag.
+function dashAlertHtml(snap) {
+  snap = snap || {};
+  var outCount = (snap.outOfStock || []).length;
+  var expiring = snap.expiring || [];
+  var soonest = expiring.length ? expiring[0] : null; // v_expiring_batches is already ordered by expiry_date
+  var soonestDays = soonest ? daysUntil(soonest.expiry_date) : null;
+  var parts = [];
+  if (outCount) parts.push('<b>' + outCount + ' out of stock</b>');
+  if (soonest && soonestDays !== null && soonestDays <= 30) {
+    parts.push('<b>1 batch expires ' + (soonestDays < 0 ? 'already' : soonestDays === 0 ? 'today' : 'in ' + soonestDays + ' day' + (soonestDays === 1 ? '' : 's')) + '</b>');
+  }
+  if (!parts.length) return '';
+  return '<div class="dash-alert" onclick="setTab(\'inventory\')">' + icon('warn', 16) +
+    '<div>' + parts.join(' &middot; ') + ' — tap Stock to review</div></div>';
+}
+
+// Item 27 (Dashboard quick access), redone for item 33: a Sell shortcut
+// alongside a new Restock shortcut (straight into the same reorder list
+// Inventory already has), plus the live "is this drug in stock?" search.
 function dashQuickAccessHtml() {
-  return '<div class="dash-quick-row">' +
-    '<button class="btn primary dash-quick-sell" onclick="setTab(\'sell\')">' + icon('sell', 16) + ' Sell</button>' +
+  return '<div class="dash-actions">' +
+    '<button class="btn primary" onclick="setTab(\'sell\')">' + icon('sell', 15) + ' Sell</button>' +
+    '<button class="btn secondary" onclick="dashQuickRestock()">' + icon('box', 15) + ' Restock</button>' +
+    '</div>' +
     '<div class="dash-quick-search">' +
     '<input id="dashStockCheckInput" placeholder="Check if a drug is in stock…" autocomplete="off" oninput="dashStockCheckSearch(this.value)" onblur="setTimeout(function(){var b=document.getElementById(\'dashStockCheckResults\');if(b)b.classList.remove(\'open\');},150)">' +
     '<div id="dashStockCheckResults" class="dash-quick-results"></div>' +
-    '</div></div>';
+    '</div>';
 }
 
 function dashStockCheckSearch(val) {
@@ -861,12 +948,21 @@ function dashStockCheckSell(drugId) {
   setTab('sell');
 }
 
+// Item 33: restyled as a rounded segmented pill control (was plain
+// underlined text tabs) plus a calendar button that opens a real
+// custom-date-range picker (openDashDateRangePicker/applyDashCustomRange,
+// backed by the new dashboard_data_custom() RPC in schema.sql) instead of
+// being limited to the four presets.
 function dashFilterRowHtml() {
+  var isCustom = dashRange === 'custom';
   return '<div class="dash-filter-row"><div class="dash-tabs">' +
     ['today', 'week', 'month', 'year'].map(function (r) {
-      return '<button class="dash-tab' + (dashRange === r ? ' active' : '') + '" onclick="setDashRange(\'' + r + '\')">' + DASH_RANGE_LABELS[r] + '</button>';
+      return '<button class="dash-tab' + (!isCustom && dashRange === r ? ' active' : '') + '" onclick="setDashRange(\'' + r + '\')">' + DASH_RANGE_LABELS[r] + '</button>';
     }).join('') +
-    '</div><div class="dash-period-label">' + DASH_PERIOD_LABEL[dashRange] + '</div></div>';
+    '</div>' +
+    '<button class="dash-cal-btn' + (isCustom ? ' active' : '') + '" onclick="openDashDateRangePicker()" title="Custom date range">' + icon('calendar', 15) + '</button>' +
+    '</div>' +
+    (isCustom && dashCustomStart && dashCustomEnd ? '<div class="dash-custom-label">' + esc(fmtDate(dashCustomStart)) + ' – ' + esc(fmtDate(dashCustomEnd)) + '</div>' : '');
 }
 
 // ---- charts: real axis (hairline gridlines + comma-formatted ticks), a
@@ -979,6 +1075,11 @@ function dashDeltaText(total, prev, vsLabel) {
   return (pct >= 0 ? '+' : '') + pct + '% vs ' + vsLabel;
 }
 
+// Item 33: the header used to be a centered section-title + a big 28px
+// headline + a separate centered chip row, stacked tall above the chart —
+// collapsed here into one compact label/value row (matching the rest of
+// the redesigned dashboard's card headers) so the chart starts almost
+// immediately below it instead of after three stacked lines of text.
 function dashSalesGraphHtml(d) {
   var total = d ? Number(d.sales_total || 0) : 0;
   var prev = d ? Number(d.sales_prev_total || 0) : 0;
@@ -987,11 +1088,10 @@ function dashSalesGraphHtml(d) {
   var labels = dashBucketLabels(trend, d ? d.bucket : 'day');
   var isEmpty = total <= 0;
   var chip = isEmpty ? '' : deltaChipHtml(total, prev, DASH_VS_LABEL[dashRange]);
-  return '<div class="dash-graph-head"><div class="section-title" style="text-align:center">Sales</div>' +
-    '<div class="dash-graph-headline">' + fmt(total) + '</div>' +
-    '<div class="dash-graph-chip-row">' + chip + '</div>' +
-    '<div class="dash-chart-wrap">' + axisLineChart(values, labels, 600, 140, DCOLOR.sales, isEmpty) + '</div>' +
-  '</div>';
+  var periodLabel = (DASH_PERIOD_LABEL[dashRange] || 'Today').toLowerCase();
+  return '<div class="dash-card-head"><div class="t">Sales &mdash; ' + esc(periodLabel) + '</div><div class="v">' + fmt(total) + '</div></div>' +
+    (chip ? '<div class="dash-graph-chip-row">' + chip + '</div>' : '') +
+    '<div class="dash-chart-wrap">' + axisLineChart(values, labels, 600, 140, DCOLOR.sales, isEmpty) + '</div>';
 }
 
 function dashRushGraphHtml(d) {
@@ -1012,31 +1112,32 @@ function dashRushGraphHtml(d) {
   '</div>';
 }
 
-function dashPillsHtml(d, snap) {
+// Item 33: replaces the old single-file dash-pill-row — now a 2-up grid
+// (4-up on desktop) with Sales and Profit paired first, Stock value and
+// Supplier debt owed second, per the approved sketch. Still the item-30/31
+// tinted-tile treatment (background + accent border in the stat's own
+// hue); just no more colored dot, to match the sketch's plainer tile face.
+function dashStatGridHtml(d, snap) {
   snap = snap || {};
   var salesTotal = d ? Number(d.sales_total || 0) : 0;
   var profitTotal = d ? Number(d.profit_total || 0) : 0;
   var profitPrev = d ? Number(d.profit_prev_total || 0) : 0;
   var marginPct = salesTotal > 0 ? Math.round((profitTotal / salesTotal) * 100) : null;
 
-  var pills = [
+  var stats = [
     { label: 'Sales', value: fmt(salesTotal), color: DCOLOR.sales, bg: DCOLOR.salesLight,
       sub: dashDeltaText(salesTotal, d ? d.sales_prev_total : 0, DASH_VS_LABEL[dashRange]) || DASH_PERIOD_LABEL[dashRange] },
-    { label: 'Stock value', value: fmt(snap.stockValue || 0), color: DCOLOR.orange, bg: DCOLOR.orangeLight,
-      sub: (snap.drugCount || 0) + ' drugs tracked' },
     { label: 'Profit', value: fmt(profitTotal), color: DCOLOR.sales, bg: DCOLOR.salesLight,
       sub: marginPct === null ? 'No sales yet' : (dashDeltaText(profitTotal, profitPrev, DASH_VS_LABEL[dashRange]) || (marginPct + '% margin')) },
-    { label: 'Supplier debt owed', value: fmt(snap.supplierOwed || 0), color: DCOLOR.magenta, bg: DCOLOR.magentaLight,
+    { label: 'Stock value', value: fmt(snap.stockValue || 0), color: DCOLOR.orange, bg: DCOLOR.orangeLight,
+      sub: (snap.drugCount || 0) + ' drugs tracked' },
+    { label: 'Debt owed', value: fmt(snap.supplierOwed || 0), color: DCOLOR.magenta, bg: DCOLOR.magentaLight,
       sub: (snap.suppliersOwedCount || 0) + ((snap.suppliersOwedCount || 0) === 1 ? ' supplier' : ' suppliers') }
   ];
-  return pills.map(function (p) {
-    // Item 31: same hue also colors the left/right accent border (see
-    // .dash-pill's base rule in style.css) — a look ported from ShuleTop's
-    // .stat tiles.
-    return '<div class="dash-pill" style="background:' + p.bg + ';border-color:' + p.color + '">' +
-      '<div class="dot" style="background:' + p.color + '"></div>' +
-      '<div class="label" style="color:' + p.color + '">' + esc(p.label) + '</div>' +
-      '<div class="value">' + p.value + '</div>' +
+  return stats.map(function (p) {
+    return '<div class="dash-stat" style="background:' + p.bg + ';border-color:' + p.color + '">' +
+      '<div class="lab" style="color:' + p.color + '">' + esc(p.label) + '</div>' +
+      '<div class="val">' + p.value + '</div>' +
       '<div class="sub">' + esc(p.sub) + '</div>' +
     '</div>';
   }).join('');
@@ -1051,6 +1152,11 @@ function segmentedBarHtml(segments, h) {
   return '<div style="display:flex;width:100%;height:' + h + 'px;border-radius:' + (h / 2) + 'px;overflow:hidden;background:var(--line)">' + parts + '</div>';
 }
 
+// Item 33: compact header (was a full-width section-title) and the
+// out-of-stock/low-stock/healthy legend is now a fixed 3-column grid
+// instead of a wrapping flex row, so all three always sit on one line
+// (short labels — "Out 18" not "Out of stock (18)" — are what makes that
+// fit at phone width) instead of the third item dropping to its own line.
 function dashStockHealthHtml(snap) {
   snap = snap || {};
   var out = (snap.outOfStock || []).length, low = (snap.lowStock || []).length;
@@ -1058,15 +1164,16 @@ function dashStockHealthHtml(snap) {
   var healthy = Math.max(total - out - low, 0);
   var hasData = total > 0;
   var bar = hasData
-    ? segmentedBarHtml([[out, DCOLOR.critical], [low, DCOLOR.warning], [healthy, DCOLOR.good]], 14)
-    : '<div style="height:14px;border-radius:7px;background:var(--line)"></div>';
+    ? segmentedBarHtml([[out, DCOLOR.critical], [low, DCOLOR.warning], [healthy, DCOLOR.good]], 10)
+    : '<div style="height:10px;border-radius:5px;background:var(--line)"></div>';
   var legend = '<div class="dash-health-legend">' +
-    '<span class="sw"><span class="dot" style="background:' + DCOLOR.critical + '"></span>Out of stock (' + out + ')</span>' +
-    '<span class="sw"><span class="dot" style="background:' + DCOLOR.warning + '"></span>Low stock (' + low + ')</span>' +
-    '<span class="sw"><span class="dot" style="background:' + DCOLOR.good + '"></span>Healthy (' + healthy + ')</span>' +
+    '<span class="sw"><span class="dot" style="background:' + DCOLOR.critical + '"></span>Out ' + out + '</span>' +
+    '<span class="sw"><span class="dot" style="background:' + DCOLOR.warning + '"></span>Low ' + low + '</span>' +
+    '<span class="sw"><span class="dot" style="background:' + DCOLOR.good + '"></span>Healthy ' + healthy + '</span>' +
   '</div>';
   var caption = hasData ? '' : '<div class="tiny" style="margin-top:8px">No drugs added yet — add your first drug in Inventory to start tracking stock health.</div>';
-  return '<div class="section-title">Stock health</div><div style="height:10px"></div>' + bar + legend + caption;
+  return '<div class="dash-card-head"><div class="t">Stock health</div><div class="v" style="font-size:12.5px;color:var(--ink-soft);font-weight:700">' + total + ' drugs</div></div>' +
+    '<div style="height:8px"></div>' + bar + legend + caption;
 }
 
 function dashProfitHtml(d) {
@@ -1132,7 +1239,9 @@ function dashTopSellersCard(d) {
   for (var i = top4.length; i < 4; i++) rows += dashPlaceholderRowHtml();
   var empty = all.length === 0 ? '<div class="tiny" style="text-align:center;margin-top:14px">No sales recorded yet this period.</div>' : '';
   var footer = all.length > 4 ? '<button class="dash-view-all" onclick="openTopSellersFull()">View all ' + all.length + ' &rarr;</button>' : '';
-  return '<div class="card dash-list-card" style="background:' + DCOLOR.blueLight + ';border-color:' + DCOLOR.blue + '"><div class="section-title dash-list-title">' + (DASH_TOPSELLERS_TITLE[dashRange] || 'Top sellers') + '</div>' + rows + empty + footer + '</div>';
+  // Item 33: plain white card (no more blue tint) and a compact left-aligned
+  // header, matching the approved sketch — only the stat grid keeps tinting.
+  return '<div class="card dash-list-card"><div class="dash-card-head"><div class="t">' + esc(DASH_TOPSELLERS_TITLE[dashRange] || 'Top sellers') + '</div></div>' + rows + empty + footer + '</div>';
 }
 
 function dashExpiringCard(snap) {
@@ -1147,7 +1256,7 @@ function dashExpiringCard(snap) {
   for (var i = top4.length; i < 4; i++) rows += dashPlaceholderRowHtml();
   var empty = all.length === 0 ? '<div class="tiny" style="text-align:center;margin-top:14px">Nothing expiring soon.</div>' : '';
   var footer = all.length > 4 ? '<button class="dash-view-all" onclick="openExpiringFull()">View all ' + all.length + ' &rarr;</button>' : '';
-  return '<div class="card dash-list-card" style="background:var(--amber-light);border-color:var(--amber)"><div class="section-title dash-list-title">Expiring soon</div>' + rows + empty + footer + '</div>';
+  return '<div class="card dash-list-card"><div class="dash-card-head"><div class="t">Expiring soon</div></div>' + rows + empty + footer + '</div>';
 }
 
 function openTopSellersFull() {
@@ -1210,13 +1319,15 @@ function drawInventory() {
   redrawKeepingFocus(c,
     '<div class="searchbox field"><input id="invSearchInput" placeholder="Search drugs…" value="' + esc(invFilter) + '" oninput="invFilter=this.value;invPage=1;drawInventory()"></div>' +
     '<div class="toolbar-row">' +
-    '<div class="toolbar-segment">' +
-    (can('edit_inventory') ? '<button class="btn" onclick="openSyncMasterDrugs()">' + icon('box',15) + ' Sync common drugs</button>' : '') +
-    (can('edit_inventory') ? '<button class="btn" onclick="openImportExcel()">' + icon('upload',15) + ' Import</button>' : '') +
+    (can('edit_inventory') ? '<div class="toolbar-segment">' +
+      '<button class="btn" onclick="openSyncMasterDrugs()">' + icon('box',15) + ' Sync common drugs</button>' +
+      '<button class="btn" onclick="openImportExcel()">' + icon('upload',15) + ' Import</button>' +
+      '</div>' : '') +
+    '<div class="toolbar-segment toolbar-end">' +
     '<button class="btn" onclick="exportInventoryExcel()">' + icon('download',15) + ' Excel</button>' +
     '<button class="btn" onclick="printInventory()">' + icon('printer',15) + ' Print</button>' +
     '</div>' +
-    (can('edit_inventory') ? '<button class="btn primary toolbar-primary" style="margin-left:auto" onclick="openAddDrug()">' + t('addDrug') + '</button>' : '') +
+    (can('edit_inventory') ? '<button class="btn primary toolbar-primary" onclick="openAddDrug()">' + t('addDrug') + '</button>' : '') +
     '</div>' +
     (can('restock') && reorderCount ? '<div class="inline-notice">' + icon('clipboard',15) +
       '<a href="#" onclick="openReorderList();return false;">' + reorderCount + (reorderCount === 1 ? ' drug needs' : ' drugs need') + ' reordering — view list</a></div>' : '') +
@@ -1661,7 +1772,7 @@ function openReorderList() {
   pendingReorderList = needed;
   var body = sheet('Reorder list', '');
   body.innerHTML =
-    '<div class="toolbar-row"><div class="toolbar-segment">' +
+    '<div class="toolbar-row"><div class="toolbar-segment toolbar-end">' +
     '<button class="btn" onclick="exportReorderExcel()">' + icon('download',15) + ' Excel</button>' +
     '<button class="btn" onclick="printReorderList()">' + icon('printer',15) + ' Print</button>' +
     '</div></div>' +
@@ -2214,24 +2325,92 @@ function printReceipt() {
 // REPORTS
 // ---------------------------------------------------------------------------
 
+// Item 32: Reports restructured from one flat screen into a proper hub of
+// sub-modules (brief item 3) — Sales, Expiry Dates, Stock Valuation, Low
+// Stock, and Insurance Claims, each its own printable report with the
+// pharmacy's letterhead and the shared "Generated by Pharma" print footer
+// (already built into printHtml()/letterheadHtml() — reused as-is, not
+// rebuilt per report). reportsView tracks which sub-screen is showing, the
+// same in-content navigation pattern already used by Suppliers' list/detail
+// screens (see supplierDetailId/openSupplierDetail/closeSupplierDetail).
+var reportsView = 'hub'; // 'hub' | 'sales' | 'expiry' | 'valuation' | 'lowstock' | 'claims'
 var reportRange = 'today';
-var reportData = null; // last-loaded report, kept for export/print
+var reportData = null; // last-loaded sales report, kept for export/print
+var expiryReportData = null;
+var valuationReportData = null;
+var lowStockReportData = null;
 
 async function renderReports() {
-  drawReportsShell();
-  await loadReport();
+  if (reportsView === 'sales') { await loadReport(); return; }
+  if (reportsView === 'expiry') { await loadExpiryReport(); return; }
+  if (reportsView === 'valuation') { await loadValuationReport(); return; }
+  if (reportsView === 'lowstock') { await loadLowStockReport(); return; }
+  if (reportsView === 'claims') { await loadClaims(); return; }
+  drawReportsHub();
+}
+
+function openReportsHub() { reportsView = 'hub'; renderReports(); }
+
+var REPORT_TILES = [
+  { view: 'sales', kind: 't-sales', ico: 'sell', title: 'Sales Report', desc: 'Revenue, payment methods, top sellers and every transaction, by date range.' },
+  { view: 'expiry', kind: 't-amber', ico: 'warn', title: 'Expiry Dates Report', desc: 'Every batch by expiry urgency — expired, critical, soon, and unknown-expiry batches still needing a real date.' },
+  { view: 'valuation', kind: 't-orange', ico: 'wallet', title: 'Stock Valuation Report', desc: 'What your current stock is worth, at cost and at retail, drug by drug.' },
+  { view: 'lowstock', kind: 't-red', ico: 'clipboard', title: 'Low Stock Report', desc: 'Every drug at or below its reorder level, with a suggested order quantity.' },
+  { view: 'claims', kind: 't-violet', ico: 'reports', title: 'Insurance Claims', desc: 'Every claim raised at checkout, tracked through to paid or rejected.' }
+];
+
+function drawReportsHub() {
+  var c = $('#content');
+  c.innerHTML =
+    '<div class="reports-grid">' +
+    REPORT_TILES.filter(function (r) { return r.view !== 'claims' || can('claims'); }).map(function (r) {
+      return '<button class="report-tile ' + r.kind + '" onclick="reportsView=\'' + r.view + '\';renderReports()">' +
+        '<div class="r-ico">' + icon(r.ico, 20) + '</div>' +
+        '<div><div class="r-title">' + esc(r.title) + '</div><div class="r-desc">' + esc(r.desc) + '</div></div>' +
+      '</button>';
+    }).join('') +
+    '</div>';
+}
+
+function reportsBackBtn() {
+  return '<button class="btn ghost small" style="margin-bottom:10px" onclick="openReportsHub()">&larr; All reports</button>';
 }
 
 function drawReportsShell() {
   var c = $('#content');
   c.innerHTML =
+    reportsBackBtn() +
     '<div class="row-3" style="margin-bottom:14px">' +
     ['today', 'week', 'month'].map(function (r) {
       return '<button class="btn ' + (reportRange === r ? 'primary' : 'ghost') + ' small" onclick="reportRange=\'' + r + '\';loadReport()">' + r[0].toUpperCase() + r.slice(1) + '</button>';
     }).join('') + '</div>' +
-    '<div class="toolbar-row"><div class="toolbar-segment">' +
+    '<div class="toolbar-row"><div class="toolbar-segment toolbar-end">' +
     '<button class="btn" onclick="exportReportExcel()">' + icon('download',15) + ' Excel</button>' +
     '<button class="btn" onclick="printReport()">' + icon('printer',15) + ' Print</button>' +
+    '</div></div>' +
+    '<div id="reportBody"><div class="empty">Loading…</div></div>';
+}
+
+// Shared shell for the four newer report screens (Expiry, Valuation, Low
+// Stock, Claims) — no date-range toggle (each is a live snapshot), just the
+// back button plus an Excel/Print toolbar wired to that view's own
+// export/print functions.
+var REPORT_SHELL_HANDLERS = {
+  expiry: { excel: 'exportExpiryReportExcel', print: 'printExpiryReport' },
+  valuation: { excel: 'exportValuationReportExcel', print: 'printValuationReport' },
+  lowstock: { excel: 'exportLowStockReportExcel', print: 'printLowStockReport' },
+  claims: { excel: 'exportClaimsExcel', print: 'printClaimsReport' }
+};
+
+function drawReportsShell2(title) {
+  var c = $('#content');
+  var h = REPORT_SHELL_HANDLERS[reportsView] || {};
+  c.innerHTML =
+    reportsBackBtn() +
+    '<div class="section-title" style="margin-top:0">' + esc(title) + '</div>' +
+    '<div class="toolbar-row"><div class="toolbar-segment toolbar-end">' +
+    (h.excel ? '<button class="btn" onclick="' + h.excel + '()">' + icon('download',15) + ' Excel</button>' : '') +
+    (h.print ? '<button class="btn" onclick="' + h.print + '()">' + icon('printer',15) + ' Print</button>' : '') +
     '</div></div>' +
     '<div id="reportBody"><div class="empty">Loading…</div></div>';
 }
@@ -2323,7 +2502,6 @@ async function loadReport() {
   reportData = { sales: sales || [], total: total, byMethod: byMethod, topDrugs: topDrugs, itemsBySale: itemsBySale, paymentsBySale: paymentsBySale };
 
   drawReportBody();
-  if (can('claims')) loadClaims();
 }
 
 function drawReportBody() {
@@ -2352,8 +2530,7 @@ function drawReportBody() {
         '<div class="meta">' + new Date(s.sold_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) + ' · ' + methodLabel + '</div></div>' +
         '<div class="right">' + (s.customer_name ? '<span class="tiny">' + esc(s.customer_name) + '</span>' : '') + '</div></div>';
     }).join('') : '<div class="empty">Nothing recorded yet.</div>') + '</div>' +
-    (sales.length > visible.length ? '<button class="btn ghost" onclick="reportTxPage++;drawReportBody()">Load more</button>' : '') +
-    '<div id="claimsSection"></div>';
+    (sales.length > visible.length ? '<button class="btn ghost" onclick="reportTxPage++;drawReportBody()">Load more</button>' : '');
 }
 
 function openSaleDetail(saleId) {
@@ -2427,34 +2604,227 @@ async function doVoidSale(saleId) {
 }
 
 // ---------------------------------------------------------------------------
+// EXPIRY DATES REPORT — every batch still in stock, bucketed by urgency.
+// Reuses the same thresholds/logic as the drug-detail batch list and the
+// Inventory "unknown expiry" notice (expiry_unknown, item 26).
+// ---------------------------------------------------------------------------
+
+async function loadExpiryReport() {
+  drawReportsShell2('Expiry Dates Report');
+  try {
+    var { data: batches, error } = await sb.from('batches')
+      .select('id, batch_no, quantity_remaining, expiry_date, expiry_unknown, drug_id, drugs(name, unit)')
+      .eq('pharmacy_id', STATE.profile.pharmacy_id)
+      .gt('quantity_remaining', 0)
+      .order('expiry_date');
+    if (error) throw error;
+    var buckets = { expired: [], critical: [], soon: [], later: [], unknown: [] };
+    (batches || []).forEach(function (b) {
+      var row = {
+        name: (b.drugs && b.drugs.name) || 'Unknown drug', unit: (b.drugs && b.drugs.unit) || 'unit',
+        batch_no: b.batch_no, qty: b.quantity_remaining, expiry_date: b.expiry_date
+      };
+      if (b.expiry_unknown) { buckets.unknown.push(row); return; }
+      var d = daysUntil(b.expiry_date);
+      row.days = d;
+      if (d < 0) buckets.expired.push(row);
+      else if (d <= 30) buckets.critical.push(row);
+      else if (d <= 90) buckets.soon.push(row);
+      else buckets.later.push(row);
+    });
+    ['expired', 'critical', 'soon'].forEach(function (k) { buckets[k].sort(function (a, b) { return a.days - b.days; }); });
+    expiryReportData = { buckets: buckets, total: (batches || []).length };
+    drawExpiryReportBody();
+  } catch (e) {
+    errorCard($('#reportBody'), friendlyError(e), 'loadExpiryReport');
+  }
+}
+
+function expiryBucketCard(title, kind, rows, showDays) {
+  if (!rows.length) return '';
+  return '<div class="section-title">' + esc(title) + ' (' + rows.length + ')</div>' +
+    '<div class="card">' + rows.map(function (r) {
+      return '<div class="list-row"><div><div class="name">' + esc(r.name) + (r.batch_no ? ' · batch ' + esc(r.batch_no) : '') + '</div>' +
+        '<div class="meta">' + r.qty + ' ' + esc(r.unit) + '</div></div>' +
+        '<div class="right"><span class="badge ' + kind + '">' + (r.expiry_date ? fmtDate(r.expiry_date) : 'No date set') + (showDays && typeof r.days === 'number' ? (r.days < 0 ? ' · ' + Math.abs(r.days) + 'd ago' : ' · ' + r.days + 'd left') : '') + '</span></div></div>';
+    }).join('') + '</div>';
+}
+
+function drawExpiryReportBody() {
+  var body = $('#reportBody');
+  var b = expiryReportData.buckets;
+  body.innerHTML =
+    '<div class="kpi-grid" style="margin-bottom:14px">' +
+    kpi('Expired', b.expired.length, 't-red') +
+    kpi('Critical (≤30d)', b.critical.length, 't-red') +
+    kpi('Soon (≤90d)', b.soon.length, 't-amber') +
+    kpi('Unknown expiry', b.unknown.length, 't-neutral') +
+    '</div>' +
+    (expiryReportData.total ? (
+      expiryBucketCard('Expired', 'bad', b.expired, true) +
+      expiryBucketCard('Critical — 30 days or less', 'bad', b.critical, true) +
+      expiryBucketCard('Expiring soon — 31 to 90 days', 'warn', b.soon, true) +
+      expiryBucketCard('No expiry date set', 'muted', b.unknown, false) +
+      expiryBucketCard('Later than 90 days', 'good', b.later, true)
+    ) : '<div class="empty">No batches in stock yet.</div>');
+}
+
+function expiryReportRows() {
+  var b = expiryReportData.buckets;
+  var rows = [];
+  function add(label, list) { list.forEach(function (r) { rows.push([r.name, r.batch_no || '', r.qty + ' ' + r.unit, label, r.expiry_date ? fmtDate(r.expiry_date) : '—']); }); }
+  add('Expired', b.expired); add('Critical', b.critical); add('Soon', b.soon); add('Unknown expiry', b.unknown); add('Later', b.later);
+  return rows;
+}
+
+function printExpiryReport() {
+  if (!expiryReportData) { toast('Report still loading.', 'bad'); return; }
+  printHtml('Expiry Dates Report', todayStr(),
+    tableHtml(['Drug', 'Batch', 'Qty', 'Status', 'Expiry date'], expiryReportRows()),
+    expiryReportData.total + ' batches in stock');
+}
+
+function exportExpiryReportExcel() {
+  if (!expiryReportData) { toast('Report still loading.', 'bad'); return; }
+  var rows = expiryReportRows().map(function (r) {
+    return { 'Drug': r[0], 'Batch': r[1], 'Qty': r[2], 'Status': r[3], 'Expiry date': r[4] };
+  });
+  exportExcel((STATE.pharmacy.name || 'Pharma') + ' - expiry - ' + todayStr() + '.xlsx', 'Expiry', rows);
+}
+
+// ---------------------------------------------------------------------------
+// STOCK VALUATION REPORT — what current stock is worth, at cost and retail,
+// drug by drug. Reuses v_drug_stock's stock_value_cost/stock_value_retail
+// (already computed for Inventory's own export, item 26/27).
+// ---------------------------------------------------------------------------
+
+async function loadValuationReport() {
+  drawReportsShell2('Stock Valuation Report');
+  try {
+    var { data, error } = await sb.from('v_drug_stock').select('drug_id, name, unit, qty_in_stock, stock_value_cost, stock_value_retail').order('stock_value_retail', { ascending: false });
+    if (error) throw error;
+    var rows = (data || []).filter(function (d) { return d.qty_in_stock > 0; });
+    var totalCost = rows.reduce(function (a, d) { return a + Number(d.stock_value_cost || 0); }, 0);
+    var totalRetail = rows.reduce(function (a, d) { return a + Number(d.stock_value_retail || 0); }, 0);
+    valuationReportData = { rows: rows, totalCost: totalCost, totalRetail: totalRetail };
+    drawValuationReportBody();
+  } catch (e) {
+    errorCard($('#reportBody'), friendlyError(e), 'loadValuationReport');
+  }
+}
+
+function drawValuationReportBody() {
+  var body = $('#reportBody');
+  var d = valuationReportData;
+  body.innerHTML =
+    '<div class="kpi-grid" style="margin-bottom:14px">' +
+    kpi('Value at cost', fmt(d.totalCost), 't-orange') +
+    kpi('Value at retail', fmt(d.totalRetail), 't-sales') +
+    kpi('Est. margin', fmt(d.totalRetail - d.totalCost), 't-green') +
+    kpi('Drugs tracked', d.rows.length, 't-neutral') +
+    '</div>' +
+    '<div class="section-title">By drug</div>' +
+    '<div class="card">' + (d.rows.length ? d.rows.map(function (r) {
+      return listRow(r.name, r.qty_in_stock + ' ' + esc(r.unit) + ' · cost ' + fmt(r.stock_value_cost), fmt(r.stock_value_retail));
+    }).join('') : '<div class="empty">No stock recorded yet.</div>') + '</div>';
+}
+
+function printValuationReport() {
+  if (!valuationReportData) { toast('Report still loading.', 'bad'); return; }
+  var rows = valuationReportData.rows.map(function (r) { return [r.name, r.qty_in_stock + ' ' + r.unit, fmt(r.stock_value_cost), fmt(r.stock_value_retail)]; });
+  printHtml('Stock Valuation Report', todayStr(),
+    tableHtml(['Drug', 'Qty in stock', 'Value (cost)', 'Value (retail)'], rows),
+    'Total cost ' + fmt(valuationReportData.totalCost) + ' · Total retail ' + fmt(valuationReportData.totalRetail));
+}
+
+function exportValuationReportExcel() {
+  if (!valuationReportData) { toast('Report still loading.', 'bad'); return; }
+  var rows = valuationReportData.rows.map(function (r) {
+    return { 'Drug': r.name, 'Unit': r.unit, 'Qty in stock': r.qty_in_stock, 'Value (cost)': Number(r.stock_value_cost || 0), 'Value (retail)': Number(r.stock_value_retail || 0) };
+  });
+  exportExcel((STATE.pharmacy.name || 'Pharma') + ' - stock valuation - ' + todayStr() + '.xlsx', 'Valuation', rows);
+}
+
+// ---------------------------------------------------------------------------
+// LOW STOCK REPORT — every drug at or below its reorder level, with a
+// suggested order quantity. Same formula as the Inventory reorder list
+// (openReorderList), but as its own formal, printable/exportable report.
+// ---------------------------------------------------------------------------
+
+async function loadLowStockReport() {
+  drawReportsShell2('Low Stock Report');
+  try {
+    var { data, error } = await sb.from('v_drug_stock').select('drug_id, name, unit, qty_in_stock, reorder_level').order('name');
+    if (error) throw error;
+    var rows = (data || []).filter(function (d) { return d.qty_in_stock <= d.reorder_level; }).map(function (d) {
+      return { name: d.name, unit: d.unit, current: d.qty_in_stock, reorderLevel: d.reorder_level, suggested: Math.max(d.reorder_level * 3 - d.qty_in_stock, d.reorder_level || 5) };
+    });
+    lowStockReportData = { rows: rows };
+    drawLowStockReportBody();
+  } catch (e) {
+    errorCard($('#reportBody'), friendlyError(e), 'loadLowStockReport');
+  }
+}
+
+function drawLowStockReportBody() {
+  var body = $('#reportBody');
+  var rows = lowStockReportData.rows;
+  body.innerHTML =
+    '<div class="kpi-grid" style="margin-bottom:14px">' +
+    kpi('Need reordering', rows.length, rows.length ? 't-red' : 't-neutral') +
+    '</div>' +
+    '<div class="card">' + (rows.length ? rows.map(function (n) {
+      return listRow(n.name, 'Have ' + n.current + ' ' + n.unit + ' · reorder level ' + n.reorderLevel, '<b>Order ' + n.suggested + '</b>');
+    }).join('') : '<div class="empty">Nothing needs reordering right now.</div>') + '</div>';
+}
+
+function printLowStockReport() {
+  if (!lowStockReportData) { toast('Report still loading.', 'bad'); return; }
+  var rows = lowStockReportData.rows.map(function (n) { return [n.name, n.current + ' ' + n.unit, n.reorderLevel, n.suggested]; });
+  printHtml('Low Stock Report', todayStr(), tableHtml(['Drug', 'Current stock', 'Reorder level', 'Suggested order'], rows), rows.length + ' drugs need reordering');
+}
+
+function exportLowStockReportExcel() {
+  if (!lowStockReportData) { toast('Report still loading.', 'bad'); return; }
+  var rows = lowStockReportData.rows.map(function (n) {
+    return { 'Drug': n.name, 'Current stock': n.current, 'Reorder level': n.reorderLevel, 'Suggested order qty': n.suggested };
+  });
+  exportExcel((STATE.pharmacy.name || 'Pharma') + ' - low stock - ' + todayStr() + '.xlsx', 'Low stock', rows);
+}
+
+// ---------------------------------------------------------------------------
 // INSURANCE CLAIMS — created automatically at checkout when a payment line
-// uses "insurance"; tracked here through to paid/rejected.
+// uses "insurance"; tracked here through to paid/rejected. Promoted from an
+// inline strip at the bottom of the Sales report (its original spot) to its
+// own full report screen as part of item 32.
 // ---------------------------------------------------------------------------
 
 var claimsCache = [];
 
 async function loadClaims() {
+  drawReportsShell2('Insurance Claims');
   try {
-    var { data } = await sb.from('insurance_claims').select('*').order('created_at', { ascending: false }).limit(100);
+    var { data } = await sb.from('insurance_claims').select('*').order('created_at', { ascending: false }).limit(200);
     claimsCache = data || [];
   } catch (e) { claimsCache = []; }
   drawClaims();
 }
 
 function drawClaims() {
-  var el = $('#claimsSection');
-  if (!el) return;
-  if (!claimsCache.length) { el.innerHTML = ''; return; }
+  var body = $('#reportBody');
+  if (!body) return;
   var pendingTotal = claimsCache.filter(function (c) { return c.status === 'pending'; }).reduce(function (a, c) { return a + Number(c.amount || 0); }, 0);
-  el.innerHTML =
-    '<div class="section-title">Insurance claims' + (pendingTotal ? ' — ' + fmt(pendingTotal) + ' pending' : '') + '</div>' +
-    '<div class="toolbar-row"><button class="btn ghost" onclick="exportClaimsExcel()">' + icon('download',15) + ' Excel</button></div>' +
-    '<div class="card">' + claimsCache.map(function (c) {
+  body.innerHTML =
+    '<div class="kpi-grid" style="margin-bottom:14px">' +
+    kpi('Pending', fmt(pendingTotal), 't-amber') +
+    kpi('Total claims', claimsCache.length, 't-violet') +
+    '</div>' +
+    '<div class="card">' + (claimsCache.length ? claimsCache.map(function (c) {
       return '<div class="list-row"><div><div class="name">' + esc(c.scheme) + '</div><div class="meta">' + new Date(c.created_at).toLocaleDateString('en-GB') + (c.claim_number ? ' · ' + esc(c.claim_number) : '') + '</div></div>' +
         '<div class="right"><div>' + fmt(c.amount) + '</div><select style="margin-top:4px" onchange="updateClaimStatus(\'' + c.id + '\',this.value)">' +
         ['pending', 'submitted', 'paid', 'rejected'].map(function (s) { return '<option value="' + s + '"' + (c.status === s ? ' selected' : '') + '>' + s.charAt(0).toUpperCase() + s.slice(1) + '</option>'; }).join('') +
         '</select></div></div>';
-    }).join('') + '</div>';
+    }).join('') : '<div class="empty">No insurance claims yet.</div>') + '</div>';
 }
 
 async function updateClaimStatus(id, status) {
@@ -2470,6 +2840,16 @@ function exportClaimsExcel() {
     return { 'Date': new Date(c.created_at).toLocaleDateString('en-GB'), 'Scheme': c.scheme, 'Claim number': c.claim_number || '', 'Amount': Number(c.amount || 0), 'Status': c.status };
   });
   exportExcel((STATE.pharmacy.name || 'Pharma') + ' - insurance claims - ' + todayStr() + '.xlsx', 'Claims', rows);
+}
+
+function printClaimsReport() {
+  var rows = claimsCache.map(function (c) {
+    return [new Date(c.created_at).toLocaleDateString('en-GB'), c.scheme, c.claim_number || '—', fmt(c.amount), c.status.charAt(0).toUpperCase() + c.status.slice(1)];
+  });
+  var pendingTotal = claimsCache.filter(function (c) { return c.status === 'pending'; }).reduce(function (a, c) { return a + Number(c.amount || 0); }, 0);
+  printHtml('Insurance Claims Report', todayStr(),
+    tableHtml(['Date', 'Scheme', 'Claim number', 'Amount', 'Status'], rows),
+    claimsCache.length + ' claims · ' + fmt(pendingTotal) + ' pending');
 }
 
 // ---------------------------------------------------------------------------
@@ -2713,7 +3093,7 @@ function drawSupplierDetail() {
     '<div class="toolbar-row"><div class="toolbar-segment">' +
     '<button class="btn primary small" onclick="openNewLpo(\'' + supplier.id + '\')">+ New LPO</button>' +
     '<button class="btn secondary small" onclick="openRecordSupplierPayment(\'' + supplier.id + '\')">Record payment</button>' +
-    '</div><div class="toolbar-segment">' +
+    '</div><div class="toolbar-segment toolbar-end">' +
     '<button class="btn small" onclick="exportSupplierStatement()">' + icon('download', 15) + ' Excel</button>' +
     '<button class="btn small" onclick="printSupplierStatement()">' + icon('printer', 15) + ' Print</button>' +
     '</div></div>' +
