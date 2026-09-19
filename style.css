@@ -123,6 +123,14 @@ input, select, textarea { font: inherit; }
 .kpi .label { font-size: 12px; color: var(--ink-soft); font-weight: 600; }
 .kpi .value { font-size: 23px; font-weight: 800; margin-top: 5px; font-variant-numeric: tabular-nums; letter-spacing: -0.2px; }
 
+/* Expiry Reports drill-down: the summary KPI tiles are now real <button>
+   elements (clicking one opens that category's full list), so they need
+   the same text-align/width/cursor reset .report-tile below already uses
+   to undo default button centering and auto-width, plus a matching hover
+   lift so it's visually obvious they're clickable. */
+.kpi-clickable { text-align: left; width: 100%; cursor: pointer; font: inherit; color: inherit; transition: box-shadow 0.15s, transform 0.15s; }
+.kpi-clickable:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+
 /* Item 30 (tile color sketch, approved): every summary tile across the app
    (drug detail, Reports, Suppliers, Expenses) now uses a light tint from
    the same palette as the Dashboard's Sales/Stock value/Profit pills,
