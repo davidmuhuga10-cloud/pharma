@@ -1,0 +1,181 @@
+/* Pharma Admin — platform portal (/admin). Loaded AFTER style.css so it
+   reuses the app's own design tokens and shared classes (.card, .kpi + .t-*
+   tints, .badge, .btn, .field, .brand-badge, .toast) — "Command Green" —
+   and only adds what a wide, data-dense admin screen needs on top. */
+
+body.admin { background: var(--paper); }
+#admin { min-height: 100vh; display: flex; flex-direction: column; }
+
+/* ---- Header -------------------------------------------------------- */
+.adm-head {
+  position: sticky; top: 0; z-index: 20;
+  background: linear-gradient(165deg, var(--green) 0%, var(--green-dark) 100%);
+  color: #fff; box-shadow: var(--shadow-sm);
+}
+.adm-head-in {
+  max-width: 1200px; margin: 0 auto; padding: 12px 16px;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+}
+.adm-id { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.adm-id .brand-badge { background: rgba(255,255,255,0.14); box-shadow: none; }
+.adm-id .t1 { font-weight: 800; font-size: 17px; line-height: 1.15; letter-spacing: 0.2px; }
+.adm-id .t1 span { color: #F2C14E; }
+.adm-id .t2 { font-size: 12px; opacity: 0.9; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.adm-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.adm-actions button {
+  background: rgba(255,255,255,0.15); color: #fff; border: none; border-radius: 10px;
+  padding: 8px 12px; font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;
+}
+.adm-actions button:hover { background: rgba(255,255,255,0.25); }
+.adm-actions button:disabled { opacity: 0.6; cursor: wait; }
+.adm-actions .lbl { display: none; }
+@media (min-width: 640px) { .adm-actions .lbl { display: inline; } }
+
+/* ---- Layout -------------------------------------------------------- */
+.adm-wrap { max-width: 1200px; margin: 0 auto; padding: 16px; width: 100%; flex: 1; }
+.adm-grid-2 { display: grid; grid-template-columns: 1fr; gap: 12px; }
+@media (min-width: 960px) { .adm-grid-2 { grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); } }
+.adm-grid-2 { align-items: start; }
+.adm-grid-2 > .card { margin-bottom: 0; }
+.adm-section { margin-top: 12px; }
+
+.card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.card-head h2 { margin: 0; font-size: 15px; }
+.card-head .sub { font-size: 12px; margin-top: 3px; line-height: 1.4; }
+.count-pill { display: inline-block; margin-left: 6px; font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: #EFEDEA; vertical-align: 1px; }
+
+/* ---- KPI tiles ----------------------------------------------------- */
+.adm-kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+.adm-kpis .kpi:first-child { grid-column: 1 / -1; }
+@media (min-width: 720px) {
+  .adm-kpis { grid-template-columns: repeat(3, 1fr); }
+  .adm-kpis .kpi:first-child { grid-column: auto; }
+}
+@media (min-width: 1080px) { .adm-kpis { grid-template-columns: repeat(5, 1fr); } }
+.adm-kpis.six { }
+@media (min-width: 1080px) { .adm-kpis.six { grid-template-columns: repeat(6, 1fr); } }
+.kpi .sub { font-size: 12px; margin-top: 4px; line-height: 1.35; }
+.kpi .value.small { font-size: 18px; }
+.adm-kpis.six .kpi .value.small { font-size: 16px; }
+.adm-kpis .kpi { min-width: 0; }
+.kpi.t-blue { background: var(--d-blue-light); border-color: var(--d-blue); }
+.kpi.t-blue .label { color: var(--d-blue); }
+
+/* ---- Chart --------------------------------------------------------- */
+.chart-box { position: relative; width: 100%; }
+.chart-box svg { display: block; width: 100%; overflow: visible; }
+.chart-box .axis { font-size: 11px; fill: var(--ink); }
+.chart-box .grid { stroke: var(--d-gridline); stroke-width: 1; }
+.chart-box .base { stroke: #CFC8BF; stroke-width: 1; }
+.chart-box .bar { fill: var(--d-sales); }
+.chart-box .bar.dim { opacity: 0.35; }
+.chart-box .hit { fill: transparent; cursor: default; }
+.chart-empty { position: absolute; left: 30px; right: 6px; top: 10px; height: 156px; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; pointer-events: none; }
+.chart-tip {
+  position: absolute; pointer-events: none; background: #fff; border: 1px solid var(--line);
+  border-radius: 10px; box-shadow: var(--shadow-md); padding: 8px 10px; font-size: 12px; line-height: 1.45;
+  white-space: nowrap; z-index: 5; transform: translate(-50%, calc(-100% - 10px));
+}
+.chart-tip b { font-size: 12.5px; }
+.chart-tip .sw { display: inline-block; width: 8px; height: 8px; border-radius: 2px; background: var(--d-sales); margin-right: 5px; vertical-align: 0; }
+details.data-table { margin-top: 8px; font-size: 12.5px; }
+details.data-table summary { cursor: pointer; font-weight: 600; color: var(--green); }
+details.data-table table { margin-top: 8px; }
+
+/* ---- Filters / toolbar -------------------------------------------- */
+.adm-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+.adm-toolbar .searchbox { flex: 1 1 240px; }
+.adm-toolbar select {
+  padding: 10px 12px; border-radius: 999px; border: 1px solid var(--line); background: #fff;
+  box-shadow: var(--shadow-sm); font-size: 13px; font-weight: 600; color: var(--ink);
+}
+.chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.chip {
+  border: 1px solid var(--line); background: #fff; color: var(--ink); border-radius: 999px;
+  padding: 6px 12px; font-size: 12.5px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;
+}
+.chip .n { font-size: 11px; font-weight: 800; background: #EFEDEA; border-radius: 999px; padding: 1px 7px; }
+.chip.on { background: var(--green); border-color: var(--green); color: #fff; }
+.chip.on .n { background: rgba(255,255,255,0.2); color: #fff; }
+.howto { font-size: 12px; line-height: 1.5; margin: -2px 0 10px; }
+
+/* ---- Status badges (label always shown — never color alone) ---------- */
+.badge.info { background: var(--d-blue-light); color: #2F5C93; }
+.badge .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: currentColor; margin-right: 5px; vertical-align: 1px; }
+.badge.admin { background: #241A03; color: #F2C14E; }
+
+/* ---- Pharmacies table (desktop) ----------------------------------- */
+.adm-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.adm-table th {
+  text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; font-weight: 700;
+  padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; background: #FAF8F5;
+}
+.adm-table td { padding: 11px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.adm-table tr:last-child td { border-bottom: none; }
+.adm-table td.num, .adm-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.adm-table tbody tr.link { cursor: pointer; transition: background 0.12s; }
+.adm-table tbody tr.link:hover, .adm-table tbody tr.link:focus-within { background: var(--green-light); }
+.adm-table .nm { font-weight: 700; color: var(--ink); text-decoration: none; }
+.adm-table .nm:hover { text-decoration: underline; }
+.adm-table .mt { font-size: 12px; margin-top: 2px; }
+.cell-id { display: flex; align-items: center; gap: 10px; }
+.table-scroll { overflow-x: auto; margin: 0 -14px; padding: 0 14px; }
+.only-wide { display: none; }
+.only-narrow { display: block; }
+@media (min-width: 900px) { .only-wide { display: block; } .only-narrow { display: none; } }
+
+/* ---- Pharmacy rows (phone) ---------------------------------------- */
+.ph-row {
+  display: flex; gap: 12px; align-items: flex-start; padding: 12px 0; border-bottom: 1px solid var(--line);
+  text-decoration: none; color: inherit;
+}
+.ph-row:last-child { border-bottom: none; }
+.ph-row .body { flex: 1; min-width: 0; }
+.ph-row .top { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
+.ph-row .nm { font-weight: 700; }
+.ph-row .top .badge { white-space: nowrap; flex-shrink: 0; }
+.ph-row .mt { font-size: 12px; margin-top: 3px; line-height: 1.45; }
+.ph-row .stats { display: flex; gap: 14px; margin-top: 6px; font-size: 12px; flex-wrap: wrap; }
+.ph-row .stats b { font-variant-numeric: tabular-nums; }
+
+/* ---- Sign-in feed -------------------------------------------------- */
+.feed-row { display: flex; gap: 10px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--line); }
+.feed-row:last-child { border-bottom: none; }
+.feed-row .body { flex: 1; min-width: 0; }
+.feed-row .nm { font-weight: 700; font-size: 13px; }
+.feed-row .mt { font-size: 12px; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.feed-row .when { font-size: 12px; font-weight: 600; text-align: right; white-space: nowrap; }
+.feed-row a { color: inherit; }
+.row-avatar.blue { background: var(--d-blue-light); color: #2F5C93; }
+.row-avatar.muted { background: #EFEDEA; color: var(--ink); }
+.row-avatar.lg { width: 52px; height: 52px; border-radius: 14px; font-size: 18px; }
+.empty-note { font-size: 13px; padding: 14px 0 6px; text-align: center; }
+.foot-note { font-size: 12px; line-height: 1.5; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); }
+
+/* ---- Detail header ------------------------------------------------- */
+.back-link {
+  display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 13px; color: var(--green);
+  text-decoration: none; margin-bottom: 10px; padding: 6px 0;
+}
+.ph-hero { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
+.ph-hero .body { flex: 1 1 260px; min-width: 0; }
+.ph-hero h1 { font-size: 20px; margin: 0 0 4px; line-height: 1.2; }
+.ph-hero .mt { font-size: 13px; line-height: 1.5; }
+.ph-contact { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.ph-contact a { text-decoration: none; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 13px; }
+.kv dt { font-weight: 600; }
+.kv dd { margin: 0; }
+
+/* ---- Login / no-access -------------------------------------------- */
+.adm-auth { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px 16px; }
+.adm-auth .box { width: 100%; max-width: 380px; }
+.adm-auth .brand { text-align: center; margin-bottom: 14px; }
+.adm-auth .brand .brand-badge { margin: 0 auto 10px; }
+.adm-auth .brand .t1 { font-size: 22px; font-weight: 800; color: var(--green); }
+.adm-auth .brand .t2 { font-size: 13px; margin-top: 3px; }
+.adm-auth .err { background: var(--red-light); color: var(--red); border-radius: 10px; padding: 10px 12px; font-size: 13px; margin-bottom: 12px; font-weight: 600; }
+
+.skeleton { background: linear-gradient(90deg, #EEE9E1 0%, #F6F2EC 50%, #EEE9E1 100%); background-size: 200% 100%; animation: shimmer 1.2s infinite linear; border-radius: 10px; }
+@keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .skeleton { animation: none; } }
