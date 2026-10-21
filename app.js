@@ -169,6 +169,19 @@ function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function
   return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
 }); }
 function fmt(n) { return 'KES ' + (Math.round((Number(n) || 0)) ).toLocaleString(); }
+// "1 tablet" / "232 tablets" / "0 units" — the unit is stored singular
+// (tablet, bottle, sachet…). Short/abbreviated units (ml, mg, pcs) are left
+// as typed, since "mls" or "pcses" would read worse than no plural at all.
+function qtyUnit(n, unit) {
+  var u = String(unit || 'unit');
+  var q = Number(n) || 0;
+  if (q === 1 || u.length < 3 || !/^[a-z]+$/i.test(u) || /^(mcg|pcs|iu)$/i.test(u)) return q.toLocaleString() + ' ' + u;
+  if (/(s|x|ch|sh)$/i.test(u)) return q.toLocaleString() + ' ' + u + 'es';
+  if (/[^aeiou]y$/i.test(u)) return q.toLocaleString() + ' ' + u.slice(0, -1) + 'ies';
+  return q.toLocaleString() + ' ' + u + 's';
+}
+var PAY_LABEL = { cash: 'Cash', mpesa: 'M-Pesa', insurance: 'Insurance', bank: 'Bank', cheque: 'Cheque', other: 'Other', split: 'Split' };
+function payLabel(m) { return PAY_LABEL[m] || (m ? m.charAt(0).toUpperCase() + m.slice(1) : ''); }
 function fmtDate(iso) {
   if (!iso) return '—';
   var d = new Date(iso + (String(iso).length <= 10 ? 'T00:00:00' : ''));
@@ -368,8 +381,7 @@ function render() {
     '<div class="sub">' + esc(STATE.pharmacy ? STATE.pharmacy.name : '') + '</div></div></div>' +
     '<button onclick="logout()">Log out</button></div>' +
     '<div class="content" id="content"></div>' +
-    navBar() +
-    (STATE.tab === 'sell' ? cartFab() : '');
+    navBar();
   renderTab();
 }
 
@@ -401,14 +413,30 @@ function navBar() {
     }).join('') +
     '<div class="navbar-spacer"></div>' +
     '<div class="navbar-foot"><div class="who">' + esc(pharmacy.name || '') + '</div>' +
-    '<div class="role">' + esc(p.full_name || '') + (p.role ? ' · ' + esc(roleLabel(p.role)) : '') + '</div></div>' +
+    '<div class="role">' + esc(p.full_name || '') + '</div>' + (p.role ? '<div class="role">' + esc(roleLabel(p.role)) + '</div>' : '') + '</div>' +
     '</div>';
 }
 
+// UI fix: was a round floating button that only refreshed on a full
+// re-render (so its item count went stale as drugs were added) and, on
+// desktop, sat on top of the drug list. Now a checkout bar showing items +
+// total, kept in sync by drawSell() via syncCartBar().
 function cartFab() {
   if (!STATE.cart.length) return '';
   var n = STATE.cart.reduce(function (a, c) { return a + c.qty; }, 0);
-  return '<button class="fab" onclick="openCheckout()" title="Checkout">' + icon('cart',22) + '<span style="position:absolute;top:-4px;right:-4px;background:#B3261E;color:#fff;border-radius:50%;width:20px;height:20px;font-size:11px;display:flex;align-items:center;justify-content:center;">' + n + '</span></button>';
+  var total = STATE.cart.reduce(function (a, c) { return a + c.qty * c.price; }, 0);
+  return '<button class="cart-bar" onclick="openCheckout()" title="Checkout">' +
+    '<span class="cb-ic">' + icon('cart', 20) + '<span class="cb-n">' + n + '</span></span>' +
+    '<span class="cb-txt">' + n + (n === 1 ? ' item' : ' items') + ' · ' + fmt(total) + '</span>' +
+    '<span class="cb-go">Checkout &rarr;</span></button>';
+}
+function syncCartBar() {
+  var old = document.querySelector('.cart-bar');
+  if (old) old.remove();
+  var html = STATE.tab === 'sell' ? cartFab() : '';
+  var c = document.getElementById('content');
+  if (c) c.classList.toggle('has-cart-bar', !!html);
+  if (html) document.getElementById('app').insertAdjacentHTML('beforeend', html);
 }
 
 function setTab(t) { STATE.tab = t; render(); }
@@ -965,9 +993,9 @@ function drawDashboard() {
     dashAlertHtml(dashSnap) +
     dashQuickAccessHtml() +
     dashFilterRowHtml() +
-    '<div class="card dash-graph-card' + refetching + '">' + dashSalesGraphHtml(dashData) + '</div>' +
+    '<div class="card dash-graph-card t-sales' + refetching + '">' + dashSalesGraphHtml(dashData) + '</div>' +
     '<div class="dash-stat-grid' + refetching + '">' + dashStatGridHtml(dashData, dashSnap) + '</div>' +
-    '<div class="card dash-list-card">' + dashStockHealthHtml(dashSnap) + '</div>' +
+    '<div class="card dash-list-card t-orange">' + dashStockHealthHtml(dashSnap) + '</div>' +
     '<div class="dash-row">' +
       '<div class="dash-col' + refetching + '">' + dashTopSellersCard(dashData) + '</div>' +
       '<div class="dash-col">' + dashExpiringCard(dashSnap) + '</div>' +
@@ -1018,7 +1046,7 @@ function dashStockCheckSearch(val) {
     var kind = d.qty_in_stock === 0 ? 'bad' : d.qty_in_stock <= (d.reorder_level || 0) ? 'warn' : 'good';
     var badge = kind === 'bad' ? '<span class="badge bad">Out of stock</span>' : kind === 'warn' ? '<span class="badge warn">Low stock</span>' : '<span class="badge good">In stock</span>';
     return '<div class="dash-quick-result-row" onclick="dashStockCheckGoInventory(\'' + d.drug_id + '\')">' +
-      '<div><div class="name">' + esc(d.name) + '</div><div class="meta">' + d.qty_in_stock + ' ' + esc(d.unit) + ' available</div></div>' +
+      '<div><div class="name">' + esc(d.name) + '</div><div class="meta">' + esc(qtyUnit(d.qty_in_stock, d.unit)) + ' available</div></div>' +
       '<div class="right">' + badge + '<button class="btn small secondary" style="margin-left:8px" onclick="event.stopPropagation();dashStockCheckSell(\'' + d.drug_id + '\')">Sell</button></div>' +
       '</div>';
   }).join('') : '<div class="dash-quick-result-row empty">No drug matches that search.</div>';
@@ -1080,9 +1108,21 @@ function niceTicks(maxVal) {
 }
 function fmtCompact(n) { return Math.round(n).toLocaleString(); }
 
+// UI fix: the chart used to be drawn on a fixed 600-wide canvas and then
+// stretched to the card — so on a wide desktop its axis text blew up to
+// ~20px and on a phone it shrank to ~6px (unreadable), and the last x-label
+// and end dot were clipped at the right edge. It's now drawn at the card's
+// real pixel width, with right padding and thinned x-labels.
+function dashChartW() {
+  var c = document.getElementById('content');
+  if (!c || !c.clientWidth) return 600;
+  var cs = getComputedStyle(c);
+  return Math.max(260, Math.round(c.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - 40));
+}
 function axisLineChart(values, labels, w, h, color, isEmpty) {
   var ticks = niceTicks(values.length ? Math.max.apply(null, values) : 0);
-  var gutter = 50, plotW = w - gutter, labelBand = 18, totalH = h + labelBand;
+  var gutter = 46, padR = 20, plotW = w - gutter - padR, labelBand = 20, totalH = h + labelBand;
+  var labelEvery = Math.max(1, Math.ceil(labels.length * 44 / Math.max(plotW, 1)));
   var hi = ticks[ticks.length - 1] || 1;
   var n = Math.max(values.length, 1);
   function px(i) { return gutter + (n > 1 ? (i / (n - 1)) * plotW : plotW / 2); }
@@ -1090,11 +1130,14 @@ function axisLineChart(values, labels, w, h, color, isEmpty) {
   var grid = '', ticksHtml = '', axisLabels = '';
   ticks.forEach(function (t) {
     var y = py(t);
-    grid += '<line x1="' + gutter + '" y1="' + y.toFixed(1) + '" x2="' + w + '" y2="' + y.toFixed(1) + '" stroke="' + DCOLOR.gridline + '" stroke-width="1"/>';
-    ticksHtml += '<text x="' + (gutter - 8) + '" y="' + (y + 3).toFixed(1) + '" text-anchor="end" font-size="10" fill="' + DCOLOR.inkSoft + '">' + fmtCompact(t) + '</text>';
+    grid += '<line x1="' + gutter + '" y1="' + y.toFixed(1) + '" x2="' + (gutter + plotW) + '" y2="' + y.toFixed(1) + '" stroke="' + DCOLOR.gridline + '" stroke-width="1"/>';
+    ticksHtml += '<text x="' + (gutter - 8) + '" y="' + (y + 3).toFixed(1) + '" text-anchor="end" font-size="11" fill="' + DCOLOR.inkSoft + '">' + fmtCompact(t) + '</text>';
   });
+  var lastI = labels.length - 1;
   labels.forEach(function (l, i) {
-    axisLabels += '<text x="' + px(i).toFixed(1) + '" y="' + (h + 13) + '" text-anchor="middle" font-size="10.5" font-weight="600" fill="' + DCOLOR.inkSoft + '">' + esc(l) + '</text>';
+    var show = i === lastI || (i % labelEvery === 0 && lastI - i >= labelEvery);
+    if (!show) return;
+    axisLabels += '<text x="' + px(i).toFixed(1) + '" y="' + (h + 15) + '" text-anchor="middle" font-size="11" font-weight="600" fill="' + DCOLOR.inkSoft + '">' + esc(l) + '</text>';
   });
   var body;
   if (!isEmpty && values.length) {
@@ -1111,7 +1154,7 @@ function axisLineChart(values, labels, w, h, color, isEmpty) {
   } else {
     body = '<text x="' + (gutter + plotW / 2).toFixed(1) + '" y="' + (h / 2).toFixed(1) + '" text-anchor="middle" font-size="12" font-weight="600" fill="' + DCOLOR.inkSoft + '">No sales recorded yet</text>';
   }
-  return '<svg viewBox="0 0 ' + w + ' ' + totalH + '" style="width:100%;height:auto;display:block">' + grid + ticksHtml + body + axisLabels + '</svg>';
+  return '<svg viewBox="0 0 ' + w + ' ' + totalH + '" style="width:100%;height:auto;display:block;overflow:visible">' + grid + ticksHtml + body + axisLabels + '</svg>';
 }
 
 function axisBarChart(values, labels, w, h, color, isEmpty, peakLabel) {
@@ -1188,7 +1231,7 @@ function dashSalesGraphHtml(d) {
   var periodLabel = (DASH_PERIOD_LABEL[dashRange] || 'Today').toLowerCase();
   return '<div class="dash-card-head"><div class="t">Sales &mdash; ' + esc(periodLabel) + '</div><div class="v">' + fmt(total) + '</div></div>' +
     (chip ? '<div class="dash-graph-chip-row">' + chip + '</div>' : '') +
-    '<div class="dash-chart-wrap">' + axisLineChart(values, labels, 600, 140, DCOLOR.sales, isEmpty) + '</div>';
+    '<div class="dash-chart-wrap">' + axisLineChart(values, labels, dashChartW(), dashChartW() > 640 ? 180 : 140, DCOLOR.sales, isEmpty) + '</div>';
 }
 
 function dashRushGraphHtml(d) {
@@ -1321,7 +1364,7 @@ function dashUrgencyRowHtml(name, meta, daysTxt, pct, kind) {
     '</div>' +
     '<div class="dash-bar-track"><div class="dash-bar-fill" style="width:' + pct.toFixed(1) + '%;background:' + color + '"></div></div>' +
     '<div class="dash-bar-value" style="width:34px">' + esc(daysTxt) + '</div>' +
-    '<div class="dash-bar-status" style="color:' + color + '">' + word + '</div>' +
+    '<div class="dash-bar-status ' + kind + '">' + word + '</div>' +
   '</div>';
 }
 
@@ -1338,7 +1381,7 @@ function dashTopSellersCard(d) {
   var footer = all.length > 4 ? '<button class="dash-view-all" onclick="openTopSellersFull()">View all ' + all.length + ' &rarr;</button>' : '';
   // Item 33: plain white card (no more blue tint) and a compact left-aligned
   // header, matching the approved sketch — only the stat grid keeps tinting.
-  return '<div class="card dash-list-card"><div class="dash-card-head"><div class="t">' + esc(DASH_TOPSELLERS_TITLE[dashRange] || 'Top sellers') + '</div></div>' + rows + empty + footer + '</div>';
+  return '<div class="card dash-list-card t-blue"><div class="dash-card-head"><div class="t">' + esc(DASH_TOPSELLERS_TITLE[dashRange] || 'Top sellers') + '</div></div>' + rows + empty + footer + '</div>';
 }
 
 function dashExpiringCard(snap) {
@@ -1348,12 +1391,12 @@ function dashExpiringCard(snap) {
     var days = daysUntil(b.expiry_date);
     var kind = days <= 14 ? 'critical' : days <= 30 ? 'serious' : 'warning';
     var pct = Math.max(6, Math.min(100, 100 - Math.min(days, 90) / 90 * 100));
-    return dashUrgencyRowHtml(b.drug_name, 'batch ' + (b.batch_no || '—') + ' · ' + b.quantity_remaining + ' ' + b.unit, days + 'd', pct, kind);
+    return dashUrgencyRowHtml(b.drug_name, 'batch ' + (b.batch_no || '—') + ' · ' + qtyUnit(b.quantity_remaining, b.unit), days + 'd', pct, kind);
   }).join('');
   for (var i = top4.length; i < 4; i++) rows += dashPlaceholderRowHtml();
   var empty = all.length === 0 ? '<div class="tiny" style="text-align:center;margin-top:14px">Nothing expiring soon.</div>' : '';
   var footer = all.length > 4 ? '<button class="dash-view-all" onclick="openExpiringFull()">View all ' + all.length + ' &rarr;</button>' : '';
-  return '<div class="card dash-list-card"><div class="dash-card-head"><div class="t">Expiring soon</div></div>' + rows + empty + footer + '</div>';
+  return '<div class="card dash-list-card t-red"><div class="dash-card-head"><div class="t">Expiring soon</div></div>' + rows + empty + footer + '</div>';
 }
 
 function openTopSellersFull() {
@@ -1372,7 +1415,7 @@ function openExpiringFull() {
     var days = daysUntil(b.expiry_date);
     var kind = days <= 14 ? 'critical' : days <= 30 ? 'serious' : 'warning';
     var pct = Math.max(6, Math.min(100, 100 - Math.min(days, 90) / 90 * 100));
-    return dashUrgencyRowHtml(b.drug_name, 'batch ' + (b.batch_no || '—') + ' · ' + b.quantity_remaining + ' ' + b.unit, days + 'd', pct, kind);
+    return dashUrgencyRowHtml(b.drug_name, 'batch ' + (b.batch_no || '—') + ' · ' + qtyUnit(b.quantity_remaining, b.unit), days + 'd', pct, kind);
   }).join('') : '<div class="empty">Nothing expiring soon.</div>') + '</div>';
   sheet('Expiring soon — full list', body);
 }
@@ -1439,7 +1482,7 @@ function drawInventory() {
       return '<div class="list-row" onclick="openDrugDetail(\'' + d.drug_id + '\')" style="cursor:pointer">' +
         '<div style="display:flex;align-items:center;gap:12px"><div class="row-avatar ' + (kind === 'good' ? '' : kind) + '">' + esc((d.name || '?').charAt(0).toUpperCase()) + '</div>' +
         '<div><div class="name">' + esc(d.name) + '</div><div class="meta">' + fmt(d.stock_value_retail) + ' in stock value' + expBadge + '</div></div></div>' +
-        '<div class="right">' + badge + '<div class="meta">' + d.qty_in_stock + ' ' + esc(d.unit) + '</div></div></div>';
+        '<div class="right">' + badge + '<div class="meta">' + esc(qtyUnit(d.qty_in_stock, d.unit)) + '</div></div></div>';
     }).join('') : '<div class="empty">No drugs match. Try clearing the search or add a new one.</div>') + '</div>' +
     (allRows.length > rows.length ? '<button class="btn ghost" style="margin-top:10px" onclick="invPage++;drawInventory()">Load more (' + (allRows.length - rows.length) + ' more)</button>' : ''));
 }
@@ -2015,7 +2058,7 @@ async function openDrugDetail(drugId) {
   var body = sheet(d.name, '');
   body.innerHTML =
     '<div class="kpi-grid" style="margin-bottom:14px">' +
-    kpi('In stock', d.qty_in_stock + ' ' + esc(d.unit), 't-sales') +
+    kpi('In stock', esc(qtyUnit(d.qty_in_stock, d.unit)), 't-sales') +
     kpi('Stock value', fmt(d.stock_value_retail), 't-orange') +
     '</div>' +
     (can('restock') ? '<button class="btn primary" style="margin-bottom:14px" onclick="closeSheet();openRestock(' + "'" + encodeDrugForRestock(drugRow) + "'" + ')">+ Restock this drug</button>' : '') +
@@ -2028,9 +2071,10 @@ async function openDrugDetail(drugId) {
       var kind = b.quantity_remaining === 0 ? 'muted' : b.expiry_unknown ? 'good' : d2 < 0 ? 'bad' : d2 <= 30 ? 'bad' : d2 <= 90 ? 'warn' : 'good';
       var expiryLabel = b.expiry_unknown ? 'Expiry unknown' : fmtDate(b.expiry_date);
       var discountBadge = b.discount_percent > 0 ? ' <span class="badge warn">-' + b.discount_percent + '%</span>' : '';
-      return '<div class="list-row"><div><div class="name">' + esc(b.batch_no || 'Batch') + ' · ' + expiryLabel + discountBadge + '</div>' +
+      return '<div class="batch-row"><div class="batch-head"><div class="name">' + esc(b.batch_no || 'Batch') + ' · ' + expiryLabel + discountBadge + '</div>' +
+        '<span class="badge ' + kind + '">' + b.quantity_remaining + ' left</span></div>' +
         '<div class="meta">Received ' + fmtDate(b.received_at) + (b.supplier ? ' from ' + esc(b.supplier) : '') + '</div>' +
-        ((can('write_off') || can('correct_stock') || can('edit_expiry')) && b.quantity_remaining > 0 ? '<div class="toolbar-row" style="margin-top:6px">' +
+        ((can('write_off') || can('correct_stock') || can('edit_expiry')) && b.quantity_remaining > 0 ? '<div class="batch-actions">' +
           (can('write_off') ? '<button class="btn ghost small" onclick="openWriteOff(\'' + b.id + '\',\'' + esc(d.name).replace(/'/g, "\\'") + '\',' + b.quantity_remaining + ')">Write off</button>' : '') +
           // Was gated on can('write_off') — a real pre-existing bug: this
           // button is "Correct count" (record_correction), a different
@@ -2045,7 +2089,7 @@ async function openDrugDetail(drugId) {
           // silently drops it out of "in stock" with no other way to correct it.
           (can('edit_expiry') ? '<button class="btn ghost small" onclick="openEditExpiry(\'' + b.id + '\',\'' + esc(d.name).replace(/'/g, "\\'") + '\',\'' + (b.expiry_unknown ? '' : b.expiry_date) + '\')">Edit expiry</button>' : '') +
           '</div>' : '') +
-        '</div><div class="right"><span class="badge ' + kind + '">' + b.quantity_remaining + ' left</span></div></div>';
+        '</div>';
     }).join('') : '<div class="empty">No batches yet.</div>');
 }
 
@@ -2246,9 +2290,10 @@ function drawSell() {
     (STATE.cart.length ? cartSummaryCard() : '') +
     '<div class="card">' + (rows.length ? rows.map(function (d) {
       return '<div class="list-row" onclick="addToCart(\'' + d.drug_id + '\')" style="cursor:pointer">' +
-        '<div><div class="name">' + esc(d.name) + (d.is_prescription ? ' <span class="badge warn">Rx</span>' : '') + '</div><div class="meta">' + d.qty_in_stock + ' ' + esc(d.unit) + ' available' + (d.default_price ? ' · ' + fmt(d.default_price) : '') + '</div></div>' +
+        '<div><div class="name">' + esc(d.name) + (d.is_prescription ? ' <span class="badge warn">Rx</span>' : '') + '</div><div class="meta">' + esc(qtyUnit(d.qty_in_stock, d.unit)) + ' available' + (d.default_price ? ' · ' + fmt(d.default_price) : '') + '</div></div>' +
         '<div class="right btn small secondary">Add</div></div>';
     }).join('') : '<div class="empty">Nothing in stock matches that search.</div>') + '</div>');
+  syncCartBar();
 }
 
 function heldSalesCard() {
@@ -2256,7 +2301,7 @@ function heldSalesCard() {
     heldSalesCache.map(function (h) {
       var cart = h.cart || [];
       var total = cart.reduce(function (a, c) { return a + c.qty * c.price; }, 0);
-      return '<div class="list-row"><div><div class="name">' + esc(h.label || 'Held sale') + '</div><div class="meta">' + cart.length + ' item(s) · ' + fmt(total) + ' · ' + new Date(h.created_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) + '</div></div>' +
+      return '<div class="list-row"><div><div class="name">' + esc(h.label || 'Held sale') + '</div><div class="meta">' + cart.length + (cart.length === 1 ? ' item · ' : ' items · ') + fmt(total) + ' · ' + new Date(h.created_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) + '</div></div>' +
         '<div class="right" style="display:flex;gap:6px"><button class="btn small secondary" onclick="resumeHeldSale(this,\'' + h.id + '\')">Resume</button><button class="btn small danger" onclick="deleteHeldSale(this,\'' + h.id + '\')">' + icon('close',14) + '</button></div></div>';
     }).join('') + '</div>';
 }
@@ -2304,7 +2349,7 @@ function cartSummaryCard() {
         '<div class="qty-ctrl"><button onclick="changeQty(' + i + ',-1)">−</button><span>' + item.qty + '</span><button onclick="changeQty(' + i + ',1)">+</button></div></div>';
     }).join('') +
     '<div class="list-row"><div class="name">Total</div><div class="name">' + fmt(total) + '</div></div>' +
-    '<div class="toolbar-row" style="margin-top:10px"><button class="btn ghost" onclick="holdSale(this)">⏸ Hold</button><button class="btn primary" onclick="openCheckout()">Checkout</button></div></div>';
+    '<div class="toolbar-row" style="margin-top:10px"><button class="btn ghost" onclick="holdSale(this)">Hold sale</button><button class="btn primary" onclick="openCheckout()">Checkout</button></div></div>';
 }
 
 function addToCart(drugId) {
@@ -2526,11 +2571,11 @@ function drawReportsShell() {
   var c = $('#content');
   c.innerHTML =
     reportsBackBtn() +
-    '<div class="row-3" style="margin-bottom:14px">' +
+    '<div class="report-head"><div class="dash-tabs">' +
     ['today', 'week', 'month'].map(function (r) {
-      return '<button class="btn ' + (reportRange === r ? 'primary' : 'ghost') + ' small" onclick="reportRange=\'' + r + '\';loadReport()">' + r[0].toUpperCase() + r.slice(1) + '</button>';
+      return '<button class="dash-tab' + (reportRange === r ? ' active' : '') + '" onclick="reportRange=\'' + r + '\';loadReport()">' + r[0].toUpperCase() + r.slice(1) + '</button>';
     }).join('') + '</div>' +
-    '<div class="toolbar-row"><div class="toolbar-segment toolbar-end">' +
+    '<div class="toolbar-segment">' +
     '<button class="btn" onclick="exportReportExcel()">' + icon('download',15) + ' Excel</button>' +
     '<button class="btn" onclick="printReport()">' + icon('printer',15) + ' Print</button>' +
     '</div></div>' +
@@ -2553,8 +2598,8 @@ function drawReportsShell2(title) {
   var h = REPORT_SHELL_HANDLERS[reportsView] || {};
   c.innerHTML =
     reportsBackBtn() +
-    '<div class="section-title" style="margin-top:0">' + esc(title) + '</div>' +
-    '<div class="toolbar-row"><div class="toolbar-segment toolbar-end">' +
+    '<div class="report-head"><div class="section-title" style="margin:0">' + esc(title) + '</div>' +
+    '<div class="toolbar-segment">' +
     (h.excel ? '<button class="btn" onclick="' + h.excel + '()">' + icon('download',15) + ' Excel</button>' : '') +
     (h.print ? '<button class="btn" onclick="' + h.print + '()">' + icon('printer',15) + ' Print</button>' : '') +
     '</div></div>' +
@@ -2661,7 +2706,7 @@ function drawReportBody() {
     '</div>' +
     '<div class="section-title">By payment method</div>' +
     '<div class="card">' + (Object.keys(byMethod).length ? Object.keys(byMethod).map(function (m) {
-      return listRow(m.charAt(0).toUpperCase() + m.slice(1), '', fmt(byMethod[m]));
+      return listRow(payLabel(m), '', fmt(byMethod[m]));
     }).join('') : '<div class="empty">No sales in this period yet.</div>') + '</div>' +
     '<div class="section-title">Top-selling drugs</div>' +
     '<div class="card">' + (topDrugs.length ? topDrugs.map(function (t) {
@@ -2673,7 +2718,7 @@ function drawReportBody() {
       var methodLabel = pays.length > 1 ? 'split' : (pays[0] ? pays[0].method : s.payment_method);
       return '<div class="list-row" style="cursor:pointer" onclick="openSaleDetail(\'' + s.id + '\')">' +
         '<div><div class="name">' + (s.invoice_number ? esc(s.invoice_number) + ' · ' : '') + fmt(s.total_amount) + (s.voided ? ' <span class="badge bad">Voided</span>' : '') + '</div>' +
-        '<div class="meta">' + new Date(s.sold_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) + ' · ' + methodLabel + '</div></div>' +
+        '<div class="meta">' + new Date(s.sold_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) + ' · ' + esc(payLabel(methodLabel)) + '</div></div>' +
         '<div class="right">' + (s.customer_name ? '<span class="tiny">' + esc(s.customer_name) + '</span>' : '') + '</div></div>';
     }).join('') : '<div class="empty">Nothing recorded yet.</div>') + '</div>' +
     (sales.length > visible.length ? '<button class="btn ghost" onclick="reportTxPage++;drawReportBody()">Load more</button>' : '');
@@ -3137,7 +3182,7 @@ function drawClaims() {
     kpi('Total claims', claimsCache.length, 't-violet') +
     '</div>' +
     '<div class="card">' + (claimsCache.length ? claimsCache.map(function (c) {
-      return '<div class="list-row"><div><div class="name">' + esc(c.scheme) + '</div><div class="meta">' + new Date(c.created_at).toLocaleDateString('en-GB') + (c.claim_number ? ' · ' + esc(c.claim_number) : '') + '</div></div>' +
+      return '<div class="list-row"><div><div class="name">' + esc(c.scheme) + '</div><div class="meta">' + fmtDate(c.created_at) + (c.claim_number ? ' · ' + esc(c.claim_number) : '') + '</div></div>' +
         '<div class="right"><div>' + fmt(c.amount) + '</div><select style="margin-top:4px" onchange="updateClaimStatus(this,\'' + c.id + '\',this.value)">' +
         ['pending', 'submitted', 'paid', 'rejected'].map(function (s) { return '<option value="' + s + '"' + (c.status === s ? ' selected' : '') + '>' + s.charAt(0).toUpperCase() + s.slice(1) + '</option>'; }).join('') +
         '</select></div></div>';
@@ -3763,7 +3808,7 @@ function drawExpensesList() {
       ['today', 'week', 'month', 'year'].map(function (r) {
         return '<button class="dash-tab' + (expRange === r ? ' active' : '') + '" onclick="setExpRange(\'' + r + '\')">' + DASH_RANGE_LABELS[r] + '</button>';
       }).join('') +
-    '</div><div class="dash-period-label">' + DASH_PERIOD_LABEL[expRange] + '</div></div>' +
+    '</div></div>' +
     '<div class="kpi-grid" style="margin-bottom:14px">' +
       kpi('Total spent', fmt(total), 't-red') +
       kpi('Entries', active.length, 't-violet') +

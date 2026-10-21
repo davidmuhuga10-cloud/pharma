@@ -5,6 +5,7 @@
   --gold: #B8860B;
   --amber: #B8860B;
   --amber-light: #FBF2DD;
+  --amber-ink: #7A5605;   /* amber for text — --amber itself is too light to read on paper/amber-light */
   --red: #B3261E;
   --red-light: #FBE9E7;
   --ink: #201E1B;
@@ -210,12 +211,12 @@ h2 { font-size: 16px; }
   display: flex; align-items: center; justify-content: center;
   font-size: 13px; font-weight: 700; background: var(--green-light); color: var(--green);
 }
-.row-avatar.warn { background: var(--amber-light); color: var(--amber); }
+.row-avatar.warn { background: var(--amber-light); color: var(--amber-ink); }
 .row-avatar.bad { background: var(--red-light); color: var(--red); }
 
 .badge { display: inline-block; font-size: 11px; padding: 3px 9px; border-radius: 999px; font-weight: 700; }
 .badge.bad { background: var(--red-light); color: var(--red); }
-.badge.warn { background: var(--amber-light); color: var(--amber); }
+.badge.warn { background: var(--amber-light); color: var(--amber-ink); }
 .badge.good { background: var(--green-light); color: var(--green); }
 .badge.muted { background: #EFEDEA; color: var(--ink-soft); }
 
@@ -244,6 +245,8 @@ h2 { font-size: 16px; }
 }
 .field .hint { font-size: 12px; color: var(--ink-soft); margin-top: 4px; }
 .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.row-2 > *, .row-3 > * { min-width: 0; }
+.field input, .field select, .field textarea { min-width: 0; }
 .row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
 
 /* Same border color every card/kpi/tile in the app already uses, plus their
@@ -380,7 +383,7 @@ h2 { font-size: 16px; }
 .toolbar-end { margin-left: auto; }
 .inline-notice {
   display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 700;
-  color: var(--amber); margin-bottom: 12px;
+  color: var(--amber-ink); margin-bottom: 12px;
 }
 .inline-notice a { color: inherit; text-decoration: none; }
 
@@ -444,9 +447,7 @@ h2 { font-size: 16px; }
      monitors show more (inventory rows, dashboard cards) instead of
      capping unnecessarily narrow. */
   .content { margin-left: var(--sidebar-w); margin-right: 0; width: calc(100% - var(--sidebar-w)); max-width: 1200px; padding: 24px 32px 60px; }
-  .kpi-grid { grid-template-columns: repeat(4, 1fr); }
-  .row-2, .row-3 { max-width: 560px; }
-  .fab { left: calc(var(--sidebar-w) + 24px); right: auto; bottom: 28px; }
+  .kpi-grid { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
 
   /* The auth screen becomes a real two-column layout instead of a small
      card adrift in empty space — a brand panel that fills its full column,
@@ -685,4 +686,60 @@ h2 { font-size: 16px; }
   .print-table th, .print-table td { border: 1px solid #999; padding: 5px 7px; text-align: left; }
   .print-table th { background: #eee; }
   .print-footer { margin-top: 16px; font-size: 11px; color: #000; }
+}
+
+/* ---------------------------------------------------------------------- */
+/* UI polish pass (Oct 2026)                                               */
+/* ---------------------------------------------------------------------- */
+/* Cart lines: price line was rendering at full body size, same as the name */
+.cart-line .name { font-weight: 600; }
+.cart-line .meta { font-size: 12px; margin-top: 2px; }
+
+/* Sell: checkout bar (replaces the round floating cart button) */
+.cart-bar {
+  position: fixed; left: 12px; right: 12px; bottom: calc(72px + env(safe-area-inset-bottom)); z-index: 11;
+  display: flex; align-items: center; gap: 12px; padding: 12px 16px; border: none; border-radius: 14px;
+  background: var(--green); color: #fff; box-shadow: var(--shadow-lg); font-size: 14px; font-weight: 700; text-align: left;
+}
+.cart-bar .cb-ic { position: relative; display: flex; }
+.cart-bar .cb-n {
+  position: absolute; top: -8px; right: -11px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 999px;
+  background: var(--amber); color: #241A03; font-size: 11px; display: flex; align-items: center; justify-content: center;
+}
+.cart-bar .cb-txt { flex: 1; margin-left: 6px; font-variant-numeric: tabular-nums; }
+.cart-bar .cb-go { background: rgba(255,255,255,0.16); border-radius: 10px; padding: 6px 10px; white-space: nowrap; }
+.content.has-cart-bar { padding-bottom: 160px; }
+
+/* Reports: date range + Excel/Print on one header row */
+.report-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.report-head .dash-tabs { flex: 1 1 260px; max-width: 460px; }
+.report-head .toolbar-segment { margin-left: auto; }
+.report-head .toolbar-segment .btn { padding: 9px 14px; font-size: 13.5px; }
+
+/* Drug detail: batch rows — title + stock badge on one line, actions in an even grid */
+.batch-row { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.batch-row:last-child { border-bottom: none; }
+.batch-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.batch-head .name { font-weight: 600; }
+.batch-row .meta { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
+.batch-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 6px; margin-top: 8px; }
+.batch-actions .btn { width: 100%; }
+
+/* Dashboard "Expiring soon" status words in readable ink, not the light bar fill colours */
+.dash-bar-status.critical { color: var(--red); }
+.dash-bar-status.serious { color: #A93E14; }
+.dash-bar-status.warning { color: var(--amber-ink); }
+
+/* Status dropdowns inside list rows (insurance claims) — match the app's inputs instead of the browser default */
+.list-row select {
+  font: inherit; font-size: 13px; font-weight: 600; color: var(--ink); background: #fff;
+  border: 1px solid var(--line); border-radius: 10px; padding: 6px 8px; box-shadow: var(--shadow-sm);
+}
+
+/* "Forgot password?" was the browser's default blue underline */
+.auth-form-col .tiny a, .auth-card .tiny a { color: var(--green); font-weight: 700; text-decoration: none; }
+.auth-form-col .tiny a:hover, .auth-card .tiny a:hover { text-decoration: underline; }
+@media (min-width: 860px) {
+  .cart-bar { left: auto; right: 32px; bottom: 24px; width: 380px; }
+  .content.has-cart-bar { padding-bottom: 110px; }
 }

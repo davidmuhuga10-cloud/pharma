@@ -7,7 +7,7 @@
    deploy so returning users pick up the new app shell instead of an old
    cached copy. */
 
-const CACHE_NAME = 'hodhi-shell-v2c';
+const CACHE_NAME = 'hodhi-shell-v2e';
 const SHELL_FILES = [
   './', './index.html', './style.css', './app.js', './config.js', './manifest.json'
 ];
