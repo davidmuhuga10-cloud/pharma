@@ -4,7 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node banned-colours.test.js && node run_tests.js",
+    "test:colours": "node banned-colours.test.js",
+    "test:sql": "node run_tests.js"
   },
   "keywords": [],
   "author": "",

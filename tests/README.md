@@ -106,3 +106,10 @@ touch `app.js`, RLS policy behavior under the real `authenticated` Postgres
 role (the stub runs as the Postgres superuser, so RLS itself isn't
 exercised — only the SQL functions' own business-logic checks, which is
 where the money/stock risk actually lives), or anything in the browser.
+
+## No-gray-text test
+
+`banned-colours.test.js` needs no database. From this folder run `node banned-colours.test.js`
+(or `npm run test:colours`). It fails if the CSS, JS or HTML contains a retired gray (`#8A837C`,
+`#6B6560`) or any text `color:` that is a mid-gray hex/rgb value. Backgrounds and borders are not checked.
+To prove it works, add `.x { color: #777; }` to `style.css` and run it: it must print FAIL and exit 1.

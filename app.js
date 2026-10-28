@@ -397,12 +397,183 @@ function render() {
     return;
   }
   app.innerHTML =
-    '<div class="topbar"><div class="topbar-id">' + logoMarkHtml(30) + '<div><div class="brand">Pharma</div>' +
+    '<div class="topbar">' +
+    '<div class="topbar-left">' +
+    // Phone only (hidden at 860px+, where the sidebar already lists every
+    // destination). Opens the menu drawer — see navDrawerHtml/wireNavDrawer.
+    '<button class="burgerbtn" id="btnNavMenu" title="Menu" aria-label="Open menu">' +
+      '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" ' +
+      'stroke-width="2" stroke-linecap="round"><line x1="4" y1="7" x2="20" y2="7"></line>' +
+      '<line x1="4" y1="12" x2="20" y2="12"></line><line x1="4" y1="17" x2="20" y2="17"></line></svg></button>' +
+    '<div class="topbar-id">' + logoMarkHtml(30) + '<div><div class="brand">Pharma</div>' +
     '<div class="sub">' + esc(STATE.pharmacy ? STATE.pharmacy.name : '') + '</div></div></div>' +
+    '</div>' +
     '<button onclick="logout()">Log out</button></div>' +
     '<div class="content" id="content"></div>' +
-    navBar();
+    navBar() +
+    navDrawerHtml();
+  wireNavDrawer();
   renderTab();
+}
+
+// ---------------------------------------------------------------------------
+// MENU DRAWER (phone only) — ported from Kodi's own drawer, see the matching
+// block in style.css for the geometry and why it exists. The bottom bar can
+// carry about five thumb-sized targets; this is where everything else lives,
+// including the five Reports sub-screens, which previously took two taps
+// (Reports, then the tile) from anywhere in the app.
+//
+// Rows are either a tab (`tab`), a Reports sub-view (`report`), or a grouping
+// label (`grp`). Every row is permission-gated with the same can() checks the
+// bottom bar and the screens themselves use, so the drawer can never offer an
+// action the database would refuse.
+// ---------------------------------------------------------------------------
+function navMenuItems() {
+  var out = [{ tab: 'dashboard', label: 'Overview', ic: '&#127968;' }];
+  var seeStock = can('view_inventory');
+  var seeReports = can('view_reports');
+  if (seeStock || can('sell')) {
+    out.push({ grp: 'Stock' });
+    if (seeStock) out.push({ tab: 'inventory', label: 'Inventory', ic: '&#128138;' });
+    if (can('sell')) out.push({ tab: 'sell', label: 'Sell', ic: '&#129534;' });
+    if (seeReports) {
+      out.push({ report: 'lowstock', label: 'Reorder <br>list', ic: '&#128230;' });
+      out.push({ report: 'expiry', label: 'Expiry <br>dates', ic: '&#9200;' });
+    }
+  }
+  var seeSuppliers = can('suppliers') || can('view_suppliers');
+  var seeExpenses = can('expenses') || can('view_expenses');
+  if (seeSuppliers || seeExpenses || seeReports) {
+    out.push({ grp: 'Money' });
+    if (seeSuppliers) out.push({ tab: 'suppliers', label: 'Suppliers', ic: '&#128666;' });
+    if (seeExpenses) out.push({ tab: 'expenses', label: 'Expenses', ic: '&#128181;' });
+    if (seeReports) out.push({ report: 'valuation', label: 'Stock <br>valuation', ic: '&#128176;' });
+    if (can('claims')) out.push({ report: 'claims', label: 'Insurance <br>claims', ic: '&#127973;' });
+  }
+  out.push({ grp: 'More' });
+  if (seeReports) out.push({ tab: 'reports', label: 'All reports', ic: '&#128202;' });
+  out.push({ tab: 'settings', label: 'Settings', ic: '&#9881;' });
+  return out;
+}
+
+function navDrawerHtml() {
+  return '<div class="navscrim" id="navScrim"></div>' +
+    '<aside class="navdrawer" id="navDrawer">' +
+      '<div class="nd-head">Menu</div>' +
+      '<div class="nd-navwrap">' +
+      '<nav class="nd-nav">' + navMenuItems().map(function (m) {
+        if (m.grp) return '<div class="nd-grp">' + esc(m.grp) + '</div>';
+        var attr = m.report ? 'data-report="' + m.report + '"' : 'data-nav="' + m.tab + '"';
+        // A Reports sub-view counts as current only while that exact view is
+        // open, so "All reports" and e.g. "Expiry dates" never both highlight.
+        var on = m.report
+          ? (STATE.tab === 'reports' && reportsView === m.report)
+          : (STATE.tab === m.tab && !(m.tab === 'reports' && reportsView !== 'hub'));
+        return '<button class="nd-row' + (on ? ' active' : '') + '" ' + attr + '>' +
+          '<span class="nd-chip">' + m.ic + '</span>' +
+          '<span class="nd-lab">' + m.label + '</span></button>';
+      }).join('') + '</nav>' +
+      '<div class="nd-sb" id="navSb"><div class="nd-sb-th" id="navSbTh"></div></div>' +
+      '</div>' +
+      '<div class="nd-foot">Pharma &copy; 2026</div>' +
+    '</aside>';
+}
+
+function closeNavDrawer() { document.body.classList.remove('nav-open'); }
+
+function wireNavDrawer() {
+  var btn = document.getElementById('btnNavMenu');
+  var scrim = document.getElementById('navScrim');
+  var drawer = document.getElementById('navDrawer');
+  var list = drawer && drawer.querySelector('.nd-nav');
+  var sb = document.getElementById('navSb');
+  var th = document.getElementById('navSbTh');
+  if (!btn || !drawer) return;
+
+  // Size and place the drawn thumb. Hidden outright when the list already
+  // fits, so the bar only ever appears when there is genuinely more below.
+  function updateNavScrollbar() {
+    if (!list || !sb || !th) return;
+    var hidden = list.scrollHeight - list.clientHeight;
+    if (hidden <= 2) { sb.classList.remove('on'); return; }
+    sb.classList.add('on');
+    var trackH = sb.clientHeight;
+    var thumbH = Math.max(24, Math.round(trackH * (list.clientHeight / list.scrollHeight)));
+    th.style.height = thumbH + 'px';
+    th.style.top = Math.round((trackH - thumbH) * (list.scrollTop / hidden)) + 'px';
+  }
+  // The drawer's own elements are rebuilt by every render(), so their
+  // listeners go on fresh nodes each time and die with them. The window and
+  // document ones would NOT — re-binding them on every render would stack up
+  // a new listener per render for the life of the session — so they are
+  // attached once and read the current drawer through the DOM instead.
+  if (list) list.addEventListener('scroll', updateNavScrollbar, { passive: true });
+  if (!wireNavDrawer._global) {
+    wireNavDrawer._global = true;
+    window.addEventListener('resize', function () {
+      var el = document.getElementById('navSb');
+      if (el && document.body.classList.contains('nav-open')) wireNavDrawer.refresh();
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') closeNavDrawer();
+    });
+  }
+  wireNavDrawer.refresh = updateNavScrollbar;
+
+  // Mouse and pen only: drag the thumb, or click the track to jump. A finger
+  // scrolls the list itself, so touch is deliberately ignored here.
+  if (sb && th && list) {
+    var dragging = false, startY = 0, startTop = 0;
+    th.addEventListener('pointerdown', function (e) {
+      if (e.pointerType === 'touch') return;
+      dragging = true; startY = e.clientY; startTop = list.scrollTop;
+      th.setPointerCapture(e.pointerId);
+      th.classList.add('drag');
+      e.preventDefault(); e.stopPropagation();
+    });
+    th.addEventListener('pointermove', function (e) {
+      if (!dragging) return;
+      var trackH = sb.clientHeight - th.offsetHeight;
+      var hidden = list.scrollHeight - list.clientHeight;
+      if (trackH > 0) list.scrollTop = startTop + ((e.clientY - startY) / trackH) * hidden;
+    });
+    var stopDrag = function () { dragging = false; th.classList.remove('drag'); };
+    th.addEventListener('pointerup', stopDrag);
+    th.addEventListener('pointercancel', stopDrag);
+    sb.addEventListener('pointerdown', function (e) {
+      if (e.pointerType === 'touch' || e.target === th) return;
+      var r = sb.getBoundingClientRect();
+      var trackH = r.height - th.offsetHeight;
+      var hidden = list.scrollHeight - list.clientHeight;
+      if (trackH > 0) {
+        var ratio = (e.clientY - r.top - th.offsetHeight / 2) / trackH;
+        list.scrollTop = Math.max(0, Math.min(1, ratio)) * hidden;
+      }
+    });
+  }
+
+  btn.onclick = function () {
+    document.body.classList.toggle('nav-open');
+    // Measured once the drawer is actually on screen — a hidden element has
+    // no height to measure, so this cannot run at build time.
+    if (document.body.classList.contains('nav-open')) updateNavScrollbar();
+  };
+  if (scrim) scrim.onclick = closeNavDrawer;
+  drawer.onclick = function (e) {
+    var b = e.target.closest('[data-nav],[data-report]');
+    if (!b) return;
+    closeNavDrawer();
+    var rep = b.getAttribute('data-report');
+    if (rep) { goReport(rep); return; }
+    setTab(b.getAttribute('data-nav'));
+  };
+}
+
+// Opens a Reports sub-screen directly, instead of Reports-then-tile. Used by
+// the drawer; renderReports() reads reportsView on its way in.
+function goReport(view) {
+  reportsView = view;
+  setTab('reports');
 }
 
 // Same markup renders as the phone's bottom tab bar and the desktop's full
@@ -414,21 +585,28 @@ function navBar() {
   // stay unconditional — but inventory and sell aren't (e.g. accountant
   // has neither, stock_taker has no 'sell'), so they're now gated the same
   // way suppliers/expenses already were.
+  // The fourth element marks a destination as desktop-sidebar-only. Seven
+  // items crammed into a phone's bottom bar left each target well under the
+  // ~40px a thumb needs, so Suppliers and Settings now live in the menu
+  // drawer on a phone (navMenuItems above) and stay on the sidebar at 860px+,
+  // where there is a full column and no size pressure at all. The bar itself
+  // is unchanged on desktop — see .nav-desktop-extra in style.css.
   var items = [['dashboard', 'home', t('home')]];
-  if (can('view_inventory')) items.push(['inventory', 'stock', t('stock')]);
+  if (can('view_inventory')) items.push(['inventory', 'stock', 'Inventory']);
   if (can('sell')) items.push(['sell', 'sell', t('sell')]);
   var seeSuppliers = can('suppliers') || can('view_suppliers');
   var seeExpenses = can('expenses') || can('view_expenses');
-  if (seeSuppliers) items.push(['suppliers', 'truck', t('suppliers')]);
+  if (seeSuppliers) items.push(['suppliers', 'truck', t('suppliers'), true]);
   if (seeExpenses) items.push(['expenses', 'wallet', t('expenses')]);
   items.push(['reports', 'reports', t('reports')]);
-  items.push(['settings', 'settings', t('settings')]);
+  items.push(['settings', 'settings', t('settings'), true]);
   var p = STATE.profile || {};
   var pharmacy = STATE.pharmacy || {};
   return '<div class="navbar">' +
     '<div class="navbar-brand">' + logoMarkHtml(38) + '<div class="word">Pharma</div></div>' +
     items.map(function (i) {
-      return '<button class="' + (STATE.tab === i[0] ? 'active' : '') + '" onclick="setTab(\'' + i[0] + '\')">' +
+      var cls = (STATE.tab === i[0] ? 'active' : '') + (i[3] ? ' nav-desktop-extra' : '');
+      return '<button class="' + cls.trim() + '" onclick="setTab(\'' + i[0] + '\')">' +
         '<span class="ic">' + icon(i[1], 20) + '</span>' + i[2] + '</button>';
     }).join('') +
     '<div class="navbar-spacer"></div>' +
@@ -514,10 +692,50 @@ function exportExcel(filename, sheetName, rows) {
 // AUTH
 // ---------------------------------------------------------------------------
 
+// Phone sign-in pieces (hidden at >= 860px by style.css). The mark is the
+// white-on-red hospital cross; the benefit row only shows on the log-in
+// screen and only when the screen is tall enough (style.css).
+function crossMarkHtml() {
+  return '<div class="auth-hero-mark"><svg viewBox="0 0 48 48" aria-hidden="true">' +
+    '<polygon points="18,6 30,6 30,18 42,18 42,30 30,30 30,42 18,42 18,30 6,30 6,18 18,18" fill="#fff" stroke="#fff" stroke-width="6" stroke-linejoin="round"/>' +
+    '</svg></div>';
+}
+function authHeroHtml() {
+  return '<div class="auth-hero">' + crossMarkHtml() +
+    '<h1 class="auth-hero-word">Pharma</h1>' +
+    '<p class="auth-hero-tag">Know your stock</p>' +
+    '<div class="auth-feats">' +
+    '<div class="auth-feat"><i>&#128138;</i>Batch<br>tracking</div>' +
+    '<div class="auth-feat"><i>&#9200;</i>Expiry<br>alerts</div>' +
+    '<div class="auth-feat"><i>&#128202;</i>Daily<br>reports</div>' +
+    '<div class="auth-feat"><i>&#129534;</i>Printed<br>receipts</div>' +
+    '</div></div>';
+}
+// Tells style.css which auth screen is showing (the benefit row is for log-in
+// only). Returns '' so it can sit at the front of each body.innerHTML string.
+// The footer line below sits inside each card, under the button (style.css uses
+// display:contents + order on #authBody so the card and the links share one column).
+function authSetMode(mode) {
+  var w = $('.auth-wrap'); if (w) w.setAttribute('data-mode', mode);
+  return '';
+}
+var AUTH_FOOT = '<div class="auth-lfoot"><span>Batches &middot; FEFO</span><span>KES</span></div>';
+// list: [prefix, label, onclick-js]. Prefix shows on the phone only; the " · "
+// separator on desktop only (style.css).
+function authLinks(list) {
+  return '<div class="auth-toggle">' + list.map(function (x) {
+    return '<a href="#" onclick="' + x[2] + ';return false;">' +
+      (x[0] ? '<span class="auth-pre">' + x[0] + ' </span>' : '') + '<b>' + x[1] + '</b></a>';
+  }).join('<span class="auth-sep"> &middot; </span>') + '</div>';
+}
+
 // Desktop gets a proper split layout (green brand panel with floating stat
 // cards + form) instead of a small centered card floating in a sea of empty
 // page; mobile gets the same green panel collapsed into a curved-gradient
-// hero above the form, with a "Trusted by pharmacists worldwide" trust line.
+// hero above the form. The phone layout is the "dispensing label" sign-in
+// (approved sketch): hospital-cross mark, "Know your stock", an emoji benefit
+// row, and the form as a label card. It reuses the same #authBody/ids as the
+// desktop layout, which is untouched (>= 860px).
 // Sketched against Kodi's own login/signup screens and approved (headline
 // wording, trust line, stat-card colors) before being wired up here — see
 // style.css's .auth-wrap/.auth-brand rules for the responsive behavior.
@@ -544,9 +762,11 @@ function authScreen() {
     '<div class="auth-bg-fill"></div>' +
     '<div class="auth-brand">' +
     '<div class="auth-brand-top">' +
-    logoMarkHtml(56) +
+    authHeroHtml() +
+    '<div class="auth-desk-top">' + logoMarkHtml(56) +
     '<h1 class="auth-brand-headline">Know Your Stock<br>Never Run Dry</h1>' +
     '<div class="auth-brand-tag">Batches, sales, expiry tracking and reports &mdash; everything a pharmacy needs, in one place.</div>' +
+    '</div>' +
     '</div>' +
     '<div class="auth-brand-line line-top"></div>' +
     '<div class="auth-stat-stack">' +
@@ -559,52 +779,55 @@ function authScreen() {
     '<div class="auth-form-col"><div class="auth-card">' +
     (msg ? '<div class="card" style="border-color:#EFC3BE;background:#FBE9E7;margin-bottom:12px">' + esc(msg) + '</div>' : '') +
     '<div id="authBody"></div></div></div>' +
-    '<div class="auth-brand-trust">Trusted by pharmacists worldwide &#127757;</div>' +
     '</div>';
 }
 
 function renderLogin() {
   STATE.authMode = 'login';
   var body = $('#authBody') || (function () { render(); return $('#authBody'); })();
-  body.innerHTML =
+  body.innerHTML = authSetMode('login') +
     '<div class="card">' +
+    '<h2 class="auth-title">Welcome back &#128075;</h2>' +
     '<div class="field"><label>Phone number</label><input id="loPhone" type="tel" placeholder="07XXXXXXXX"></div>' +
     '<div class="field"><label>Password</label><input id="loPw" type="password" placeholder="••••••••"></div>' +
     '<div id="loErr" class="error-text"></div>' +
     '<button class="btn primary" id="loBtn" onclick="doLogin()">Log in</button>' +
-    '<div class="tiny" style="text-align:center;margin-top:10px"><a href="#" onclick="renderForgotPassword();return false;">Forgot password?</a></div>' +
-    '</div><div class="auth-toggle"><a href="#" onclick="renderSignup();return false;">Create an account</a>' +
-    ' · <a href="#" onclick="renderJoin();return false;">Staff Login</a></div>';
+    '<div class="tiny auth-forgot"><a href="#" onclick="renderForgotPassword();return false;">Forgot password?</a></div>' +
+    AUTH_FOOT + '</div>' +
+    authLinks([['New pharmacy?', 'Create an account', 'renderSignup()'], ['Have a code?', 'Staff login', 'renderJoin()']]);
 }
 
 function renderSignup() {
   STATE.authMode = 'signup';
   var body = $('#authBody') || (function () { render(); return $('#authBody'); })();
-  body.innerHTML =
+  body.innerHTML = authSetMode('signup') +
     '<div class="card">' +
-    '<div class="field"><label>Pharmacy name</label><input id="suPharmacy" placeholder="e.g. Rubao Mukothima Pharmacy"></div>' +
-    '<div class="field"><label>Your name</label><input id="suName" placeholder="e.g. Rubao Mukothima"></div>' +
+    '<h2 class="auth-title">Create your account</h2>' +
+    '<div class="field"><label>Pharmacy name</label><input id="suPharmacy" placeholder="e.g. Afya Bora Pharmacy"></div>' +
+    '<div class="field"><label>Your name</label><input id="suName" placeholder="e.g. Daud Kinyua"></div>' +
     '<div class="field"><label>Phone number</label><input id="suPhone" type="tel" placeholder="07XXXXXXXX"></div>' +
     '<div class="field"><label>Password</label><input id="suPw" type="password" placeholder="At least 8 characters"></div>' +
     '<div id="suErr" class="error-text"></div>' +
     '<button class="btn primary" id="suBtn" onclick="doSignup()">Create pharmacy account</button>' +
-    '</div><div class="auth-toggle"><a href="#" onclick="renderLogin();return false;">Log in</a>' +
-    ' · <a href="#" onclick="renderJoin();return false;">Staff Login</a></div>';
+    AUTH_FOOT + '</div>' +
+    authLinks([['Already registered?', 'Log in', 'renderLogin()'], ['Have a code?', 'Staff login', 'renderJoin()']]);
 }
 
+// Staff with an invite code (Settings -> Staff, in the owner's app) join here
+// from the "Have a code? Staff login" link on the log-in and create-account screens.
 function renderJoin() {
   STATE.authMode = 'join';
   var body = $('#authBody') || (function () { render(); return $('#authBody'); })();
-  body.innerHTML =
+  body.innerHTML = authSetMode('join') +
     '<div class="card">' +
-    '<div class="tiny" style="margin-bottom:10px">Ask the pharmacy owner for a staff invite code (Settings → Staff, in their app).</div>' +
+    '<h2 class="auth-title">Join pharmacy</h2>' +
     '<div class="field"><label>Staff code</label><input id="jnCode" placeholder="e.g. 2E530A" style="text-transform:uppercase"></div>' +
-    '<div class="field"><label>Your name</label><input id="jnName" placeholder="e.g. Peter Attendant"></div>' +
+    '<div class="field"><label>Your name</label><input id="jnName" placeholder="e.g. Daud Kinyua"></div>' +
     '<div class="field"><label>Phone number</label><input id="jnPhone" type="tel" placeholder="07XXXXXXXX"></div>' +
     '<div class="field"><label>Password</label><input id="jnPw" type="password" placeholder="At least 8 characters"></div>' +
     '<div id="jnErr" class="error-text"></div>' +
     '<button class="btn primary" id="jnBtn" onclick="doJoin()">Join pharmacy</button>' +
-    '</div><div class="auth-toggle"><a href="#" onclick="renderLogin();return false;">Back to log in</a></div>';
+    AUTH_FOOT + '</div>' + authLinks([['', 'Back to log in', 'renderLogin()']]);
 }
 
 // Was a native browser prompt() — looks broken/untrustworthy on mobile,
@@ -634,30 +857,33 @@ function renderForgotPassword() {
 function drawForgotPassword() {
   var body = $('#authBody') || (function () { render(); return $('#authBody'); })();
   if (fpStep === 'phone') {
-    body.innerHTML =
+    body.innerHTML = authSetMode('forgot') +
       '<div class="card">' +
+      '<h2 class="auth-title">Forgot your password?</h2>' +
       '<div class="tiny" style="margin-bottom:10px">Enter the phone number on the account — we\'ll text you a 6-digit code.</div>' +
       '<div class="field"><label>Phone number</label><input id="fpPhone" type="tel" placeholder="07XXXXXXXX" value="' + esc(fpPhoneVal) + '"></div>' +
       '<div id="fpErr" class="error-text"></div>' +
       '<button class="btn primary" id="fpBtn" onclick="doSendResetCode()">Send code</button>' +
-      '</div><div class="auth-toggle"><a href="#" onclick="renderLogin();return false;">Back to log in</a></div>';
+      AUTH_FOOT + '</div>' + authLinks([['', 'Back to log in', 'renderLogin()']]);
   } else if (fpStep === 'code') {
-    body.innerHTML =
+    body.innerHTML = authSetMode('forgot') +
       '<div class="card">' +
+      '<h2 class="auth-title">Enter the code</h2>' +
       '<div class="tiny" style="margin-bottom:10px">Enter the 6-digit code sent to ' + esc(fpPhoneVal) + '.</div>' +
       '<div class="field"><label>Code</label><input id="fpCode" type="tel" maxlength="6" placeholder="123456"></div>' +
       '<div id="fpErr" class="error-text"></div>' +
       '<button class="btn primary" id="fpBtn" onclick="doVerifyResetCode()">Verify</button>' +
-      '</div><div class="auth-toggle"><a href="#" onclick="renderForgotPassword();return false;">Use a different number</a>' +
-      ' · <a href="#" onclick="doSendResetCode();return false;">Resend code</a></div>';
+      AUTH_FOOT + '</div>' +
+      authLinks([['', 'Use a different number', 'renderForgotPassword()'], ['', 'Resend code', 'doSendResetCode()']]);
   } else {
-    body.innerHTML =
+    body.innerHTML = authSetMode('forgot') +
       '<div class="card">' +
+      '<h2 class="auth-title">Choose a new password</h2>' +
       '<div class="tiny" style="margin-bottom:10px">Phone number verified. Choose a new password.</div>' +
       '<div class="field"><label>New password</label><input id="fpPw" type="password" placeholder="At least 8 characters"></div>' +
       '<div id="fpErr" class="error-text"></div>' +
       '<button class="btn primary" id="fpBtn" onclick="doSetResetPassword()">Set new password</button>' +
-      '</div><div class="auth-toggle"><a href="#" onclick="renderLogin();return false;">Back to log in</a></div>';
+      AUTH_FOOT + '</div>' + authLinks([['', 'Back to log in', 'renderLogin()']]);
   }
 }
 
