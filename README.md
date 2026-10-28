@@ -11,10 +11,11 @@ Live site: https://pharmacymngt.netlify.app
 | `index.html`, `style.css`, `app.js` | The app: one HTML page, one stylesheet, one script |
 | `config.js` | Supabase URL and public (anon) key |
 | `sw.js`, `manifest.json` | Offline app shell and install settings |
+| `nativeShell.js`, `capacitor.config.json`, `www/`, `android/` | The Android app: a Capacitor shell around the live site (see `android/ANDROID_APP.md`) |
 | `admin.html`, `admin.js`, `admin.css` | Platform admin portal at `/admin` |
 | `schema.sql` | Full database: tables, views, functions, security |
 | `migrations/` | The SQL changes of the 28 Oct 2026 review, already applied live |
-| `tests/` | SQL tests and the no-gray-text test |
+| `tests/` | SQL tests, the no-gray-text test, and the Android shell tests |
 
 ## Screens
 
@@ -24,10 +25,12 @@ Live site: https://pharmacymngt.netlify.app
 
 ## Run and test
 
-Open `index.html` through any static server. Tests:
+Open `index.html` through any static server. The Android app is built on your computer with Android Studio: `npm install`, `npx cap sync android`, `npx cap open android` (full steps in `android/ANDROID_APP.md`). Tests:
 
 ```bash
 node tests/banned-colours.test.js        # no gray text
+node tests/android-shell.test.js         # Android settings agree with each other
+node tests/native-shell.test.js          # print and back button inside the app
 cd tests && npm install && node run_tests.js   # SQL tests, local throwaway Postgres
 ```
 

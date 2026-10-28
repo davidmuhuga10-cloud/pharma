@@ -7,7 +7,7 @@
    deploy so returning users pick up the new app shell instead of an old
    cached copy. */
 
-const CACHE_NAME = 'hodhi-shell-v2g';
+const CACHE_NAME = 'hodhi-shell-v2h';
 // vendor-supabase.js and vendor-xlsx.js were missing from this list, so a
 // first-ever offline open failed outright: index.html came from the cache,
 // then <script src="vendor-supabase.js"> went to the network, got nothing,
@@ -15,7 +15,7 @@ const CACHE_NAME = 'hodhi-shell-v2g';
 // failure vendoring them was meant to remove. They only reached the cache
 // once the fetch handler below had seen them on a successful online load.
 const SHELL_FILES = [
-  './', './index.html', './style.css', './app.js', './config.js', './manifest.json',
+  './', './index.html', './style.css', './app.js', './nativeShell.js', './config.js', './manifest.json',
   './vendor-supabase.js', './vendor-xlsx.js'
 ];
 

@@ -1,0 +1,36 @@
+{
+  "appId": "com.pharmacymngt.app",
+  "appName": "Pharma",
+  "webDir": "www",
+  "server": {
+    "url": "https://pharmacymngt.netlify.app",
+    "androidScheme": "https",
+    "cleartext": false,
+    "errorPath": "error.html"
+  },
+  "android": {
+    "allowMixedContent": false
+  },
+  "backgroundColor": "#0F5132",
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 1500,
+      "launchAutoHide": true,
+      "backgroundColor": "#0F5132",
+      "androidSplashResourceName": "splash",
+      "androidScaleType": "CENTER_CROP",
+      "showSpinner": false,
+      "splashFullScreen": true,
+      "splashImmersive": true
+    },
+    "StatusBar": {
+      "style": "DARK",
+      "backgroundColor": "#0F5132"
+    },
+    "SystemBars": {
+      "insetsHandling": "native",
+      "initialViewportFitValueHint": "auto",
+      "style": "DARK"
+    }
+  }
+}

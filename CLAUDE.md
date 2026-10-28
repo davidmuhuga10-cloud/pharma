@@ -9,12 +9,15 @@ Read this before changing anything. These rules came from Kodi and apply here fr
 5. **Buttons that send a request go through `act(btn, fn)`** so they show "Please wait..." and cannot be double-tapped.
 6. **A new rule gets a test.** Add the test, then break the rule once on purpose to prove the test goes red, then fix it.
 7. **Bump `CACHE_NAME` in `sw.js`** whenever `index.html`, `style.css`, `app.js` or another cached file changes.
-8. **Don't change what wasn't asked.** If a root cause is unclear, ask.
+8. **Android releases:** raise `versionCode` in `android/app/build.gradle` by 1 for every upload to Google Play, and back up the signing key in two places. `tests/android-shell.test.js` keeps the app's package name consistent.
+9. **Don't change what wasn't asked.** If a root cause is unclear, ask.
 
 ## Commands
 
 ```bash
 node tests/banned-colours.test.js     # no-gray-text rule
+node tests/android-shell.test.js      # Android settings agree
+node tests/native-shell.test.js       # print and back button inside the app
 cd tests && npm install && node run_tests.js   # SQL tests; needs a local throwaway Postgres (see tests/README.md)
 node --check app.js                    # syntax check
 ```
