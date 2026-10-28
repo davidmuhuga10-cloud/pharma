@@ -168,7 +168,18 @@ function redrawKeepingFocus(container, html) {
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
   return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
 }); }
-function fmt(n) { return 'KES ' + (Math.round((Number(n) || 0)) ).toLocaleString(); }
+// Whole shillings for the ordinary case (that is how a Kenyan pharmacy prices,
+// and how a till reads), but never round a fractional amount away: this used
+// to hard-round everything, so a checkout 40 cents short displayed "Balance
+// KES 0" in red while Confirm stayed disabled with no visible reason. Prices
+// and markdowns are stored to 2dp, so cents really do occur.
+function fmt(n) {
+  var v = Number(n) || 0;
+  var whole = Math.abs(v - Math.round(v)) < 0.005;
+  return 'KES ' + (whole
+    ? Math.round(v).toLocaleString()
+    : v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+}
 // "1 tablet" / "232 tablets" / "0 units" — the unit is stored singular
 // (tablet, bottle, sachet…). Short/abbreviated units (ml, mg, pcs) are left
 // as typed, since "mls" or "pcses" would read worse than no plural at all.
@@ -264,10 +275,19 @@ async function init() {
       '<button class="btn primary" onclick="location.reload()">Reload</button></div></div></div></div>';
     return;
   }
-  sb.auth.onAuthStateChange(function (evt, session) {
+  sb.auth.onAuthStateChange(async function (evt, session) {
     STATE.session = session;
     if (evt === 'PASSWORD_RECOVERY') { STATE.recoveryMode = true; render(); return; }
-    if (!session) { STATE.profile = null; STATE.pharmacy = null; render(); }
+    if (!session) { STATE.profile = null; STATE.pharmacy = null; render(); return; }
+    // A session arriving that this tab didn't create — signed in on another
+    // tab, or a session restored after this one was opened — used to update
+    // STATE.session and nothing else, leaving the tab on the login screen with
+    // a perfectly good session behind it. doLogin/doSignup/doJoin load the
+    // profile themselves, so only handle the case where we don't have one.
+    if (evt === 'SIGNED_IN' && !STATE.profile) {
+      try { await loadProfileAndPharmacy(); } catch (e) { return; }
+      render();
+    }
   });
 }
 
@@ -1689,7 +1709,9 @@ function previewImport(dataRows, colMap) {
     '</div>' +
     '<div class="card" style="max-height:260px;overflow-y:auto">' +
     (parsed.length ? parsed.slice(0, 50).map(function (p) {
-      return listRow(p.name, p.qty + ' ' + p.unit + ' · exp ' + (p.expiryUnknown ? 'unknown' : fmtDate(p.expiry)), fmt(p.sellPrice));
+      // listRow() escapes its name argument but not meta — and p.unit here is
+      // a raw cell out of an uploaded spreadsheet.
+      return listRow(p.name, p.qty + ' ' + esc(p.unit) + ' · exp ' + (p.expiryUnknown ? 'unknown' : fmtDate(p.expiry)), fmt(p.sellPrice));
     }).join('') : '<div class="empty">Nothing importable was found in that file.</div>') +
     (parsed.length > 50 ? '<div class="tiny" style="margin-top:8px">…and ' + (parsed.length - 50) + ' more</div>' : '') +
     '</div>' +
@@ -1918,7 +1940,7 @@ function openReorderList() {
     '<button class="btn" onclick="printReorderList()">' + icon('printer',15) + ' Print</button>' +
     '</div></div>' +
     '<div class="card">' + (needed.length ? needed.map(function (n) {
-      return listRow(n.name, 'Have ' + n.current + ' ' + n.unit + ' · reorder level ' + n.reorderLevel, '<b>Order ' + n.suggested + '</b>');
+      return listRow(n.name, 'Have ' + n.current + ' ' + esc(n.unit) + ' · reorder level ' + n.reorderLevel, '<b>Order ' + n.suggested + '</b>');
     }).join('') : '<div class="empty">Nothing needs reordering right now.</div>') + '</div>';
 }
 
@@ -2155,7 +2177,7 @@ function openWriteOff(batchId, drugName, maxQty) {
     '<option value="expired_disposal">Expired — disposed of</option>' +
     '<option value="write_off">Damaged / other write-off</option></select></div>' +
     '<div class="field"><label>Quantity</label><input id="woQty" type="number" min="1" max="' + maxQty + '"></div>' +
-    '<div class="field"><label>Reason / notes</label><textarea id="woReason" rows="2"></textarea></div>' +
+    '<div class="field"><label>Reason (required)</label><textarea id="woReason" rows="2" placeholder="e.g. expired, disposed of per PPB"></textarea></div>' +
     '<button class="btn danger" id="woSaveBtn" onclick="saveWriteOff(\'' + batchId + '\')">Write off stock</button>';
 }
 
@@ -2164,12 +2186,17 @@ async function saveWriteOff(batchId) {
   act(btn, async function () {
     var qty = parseInt($('#woQty').value, 10);
     if (!qty || qty <= 0) { toast('Enter a valid quantity.', 'bad'); return; }
+    // The reason is what the stock audit trail carries into a GSDP
+    // inspection, so record_write_off now requires it. Catch it here too,
+    // before the round trip, so the message points at the right field.
+    var woReason = $('#woReason').value.trim();
+    if (!woReason) { toast('Give a reason — it goes on the stock audit trail.', 'bad'); return; }
     // Write-offs permanently remove stock with no undo — a fat-fingered tap
     // at a busy counter shouldn't be able to do that with zero friction.
     if (!confirm('Write off ' + qty + ' unit(s)? This cannot be undone.')) return;
     var { error } = await sb.rpc('record_write_off', {
       p_pharmacy_id: STATE.profile.pharmacy_id, p_batch_id: batchId, p_quantity: qty,
-      p_reason: $('#woReason').value.trim() || null, p_type: $('#woType').value
+      p_reason: woReason, p_type: $('#woType').value
     });
     if (error) { toast(friendlyError(error), 'bad'); return; }
     toast('Recorded.', 'good');
@@ -2183,7 +2210,7 @@ function openCorrection(batchId, drugName, currentQty) {
   body.innerHTML =
     '<div class="tiny" style="margin-bottom:10px">System currently shows ' + currentQty + '. Enter what you actually counted.</div>' +
     '<div class="field"><label>Actual quantity</label><input id="coQty" type="number" min="0" value="' + currentQty + '"></div>' +
-    '<div class="field"><label>Reason / notes</label><textarea id="coReason" rows="2" placeholder="e.g. physical stock take, 30 Sep"></textarea></div>' +
+    '<div class="field"><label>Reason (required)</label><textarea id="coReason" rows="2" placeholder="e.g. physical stock take, 30 Sep"></textarea></div>' +
     '<button class="btn primary" id="coSaveBtn" onclick="saveCorrection(\'' + batchId + '\')">Save correction</button>';
 }
 
@@ -2192,13 +2219,17 @@ async function saveCorrection(batchId) {
   act(btn, async function () {
     var qty = parseInt($('#coQty').value, 10);
     if (qty === '' || isNaN(qty) || qty < 0) { toast('Enter a valid quantity.', 'bad'); return; }
+    // Same as write-off: a correction overwrites a counted quantity outright,
+    // and record_correction now insists on an explanation for the audit row.
+    var coReason = $('#coReason').value.trim();
+    if (!coReason) { toast('Give a reason — it goes on the stock audit trail.', 'bad'); return; }
     // A correction directly overwrites the batch's counted quantity — cheap
     // to close the same confirmation gap write-off and void already have,
     // so a fat-fingered tap doesn't silently overwrite a real count.
     if (!confirm('Set this batch\'s quantity to ' + qty + '? This overwrites the current count.')) return;
     var { error } = await sb.rpc('record_correction', {
       p_pharmacy_id: STATE.profile.pharmacy_id, p_batch_id: batchId, p_new_quantity: qty,
-      p_reason: $('#coReason').value.trim() || null
+      p_reason: coReason
     });
     if (error) { toast(friendlyError(error), 'bad'); return; }
     toast('Corrected.', 'good');
@@ -2385,22 +2416,84 @@ function confirmRxCapture(drugId) {
   drawSell();
 }
 
+// addToCart caps at available stock, but the cart's own "+" button did not —
+// so a seller could push a line past what is on the shelf and only find out at
+// Confirm, when record_sale refused the whole sale. Cap it here too, against
+// the live figure rather than the one cached when the item was added. Two
+// lines for the same drug (two prescriptions of one drug, say) draw on the
+// same stock, so they are counted together.
 function changeQty(i, delta) {
   var item = STATE.cart[i];
+  if (delta > 0) {
+    var live = STATE.drugsCache.find(function (x) { return x.drug_id === item.drug_id; });
+    var available = Number(live ? live.qty_in_stock : item.stock);
+    var inCart = STATE.cart.reduce(function (a, c) { return a + (c.drug_id === item.drug_id ? c.qty : 0); }, 0);
+    if (isFinite(available) && inCart + delta > available) {
+      toast('Only ' + qtyUnit(available, item.unit) + ' of ' + item.name + ' in stock.', 'bad');
+      return;
+    }
+  }
   item.qty += delta;
   if (item.qty <= 0) STATE.cart.splice(i, 1);
   drawSell();
 }
 
 var checkoutPayments = [];
+// The server's own pricing of the current cart — see openCheckout below.
+var lastQuote = null;
 
-function openCheckout() {
+// The Sell screen prices a cart from drugs.default_price, which record_restock
+// overwrites with the LATEST restock price. record_sale charges something
+// different: whatever the batch FEFO lands on costs, with that batch's
+// markdown (batches.discount_percent) applied. Those two agree only while a
+// drug has exactly one batch at the current price. The moment an older batch
+// is still on the shelf at a different price, or any batch is marked down, the
+// client asked for payments summing to the wrong number and record_sale
+// rejected the entire sale with "Payments (x) do not add up to the sale total
+// (y)" — which made the markdown feature unusable and broke the ordinary
+// restock-at-a-new-price case too. So: ask the database what this cart
+// actually comes to (quote_sale, same FEFO loop, read-only) and collect money
+// against THAT. The cart's own figure stays as the indicative shelf price.
+async function openCheckout() {
   if (!STATE.cart.length) { toast('Cart is empty.', 'bad'); return; }
-  var total = STATE.cart.reduce(function (a, c) { return a + c.qty * c.price; }, 0);
-  checkoutPayments = [{ method: 'cash', amount: total, reference: '' }];
-  var body = sheet('Checkout — ' + fmt(total), '');
+  var indicative = STATE.cart.reduce(function (a, c) { return a + c.qty * c.price; }, 0);
+  var body = sheet('Checkout', '<div class="card empty">Checking stock and prices…</div>');
   body.id = 'checkoutBody';
+  lastQuote = null;
+
+  var items = STATE.cart.map(function (c) { return { drug_id: c.drug_id, quantity: c.qty }; });
+  var quote;
+  try {
+    var { data, error } = await sb.rpc('quote_sale', {
+      p_pharmacy_id: STATE.profile.pharmacy_id, p_items: items
+    });
+    if (error) throw error;
+    quote = data;
+  } catch (e) {
+    body.innerHTML = '<div class="card empty">' + esc(friendlyError(e)) +
+      '<div style="margin-top:12px"><button class="btn secondary small" onclick="openCheckout()">Try again</button></div></div>';
+    return;
+  }
+
+  if (!quote || quote.ok === false) {
+    var shortItem = (quote && quote.short_drug_id)
+      ? STATE.cart.find(function (c) { return c.drug_id === quote.short_drug_id; })
+      : null;
+    body.innerHTML = '<div class="card empty">' +
+      (shortItem
+        ? 'Not enough ' + esc(shortItem.name) + ' left — short by ' + (quote.short_by || 0) + '. Someone may have sold it while this cart was open.'
+        : 'Some of these items are no longer in stock.') +
+      '<div style="margin-top:12px"><button class="btn ghost small" onclick="closeSheet()">Back to the cart</button></div></div>';
+    return;
+  }
+
+  lastQuote = quote;
+  var total = Math.round((Number(quote.total) || 0) * 100) / 100;
+  checkoutPayments = [{ method: 'cash', amount: total, reference: '' }];
   body.dataset.total = total;
+  body.dataset.priceNote = Math.abs(total - indicative) > 0.01 ? '1' : '';
+  var head = document.querySelector('.mask .sheet-head h2');
+  if (head) head.textContent = 'Checkout — ' + fmt(total);
   drawCheckoutPayments();
 }
 
@@ -2411,6 +2504,9 @@ function drawCheckoutPayments() {
   var balance = Math.round((total - paid) * 100) / 100;
   body.innerHTML =
     '<div class="section-title" style="margin-top:0">Payment</div>' +
+    (body.dataset.priceNote
+      ? '<div class="tiny" style="margin-bottom:8px">This total is priced from the batches the sale will actually come out of — soonest expiry first, with any markdown applied — so it differs from the shelf price shown in the cart.</div>'
+      : '') +
     checkoutPayments.map(function (p, i) {
       var needsRef = p.method === 'mpesa' || p.method === 'insurance' || p.method === 'bank';
       return '<div class="card" style="margin-bottom:8px">' +
@@ -2452,8 +2548,29 @@ function removePaymentLine(i) {
 async function completeSale() {
   var btn = $('#pSaveBtn');
   act(btn, async function () {
-    var soldItems = STATE.cart.slice();
-    var items = soldItems.map(function (c) {
+    // Re-price the receipt lines from the quote the sale was confirmed
+    // against, so the printed receipt shows what was actually charged (batch
+    // price with markdown) rather than the cart's indicative shelf price.
+    var perDrug = {};
+    if (lastQuote && lastQuote.lines) {
+      lastQuote.lines.forEach(function (l) {
+        var a = perDrug[l.drug_id] || { qty: 0, total: 0 };
+        a.qty += Number(l.quantity) || 0;
+        a.total += Number(l.line_total) || 0;
+        perDrug[l.drug_id] = a;
+      });
+    }
+    var quotedTotal = lastQuote ? Number(lastQuote.total) || 0 : null;
+    var soldItems = STATE.cart.map(function (c) {
+      var a = perDrug[c.drug_id];
+      return {
+        drug_id: c.drug_id, name: c.name, unit: c.unit, qty: c.qty,
+        price: (a && a.qty) ? a.total / a.qty : c.price,
+        patient_name: c.patient_name || null, prescriber_name: c.prescriber_name || null,
+        is_prescription: !!c.is_prescription
+      };
+    });
+    var items = STATE.cart.map(function (c) {
       return { drug_id: c.drug_id, quantity: c.qty, patient_name: c.patient_name || null, prescriber_name: c.prescriber_name || null };
     });
     var payments = checkoutPayments.map(function (p) {
@@ -2469,30 +2586,38 @@ async function completeSale() {
       p_insurance_scheme: insuranceLine ? insuranceLine.reference : null
     });
     if (error) { toast(friendlyError(error), 'bad'); return; }
-    if (insuranceLine) {
-      await sb.from('insurance_claims').insert({
-        pharmacy_id: STATE.profile.pharmacy_id, sale_id: saleId,
-        scheme: insuranceLine.reference || 'Unspecified', amount: insuranceLine.amount, status: 'pending'
-      });
-    }
+    // The insurance claim used to be inserted here, as a second round trip
+    // after the sale had already committed — so if that call failed (dropped
+    // connection at the till, tab closed) the sale stood but the claim never
+    // existed and the pharmacy quietly lost money it was owed. record_sale
+    // now creates it inside the same transaction, for every insurance payment
+    // line rather than only the first one.
     toast('Sale recorded.', 'good');
     STATE.cart = [];
     var invoiceNo = null;
     try { var { data: s } = await sb.from('sales').select('invoice_number').eq('id', saleId).single(); invoiceNo = s ? s.invoice_number : null; } catch (e) {}
-    showReceipt(soldItems, payments, customer, invoiceNo);
+    showReceipt(soldItems, payments, customer, invoiceNo, quotedTotal);
+    lastQuote = null;
     renderSell();
   });
 }
 
 var pendingReceipt = null; // holds the last completed sale for the print button below
 
-function showReceipt(items, payments, customer, invoiceNo) {
-  var total = items.reduce(function (a, c) { return a + c.qty * c.price; }, 0);
+function showReceipt(items, payments, customer, invoiceNo, chargedTotal) {
+  // chargedTotal is what record_sale actually billed (see openCheckout). Only
+  // fall back to summing the lines when it isn't available.
+  var total = (chargedTotal == null)
+    ? items.reduce(function (a, c) { return a + c.qty * c.price; }, 0)
+    : chargedTotal;
   pendingReceipt = { items: items, payments: payments, customer: customer, invoiceNo: invoiceNo, total: total };
   var body = sheet('Sale complete' + (invoiceNo ? ' — ' + invoiceNo : ''), '');
   body.innerHTML =
+    // listRow() escapes its first argument, so patient_name is passed raw here
+    // — it used to be esc()'d first and then escaped again, printing a
+    // customer's apostrophe as "&#39;" on the screen receipt.
     '<div class="card">' + items.map(function (it) {
-      return listRow(it.name + (it.patient_name ? ' (' + esc(it.patient_name) + ')' : ''), it.qty + ' × ' + fmt(it.price), fmt(it.qty * it.price));
+      return listRow(it.name + (it.patient_name ? ' (' + it.patient_name + ')' : ''), it.qty + ' × ' + fmt(it.price), fmt(it.qty * it.price));
     }).join('') + '<div class="list-row"><div class="name">Total</div><div class="name">' + fmt(total) + '</div></div></div>' +
     '<button class="btn primary" onclick="printReceipt()">' + icon('printer',15) + ' Print receipt</button>' +
     '<button class="btn ghost" style="margin-top:8px" onclick="closeSheet()">Done</button>';
@@ -2505,7 +2630,12 @@ function printReceipt() {
   var extra = [];
   if (d.invoiceNo) extra.push('Invoice: ' + esc(d.invoiceNo));
   if (d.customer) extra.push('Customer: ' + esc(d.customer));
-  extra.push('Payment: ' + d.payments.map(function (p) { return p.method + (p.reference ? ' (' + p.reference + ')' : '') + ' ' + fmt(p.amount); }).join(', '));
+  // extra[] is dropped straight into the print area's HTML, so every piece of
+  // it has to be escaped — the payment reference is free text a seller types
+  // at checkout (M-Pesa code, scheme/member note), and was going in raw.
+  extra.push('Payment: ' + d.payments.map(function (p) {
+    return esc(payLabel(p.method)) + (p.reference ? ' (' + esc(p.reference) + ')' : '') + ' ' + fmt(p.amount);
+  }).join(', '));
   printHtml('Receipt', new Date().toLocaleString('en-GB'),
     '<p style="margin:4px 0">' + extra.join(' · ') + '</p>' +
     tableHtml(['Item', 'Qty', 'Unit price', 'Line total'], rows) +
@@ -2744,7 +2874,9 @@ function openSaleDetail(saleId) {
     }).join('') + '</div>' +
     '<div class="section-title">Payments</div>' +
     '<div class="card">' + pays.map(function (p) {
-      return listRow(p.method.charAt(0).toUpperCase() + p.method.slice(1), p.reference || '', fmt(p.amount));
+      // listRow() escapes its name argument but not meta, and the reference is
+      // free text typed at the till (M-Pesa code, scheme/member note).
+      return listRow(payLabel(p.method), esc(p.reference || ''), fmt(p.amount));
     }).join('') + '<div class="list-row"><div class="name">Total</div><div class="name">' + fmt(s.total_amount) + '</div></div></div>' +
     (!s.voided && can('void') ? '<button class="btn danger" onclick="openVoidSale(\'' + saleId + '\')">Void entire sale</button>' : '');
 }
@@ -3136,7 +3268,7 @@ function drawLowStockReportBody() {
     kpi('Need reordering', rows.length, rows.length ? 't-red' : 't-neutral') +
     '</div>' +
     '<div class="card">' + (rows.length ? rows.map(function (n) {
-      return listRow(n.name, 'Have ' + n.current + ' ' + n.unit + ' · reorder level ' + n.reorderLevel, '<b>Order ' + n.suggested + '</b>');
+      return listRow(n.name, 'Have ' + n.current + ' ' + esc(n.unit) + ' · reorder level ' + n.reorderLevel, '<b>Order ' + n.suggested + '</b>');
     }).join('') : '<div class="empty">Nothing needs reordering right now.</div>') + '</div>';
 }
 

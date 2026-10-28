@@ -7,9 +7,16 @@
    deploy so returning users pick up the new app shell instead of an old
    cached copy. */
 
-const CACHE_NAME = 'hodhi-shell-v2e';
+const CACHE_NAME = 'hodhi-shell-v2f';
+// vendor-supabase.js and vendor-xlsx.js were missing from this list, so a
+// first-ever offline open failed outright: index.html came from the cache,
+// then <script src="vendor-supabase.js"> went to the network, got nothing,
+// and app.js died on `supabase.createClient` — the exact single point of
+// failure vendoring them was meant to remove. They only reached the cache
+// once the fetch handler below had seen them on a successful online load.
 const SHELL_FILES = [
-  './', './index.html', './style.css', './app.js', './config.js', './manifest.json'
+  './', './index.html', './style.css', './app.js', './config.js', './manifest.json',
+  './vendor-supabase.js', './vendor-xlsx.js'
 ];
 
 self.addEventListener('install', function (event) {
@@ -35,6 +42,41 @@ self.addEventListener('fetch', function (event) {
   // (or any cross-origin) API traffic — that data must always be live.
   if (event.request.method !== 'GET' || url.origin !== self.location.origin) return;
 
+  // Network-first for the app's own code and markup; cache-first for
+  // everything else (icons, fonts, the vendored libraries — none of which
+  // change without their filename changing).
+  //
+  // This was cache-first for everything, which meant a returning user kept
+  // running the OLD app.js and index.html out of the cache until someone
+  // remembered to bump CACHE_NAME by hand on deploy. Forget once and a fix
+  // shipped to Netlify simply never reaches the pharmacy that needs it —
+  // they would have had to clear site data to get it. Network-first keeps
+  // the offline guarantee (the cached copy is still served the moment the
+  // network fails) without making correctness depend on remembering a
+  // constant.
+  var isAppShell = event.request.mode === 'navigate' ||
+                   /\.(html|js|css)$/.test(url.pathname) ||
+                   url.pathname === '/' ||
+                   url.pathname.endsWith('/');
+  var isVendor = /vendor-[^/]*\.js$/.test(url.pathname);
+
+  if (isAppShell && !isVendor) {
+    event.respondWith(
+      fetch(event.request).then(function (resp) {
+        if (resp && resp.ok) {
+          var copy = resp.clone();
+          caches.open(CACHE_NAME).then(function (cache) { cache.put(event.request, copy); });
+        }
+        return resp;
+      }).catch(function () {
+        return caches.match(event.request).then(function (cached) {
+          return cached || caches.match('./index.html');
+        });
+      })
+    );
+    return;
+  }
+
   event.respondWith(
     caches.match(event.request).then(function (cached) {
       var network = fetch(event.request).then(function (resp) {
@@ -44,8 +86,6 @@ self.addEventListener('fetch', function (event) {
         }
         return resp;
       }).catch(function () { return cached; });
-      // Cache-first for instant loads, but still refresh the cache in the
-      // background so the next offline load has the latest shell.
       return cached || network;
     })
   );
