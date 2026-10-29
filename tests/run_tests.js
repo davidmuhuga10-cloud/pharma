@@ -759,6 +759,38 @@ async function main() {
     await assertThrows(c.query("select dashboard_data($1,'fortnight')", [pharmacyId]), 'an unknown range is still refused', 'an unknown range should be refused');
 
     // --------------------------------------------------------------
+    console.log('\n== Sales report: the database adds up the period, the list comes a page at a time ==');
+    await asUser(c, ownerId);
+    const dRep = await addDrug('Report Drug', 1000, 60, 100);
+    const repIds = [];
+    for (let i = 0; i < 5; i++) {
+      const method = i === 4 ? 'mpesa' : 'cash';
+      const r = await c.query("select record_sale($1,$2::jsonb,$3::jsonb) as id", [pharmacyId, J([{ drug_id: dRep.id, quantity: i + 1 }]), J([{ method, amount: (i + 1) * 100 }])]);
+      repIds.push(r.rows[0].id);
+    }
+    // park them in a quiet window (January 2020) so earlier tests cannot affect the numbers
+    for (let i = 0; i < repIds.length; i++) {
+      await c.query("update sales set sold_at = $2::timestamptz where id = $1 returning id", [repIds[i], '2020-01-1' + i + 'T09:00:00+03:00']);
+    }
+    await c.query("select void_sale($1,$2,'test void')", [pharmacyId, repIds[3]]);   // 400 voided
+    const rep = (await c.query("select sales_report($1,'2020-01-01T00:00:00+03:00','2020-02-01T00:00:00+03:00') as r", [pharmacyId])).rows[0].r;
+    assert(Number(rep.total) === 100 + 200 + 300 + 500, 'total adds the sales and leaves out the voided one (got ' + rep.total + ')');
+    assert(Number(rep.count) === 5, 'the transaction count includes the voided sale');
+    assert(Number(rep.by_method.cash) === 600 && Number(rep.by_method.mpesa) === 500, 'by-method totals skip the voided sale');
+    assert(rep.top_drugs.length === 1 && rep.top_drugs[0].name === 'Report Drug' && Number(rep.top_drugs[0].qty) === 1 + 2 + 3 + 5, 'top drugs count units from non-voided sales only');
+    const pg1 = (await c.query("select sales_report_page($1,'2020-01-01T00:00:00+03:00','2020-02-01T00:00:00+03:00',2,0) as r", [pharmacyId])).rows[0].r;
+    const pg3 = (await c.query("select sales_report_page($1,'2020-01-01T00:00:00+03:00','2020-02-01T00:00:00+03:00',2,4) as r", [pharmacyId])).rows[0].r;
+    assert(pg1.length === 2 && pg1[0].id === repIds[4] && pg1[1].id === repIds[3], 'page 1 is the 2 newest sales, newest first');
+    assert(pg3.length === 1 && pg3[0].id === repIds[0], 'the last page holds the remaining oldest sale');
+    assert(pg1[0].payments.length === 1 && pg1[0].payments[0].method === 'mpesa' && pg1[1].voided === true, 'each sale carries its payment lines and its voided flag');
+    const emptyRep = (await c.query("select sales_report($1,'2019-01-01T00:00:00+03:00','2019-02-01T00:00:00+03:00') as r", [pharmacyId])).rows[0].r;
+    assert(Number(emptyRep.total) === 0 && Number(emptyRep.count) === 0 && emptyRep.top_drugs.length === 0, 'an empty period returns zeros, not an error');
+    const openRep = (await c.query("select sales_report($1,'2020-01-01T00:00:00+03:00') as r", [pharmacyId])).rows[0].r;
+    assert(Number(openRep.count) >= 5, 'leaving the end date out means "from the start date onward"');
+    const hugeRep = (await c.query("select sales_report_page($1,'2020-01-01T00:00:00+03:00','2020-02-01T00:00:00+03:00',999999,0) as r", [pharmacyId])).rows[0].r;
+    assert(hugeRep.length === 5, 'a huge page size is capped but still works');
+
+    // --------------------------------------------------------------
     console.log('\n== Privilege escalation: a staff member cannot promote themselves ==');
     await asUser(c, staffId);
     await assertThrows(

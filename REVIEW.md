@@ -241,3 +241,53 @@ actually exercised.
   `platform_admins`, `sign_in_log`, `phone_otps`, `sms_platform_config` and
   `password_reset_attempts` are server-only by design (RLS on, zero policies).
   No action needed.
+
+---
+
+# Scalability review - 29 Oct 2026
+
+The 28 Oct review above was about correctness and security. This one is about
+speed and staying fast as the data grows. Findings, and what was done.
+
+## Fixed
+
+1. **Sales report failed at a few hundred sales and downloaded megabytes.**
+   `loadReport` fetched every sale, then `sale_items` and `sales_payments`
+   with `.in('sale_id', [every id])` (the ids go in the web address, which has
+   a length limit), and summed them with nested `.find()` loops (quadratic).
+   Now `sales_report()` totals in the database and `sales_report_page()`
+   returns 20 at a time; items load only when a sale is opened.
+2. **Suppliers list downloaded every delivery and payment** to compute
+   balances. Now `supplier_balances()`.
+3. **Expenses downloaded all history**; now this year only. (Also fixed a
+   one-day-early date comparison caused by `toISOString()` in Nairobi.)
+4. **Sell drew every product** on every redraw; now capped at 100 with search.
+5. **Checkout reloaded every customer's balance before every sale**; now
+   reused for a minute and refreshed after each sale.
+6. **The 880 KB Excel library** was pre-cached on install and always warmed;
+   now neither, except quietly on good connections.
+7. **Missing indexes** on tables filtered by pharmacy (sales payments,
+   returns, insurance claims, held sales, suppliers, staff invites) and for
+   the oldest-expiry batch lookup. The tables that matter most (sales,
+   sale items, batches, stock adjustments, expenses, customers) already had
+   a leading `pharmacy_id` index.
+8. **One 5,700-line `app.js`** (352 functions, about 95 globals, one file to
+   merge-conflict in) is now 17 files in `js/`, byte-identical code.
+
+## Not changed - worth a decision
+
+- **Old rows grow forever** in `stock_adjustments`, `sign_in_log` and
+  `sms_log`. Fine for years at one pharmacy, but decide a retention window
+  (e.g. keep 2 years, archive the rest) before there are many pharmacies.
+  The nightly cleanup (`daily_housekeeping`) is the place to add it.
+- **Platform admin portal** (`admin_overview`, `admin_pharmacy_stats`) scans
+  every pharmacy's rows on each open. Fine at tens of pharmacies; rewrite as
+  per-pharmacy rollups before hundreds.
+- **Bulk import** (`runImport`) makes one request per row. A batched database
+  function would make a 2,000-row sheet take seconds instead of minutes. Not
+  changed because it touches stock and needs its own tests.
+- **Drug detail** lists every batch including empty ones; harmless until a
+  drug has hundreds of restocks.
+- **`my_pharmacy_id()` / `my_role()` must stay `stable`** (they run inside
+  every row-level-security check); do not inline them or mark them volatile.
+

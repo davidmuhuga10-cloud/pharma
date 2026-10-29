@@ -2,6 +2,19 @@
 
 Newest first. The detailed story for each item is in `PHARMA_PROJECT_STATUS.md`.
 
+## 2026-10-29 (third batch): scalability review - speed, database, code layout
+
+A full review of how the app behaves as a pharmacy grows (more sales, more drugs, more staff). Correctness and security were covered in the 28 Oct review; this one is about speed and staying fast.
+
+- **Reports no longer break on a busy month.** The Sales report used to download every sale, every item and every payment of the period and add them up in the browser, passing hundreds of sale ids in the web address. Past a few hundred sales the request was too long and the report simply failed (and a month of sales was megabytes). The database now does the adding up (`sales_report()`), and the list of sales arrives 20 at a time (`sales_report_page()`) with "Load more". The items of a sale are fetched only when it is opened. Print and Excel fetch the whole list in blocks of 1,000 when tapped. Several quick taps on Today / Week / Month can no longer show an older answer over a newer one.
+- **Suppliers list** asks the database for each supplier's balance (`supplier_balances()`) instead of downloading every delivery and payment ever recorded, and loads the two things at the same time.
+- **Expenses** loads only this year (the widest range on the screen). Also fixed: the Month/Week/Today filter compared against the previous day's date in Nairobi (it used UTC), so the last day of the previous month could be included.
+- **Sell:** at most 100 products are drawn at once (typing finds the rest), so a pharmacy with thousands of products does not slow down each tap. Checkout reuses the customer list loaded in the last minute instead of reloading every customer's balance before every sale; it is refreshed after each sale.
+- **Excel library (880 KB):** no longer downloaded on install, and not at all in the background on Data Saver or a 2G/3G connection (it loads when someone taps Excel). Everywhere else it still loads quietly after the first screen.
+- **Database indexes** for the tables that had none starting with the pharmacy (sales payments, returns, insurance claims, held sales, suppliers, staff invites), plus a faster lookup of the oldest-expiry batch when selling and of sales by drug. All added with `if not exists`, no data touched. Migration `2026-10-29_d_scalability.sql` (run it in Supabase **before** deploying the app).
+- **The app's code is split into smaller files.** `app.js` (5,700 lines) is now 17 files in `js/` (one per area: sell, reports, suppliers, customers...), loaded in order by `index.html`. The split is byte-for-byte the same code (checked), so nothing behaves differently. New `tests/js-split.test.js` keeps the load order, the offline cache list and the single `init()` call correct. The old `app.js` is deleted.
+- Service worker cache is now `hodhi-shell-v2o`. SQL tests: 183 (was 173).
+
 ## 2026-10-29 (second batch): credit, SMS, controlled drugs, stock take
 
 - **Customers and credit (kopa):** new Customers screen (Customers, Refills, Messages tabs). People can buy on credit: Checkout has a **Credit** payment method (also as part of a split with cash), needs a saved customer (or "+ New customer" on the spot), and stops a sale that would take them over their credit limit. Each customer has a balance, a statement (print), payments (cash, M-Pesa, bank) and reversals (owner or pharmacist, with a reason). A return on a credit sale lowers the debt by the credit that sale carried, never more. Voiding a credit sale removes it from the debt. Sellers can add customers and take payments; only the owner or a pharmacist sets credit limits. The accountant can view, not change.

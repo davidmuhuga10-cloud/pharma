@@ -7,7 +7,9 @@
 // Backgrounds, borders and shadows may stay neutral; only text is policed.
 const fs = require('fs'), path = require('path');
 const ROOT = path.join(__dirname, '..');
-const FILES = ['style.css', 'admin.css', 'app.js', 'admin.js', 'index.html', 'admin.html', 'nativeShell.js', 'www/index.html', 'www/error.html'];
+const FILES = ['style.css', 'admin.css', 'admin.js', 'index.html', 'admin.html', 'nativeShell.js', 'www/index.html', 'www/error.html'];
+// The app's code lives in js/ (split out of the old app.js)
+fs.readdirSync(path.join(ROOT, 'js')).filter(f => f.endsWith('.js')).forEach(f => FILES.push('js/' + f));
 const RETIRED = [{ hex: '8a837c', rgb: /138\s*,\s*131\s*,\s*124/ }, { hex: '6b6560', rgb: /107\s*,\s*101\s*,\s*96/ }];
 
 function toRgb(v) {

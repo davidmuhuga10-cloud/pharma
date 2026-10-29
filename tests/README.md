@@ -131,3 +131,7 @@ Neither needs a database or a phone. From the project folder run `node tests/and
 - `native-shell.test.js` runs `nativeShell.js` in a fake browser. In a normal browser it must change nothing. Inside the app it must set the layout so the top bar sits under the status bar, send printing to the Android print service, set the status bar colour, hide the splash, and route the back button (close a sheet, then the menu, then go Home, then minimise).
 
 These do not build the app. The build is checked by opening `android/` in Android Studio (see `android/ANDROID_APP.md`).
+
+## Other checks (no database needed)
+
+`node tests/js-split.test.js` (from the project folder) checks that every file in `js/` is loaded by `index.html` in order with `main.js` last, is in the offline cache list in `sw.js`, and that `init()` is called exactly once.

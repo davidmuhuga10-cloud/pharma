@@ -42,22 +42,21 @@ var STATE = {
 // policy requiring a matching profiles row via my_pharmacy_id()/my_role().
 // ---------------------------------------------------------------------------
 var PHARMACIST_ACTIONS = ['sell', 'view_dashboard', 'view_inventory', 'view_reports', 'print', 'export',
-  'edit_inventory', 'restock', 'write_off', 'correct_stock', 'return', 'void', 'discount', 'claims', 'suppliers', 'expenses',
-  'customers', 'sms', 'credit_limit', 'controlled', 'view_controlled', 'stock_take', 'approve_stock_take'];
-var ATTENDANT_ACTIONS = ['sell', 'view_dashboard', 'view_inventory', 'view_reports', 'print', 'export', 'customers'];
+  'edit_inventory', 'restock', 'write_off', 'correct_stock', 'return', 'void', 'discount', 'claims', 'suppliers', 'expenses'];
+var ATTENDANT_ACTIONS = ['sell', 'view_dashboard', 'view_inventory', 'view_reports', 'print', 'export'];
 // Friendly labels for the 6 fixed roles — used anywhere a role is shown to
 // a person (staff list, invite picker, "signed in as", account-expired
 // messaging), so the raw enum value (e.g. 'stock_taker') is never printed.
 var ROLE_LABELS = { owner: 'Owner', co_owner: 'Co-owner', pharmacist: 'Pharmacist', stock_taker: 'Stock taker', attendant: 'Seller', accountant: 'Accountant' };
 function roleLabel(r) { return ROLE_LABELS[r] || r; }
 
-var STOCK_TAKER_ACTIONS = ['view_dashboard', 'view_inventory', 'view_reports', 'print', 'export', 'restock', 'correct_stock', 'stock_take', 'view_controlled'];
+var STOCK_TAKER_ACTIONS = ['view_dashboard', 'view_inventory', 'view_reports', 'print', 'export', 'restock', 'correct_stock'];
 // 'view_suppliers'/'view_expenses' (read-only) are deliberately distinct
 // from 'suppliers'/'expenses' (full read+write, see PHARMACIST_ACTIONS) —
 // an accountant should see the Suppliers/Expenses tabs and every figure on
 // them, but never the write actions (new supplier, new LPO, record
 // payment, new expense, reverse expense) that live on those same screens.
-var ACCOUNTANT_ACTIONS = ['view_dashboard', 'view_reports', 'print', 'export', 'claims', 'view_suppliers', 'view_expenses', 'view_customers', 'view_controlled'];
+var ACCOUNTANT_ACTIONS = ['view_dashboard', 'view_reports', 'print', 'export', 'claims', 'view_suppliers', 'view_expenses'];
 
 function can(action) {
   if (!STATE.profile) return false;
@@ -78,7 +77,7 @@ var STRINGS = {
   en: {
     home: 'Home', stock: 'Stock', sell: 'Sell', reports: 'Reports', settings: 'Settings',
     dashboard: 'Dashboard', stockValue: 'Stock value (retail)', salesToday: 'Sales today',
-    salesWeek: 'Sales, last 7 days', salesMonth: 'Sales this month', needsAttention: 'Needs attention',
+    salesWeek: 'Sales this week', salesMonth: 'Sales this month', needsAttention: 'Needs attention',
     outOfStock: 'Out of stock', lowStock: 'Low stock', expiringSoon: 'Expiring soon',
     logOut: 'Log out', addDrug: '+ Add new drug', checkout: 'Checkout', total: 'Total',
     suppliers: 'Suppliers', expenses: 'Expenses'
@@ -86,7 +85,7 @@ var STRINGS = {
   sw: {
     home: 'Nyumbani', stock: 'Bidhaa', sell: 'Uza', reports: 'Ripoti', settings: 'Mipangilio',
     dashboard: 'Dashibodi', stockValue: 'Thamani ya bidhaa (rejareja)', salesToday: 'Mauzo leo',
-    salesWeek: 'Mauzo siku 7 zilizopita', salesMonth: 'Mauzo mwezi huu', needsAttention: 'Yanayohitaji uangalizi',
+    salesWeek: 'Mauzo wiki hii', salesMonth: 'Mauzo mwezi huu', needsAttention: 'Yanayohitaji uangalizi',
     outOfStock: 'Bidhaa zilizoisha', lowStock: 'Bidhaa chache', expiringSoon: 'Zinakaribia kuisha muda',
     logOut: 'Toka', addDrug: '+ Ongeza dawa mpya', checkout: 'Lipa', total: 'Jumla',
     suppliers: 'Wasambazaji', expenses: 'Matumizi'
@@ -123,7 +122,6 @@ var ICONS = {
   box: '<rect x="4" y="8" width="16" height="12" rx="2"/><path d="M8 8V6.5a4 4 0 0 1 8 0V8"/>',
   truck: '<rect x="2.5" y="7" width="11" height="9" rx="1"/><path d="M13.5 10h4l3 3v3h-7z"/><circle cx="7" cy="18.5" r="1.6"/><circle cx="16.5" cy="18.5" r="1.6"/>',
   wallet: '<path d="M3 7a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v1H5a2 2 0 0 0-2 2Z"/><path d="M3 8v10a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2H5a2 2 0 0 1-2-2Z"/><circle cx="16" cy="14.5" r="1.4"/>',
-  people: '<circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17" cy="9" r="2.4"/><path d="M16.5 14.2c2.6.2 4.5 2.4 4.5 5.3"/>',
   // Item 33 (mobile dashboard redesign): the date-range calendar-picker button.
   calendar: '<rect x="3.5" y="5" width="17" height="15" rx="2"/><line x1="3.5" y1="9.5" x2="20.5" y2="9.5"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/>'
 };
@@ -154,34 +152,6 @@ function $(sel, ctx) { return (ctx || document).querySelector(sel); }
 function redrawKeepingFocus(container, html) {
   var active = document.activeElement;
   var activeId = (active && container.contains(active) && active.id) ? active.id : null;
-  // A text box that is being typed in is KEPT as the very same element while
-  // everything around it is replaced. Rebuilding it on every key press makes
-  // phone keyboards (Gboard and others) lose the word being typed, and
-  // sometimes the keyboard itself; keeping the element avoids all of that.
-  if (activeId && active.tagName === 'INPUT' && /^(text|search|tel|email|url)$/i.test(active.type || 'text')) {
-    var tmp = document.createElement('div');
-    tmp.innerHTML = html;
-    var twin = null, all = tmp.getElementsByTagName('input');
-    for (var k = 0; k < all.length; k++) { if (all[k].id === activeId) { twin = all[k]; break; } }
-    if (twin) {
-      var oldNode = active, newNode = twin;
-      while (oldNode !== container && newNode !== tmp) {
-        var oldParent = oldNode.parentNode, newParent = newNode.parentNode;
-        while (oldNode.previousSibling) oldParent.removeChild(oldNode.previousSibling);
-        while (oldNode.nextSibling) oldParent.removeChild(oldNode.nextSibling);
-        var seenSelf = false, before = [], after = [];
-        for (var c = newParent.firstChild; c; c = c.nextSibling) {
-          if (c === newNode) { seenSelf = true; continue; }
-          (seenSelf ? after : before).push(c);
-        }
-        before.forEach(function (n) { oldParent.insertBefore(n, oldNode); });
-        after.forEach(function (n) { oldParent.appendChild(n); });
-        if (oldParent !== container) syncAttributes(oldParent, newParent);
-        oldNode = oldParent; newNode = newParent;
-      }
-      return;
-    }
-  }
   var selStart = null, selEnd = null;
   if (activeId && typeof active.selectionStart === 'number') { selStart = active.selectionStart; selEnd = active.selectionEnd; }
   container.innerHTML = html;
@@ -191,48 +161,14 @@ function redrawKeepingFocus(container, html) {
       el.focus();
       if (selStart !== null && el.setSelectionRange) {
         try { el.setSelectionRange(selStart, selEnd); } catch (e) {}
-      } else if (el.type === 'number' && el.value !== '') {
-        // Number boxes do not report a cursor position, and a freshly built
-        // one starts with the cursor at the front, so typing 100 came out as
-        // "001". Put the cursor at the end (the way amounts are typed) by
-        // briefly treating the box as text.
-        try { el.type = 'text'; el.setSelectionRange(el.value.length, el.value.length); el.type = 'number'; } catch (e) {}
       }
     }
   }
 }
-function syncAttributes(to, from) {
-  Array.prototype.slice.call(to.attributes).forEach(function (a) { if (!from.hasAttribute(a.name)) to.removeAttribute(a.name); });
-  Array.prototype.slice.call(from.attributes).forEach(function (a) { if (to.getAttribute(a.name) !== a.value) to.setAttribute(a.name, a.value); });
-}
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
   return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
 }); }
-// Whole shillings for the ordinary case (that is how a Kenyan pharmacy prices,
-// and how a till reads), but never round a fractional amount away: this used
-// to hard-round everything, so a checkout 40 cents short displayed "Balance
-// KES 0" in red while Confirm stayed disabled with no visible reason. Prices
-// and markdowns are stored to 2dp, so cents really do occur.
-function fmt(n) {
-  var v = Number(n) || 0;
-  var whole = Math.abs(v - Math.round(v)) < 0.005;
-  return 'KES ' + (whole
-    ? Math.round(v).toLocaleString()
-    : v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
-}
-// "1 tablet" / "232 tablets" / "0 units" — the unit is stored singular
-// (tablet, bottle, sachet…). Short/abbreviated units (ml, mg, pcs) are left
-// as typed, since "mls" or "pcses" would read worse than no plural at all.
-function qtyUnit(n, unit) {
-  var u = String(unit || 'unit');
-  var q = Number(n) || 0;
-  if (q === 1 || u.length < 3 || !/^[a-z]+$/i.test(u) || /^(mcg|pcs|iu)$/i.test(u)) return q.toLocaleString() + ' ' + u;
-  if (/(s|x|ch|sh)$/i.test(u)) return q.toLocaleString() + ' ' + u + 'es';
-  if (/[^aeiou]y$/i.test(u)) return q.toLocaleString() + ' ' + u.slice(0, -1) + 'ies';
-  return q.toLocaleString() + ' ' + u + 's';
-}
-var PAY_LABEL = { credit: 'Credit (kopa)', cash: 'Cash', mpesa: 'M-Pesa', insurance: 'Insurance', bank: 'Bank', cheque: 'Cheque', other: 'Other', split: 'Split' };
-function payLabel(m) { return PAY_LABEL[m] || (m ? m.charAt(0).toUpperCase() + m.slice(1) : ''); }
+function fmt(n) { return 'KES ' + (Math.round((Number(n) || 0)) ).toLocaleString(); }
 function fmtDate(iso) {
   if (!iso) return '—';
   var d = new Date(iso + (String(iso).length <= 10 ? 'T00:00:00' : ''));
@@ -261,42 +197,6 @@ function sheet(title, bodyHtml) {
   document.body.appendChild(mask);
   return $('#sheetBody');
 }
-// ---------------------------------------------------------------------------
-// In-app pop-ups. These replace the browser's own confirm()/prompt() boxes,
-// which print the website's address ("<site> says…") and cannot be styled.
-// askConfirm resolves true/false, askText resolves the text (or null when
-// cancelled). The phone's Back button cancels them (nativeShell.js).
-// ---------------------------------------------------------------------------
-function closeDialog() { var d = document.querySelector('.dlg-mask'); if (d && d._cancel) d._cancel(); else if (d) d.remove(); }
-function askDialog(o) {
-  return new Promise(function (resolve) {
-    var old = document.querySelector('.dlg-mask'); if (old) old.remove();
-    var m = document.createElement('div');
-    m.className = 'dlg-mask';
-    m.innerHTML =
-      '<div class="dlg" role="dialog" aria-modal="true">' +
-      '<h3 class="dlg-title">' + esc(o.title || 'Please confirm') + '</h3>' +
-      (o.message ? '<p class="dlg-msg">' + esc(o.message) + '</p>' : '') +
-      (o.input ? '<input class="dlg-input" id="dlgInput" maxlength="' + (o.maxlength || 60) + '" placeholder="' + esc(o.placeholder || '') + '" autocomplete="off">' : '') +
-      '<div class="dlg-actions">' +
-      '<button class="btn secondary" id="dlgNo">' + esc(o.cancelLabel || 'Cancel') + '</button>' +
-      '<button class="btn ' + (o.danger ? 'danger' : 'primary') + '" id="dlgYes">' + esc(o.okLabel || 'OK') + '</button>' +
-      '</div></div>';
-    var done = false;
-    function finish(v) { if (done) return; done = true; m.remove(); resolve(v); }
-    m._cancel = function () { finish(o.input ? null : false); };
-    m.addEventListener('click', function (e) { if (e.target === m) m._cancel(); });
-    document.body.appendChild(m);
-    var inp = m.querySelector('#dlgInput');
-    m.querySelector('#dlgNo').onclick = m._cancel;
-    m.querySelector('#dlgYes').onclick = function () { finish(o.input ? inp.value.trim() : true); };
-    if (inp) { inp.onkeydown = function (e) { if (e.key === 'Enter') m.querySelector('#dlgYes').click(); }; setTimeout(function () { inp.focus(); }, 30); }
-    else setTimeout(function () { var y = m.querySelector('#dlgYes'); if (y) y.focus(); }, 30);
-  });
-}
-function askConfirm(title, message, okLabel, danger) { return askDialog({ title: title, message: message, okLabel: okLabel, danger: danger }); }
-function askText(title, message, placeholder, okLabel) { return askDialog({ title: title, message: message, input: true, placeholder: placeholder, okLabel: okLabel }); }
-
 // Bug fix (system-wide): this already disabled the button on click, but
 // never changed what it SHOWED — a busy button looked identical to a live
 // one (same label, same near-full opacity), so an impatient tap while a
@@ -318,22 +218,9 @@ function act(btn, fn) {
 
 // Turns a raw network/Supabase error into something a pharmacist can act on,
 // instead of a stack trace or "Failed to fetch".
-// Anything a person sees goes through here. Our own messages (written in plain
-// words inside the database functions) pass through unchanged; anything that
-// looks technical, or names the services behind the app, becomes a plain
-// sentence. Nobody should ever see a provider's name or a code.
 function friendlyError(e) {
   var msg = (e && e.message) || String(e || '');
-  if (/failed to fetch|network|load failed|networkerror|err_internet|offline/i.test(msg)) return 'No internet connection — check your connection and try again.';
-  if (/jwt|refresh token|session (has )?expired|not authenticated|auth session missing|invalid token/i.test(msg)) return 'Your session has ended. Please log in again.';
-  if (/user already registered|already been registered|already exists.*user/i.test(msg)) return 'That phone number already has an account. Please log in instead.';
-  if (/password should be|weak password|at least \d+ characters/i.test(msg)) return 'Use a stronger password (at least 8 characters).';
-  if (/rate limit|too many requests|over_.*_rate/i.test(msg)) return 'Too many tries. Please wait a minute and try again.';
-  if (/row-level security|permission denied|not allowed|violates row/i.test(msg)) return 'You do not have permission to do that.';
-  if (/duplicate key|unique constraint|already exists/i.test(msg)) return 'That already exists. Check the name or number and try again.';
-  if (/foreign key|violates|is still referenced/i.test(msg)) return 'This is linked to other records, so it cannot be changed this way.';
-  if (/timeout|timed out|statement timeout|aborted/i.test(msg)) return 'That took too long. Please try again.';
-  if (/supabase|netlify|postgres|postgrest|pgrst|sqlstate|schema cache|edge function|functionshttp|functionsrelay|non-2xx|relation .* does not exist|column .* does not exist|function .* does not exist|syntax error|typeerror|referenceerror|is not a function|is not defined|cannot read|undefined|unexpected token|<html|\bhttp \d{3}|\b50\d\b/i.test(msg)) return 'Something went wrong on our side. Please try again in a moment.';
+  if (/failed to fetch|network|load failed/i.test(msg)) return 'No internet connection — check your connection and try again.';
   return msg || 'Something went wrong.';
 }
 
@@ -348,98 +235,15 @@ function errorCard(container, message, retryFn) {
 }
 
 // ---------------------------------------------------------------------------
-// LOADING SCREEN & LAZY EXCEL LIBRARY
-// ---------------------------------------------------------------------------
-
-// The branded loading screen. index.html carries this exact markup, drawn
-// before any script has downloaded; this copy is for the moments after
-// (e.g. straight after pressing Log in). Keep the two identical — their
-// styles are the "critical" block at the end of style.css.
-function loadScreenHtml() {
-  return '<div class="loadscreen" role="status" aria-label="Opening Pharma"><div class="loadscreen-mark"><svg viewBox="0 0 48 48" aria-hidden="true"><polygon points="18,6 30,6 30,18 42,18 42,30 30,30 30,42 18,42 18,30 6,30 6,18 18,18" fill="#fff" stroke="#fff" stroke-width="6" stroke-linejoin="round"/></svg></div><p class="loadscreen-word">Pharma</p><svg class="loadscreen-ecg" viewBox="0 0 200 34" fill="none" stroke="#E7C76A" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M0 18h54l8-14 10 28 10-20 6 6h112"/></svg><p class="loadscreen-tag">Know your stock</p></div>';
-}
-
-// vendor-xlsx.js is 880 KB and only Excel export/import need it, so it is
-// not loaded with the page. warmXlsx() fetches it quietly a few seconds after
-// the first screen is up (so it is normally ready before anyone taps Export);
-// withXlsx() runs a callback once it is there, loading it first if needed.
-var xlsxLoading = null;
-function loadXlsx() {
-  if (window.XLSX) return Promise.resolve();
-  if (!xlsxLoading) {
-    xlsxLoading = new Promise(function (resolve, reject) {
-      var s = document.createElement('script');
-      s.src = 'vendor-xlsx.js';
-      s.onload = function () { resolve(); };
-      s.onerror = function () { xlsxLoading = null; reject(new Error('Could not load the Excel tools — check your internet connection and try again.')); };
-      document.head.appendChild(s);
-    });
-  }
-  return xlsxLoading;
-}
-function warmXlsx() {
-  var go = function () { loadXlsx().catch(function () {}); };
-  if (window.requestIdleCallback) window.requestIdleCallback(go, { timeout: 8000 });
-  else setTimeout(go, 4000);
-}
-
-// ---------------------------------------------------------------------------
 // BOOTSTRAP
 // ---------------------------------------------------------------------------
-
-// What the app needs to draw its frame (who you are, which pharmacy, the
-// category and supplier lists) is remembered on this device after every
-// successful load. On the next start the frame appears at once from that copy
-// and the real data is re-checked in the background (refreshProfileInBackground)
-// — instead of the person waiting through four round trips to the database
-// first. This copy only decides what is DRAWN; the database still enforces
-// every permission, and a changed or switched-off account is picked up by the
-// background check within a second or two.
-var PROFILE_CACHE_KEY = 'hodhi_profile_cache_v1';
-function saveProfileCache() {
-  try {
-    localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify({
-      uid: STATE.session.user.id, profile: STATE.profile, pharmacy: STATE.pharmacy,
-      cats: STATE.categoriesCache, sups: STATE.suppliersCache
-    }));
-  } catch (e) {}
-}
-function readProfileCache(uid) {
-  try {
-    var c = JSON.parse(localStorage.getItem(PROFILE_CACHE_KEY) || 'null');
-    return (c && c.uid === uid && c.profile && c.pharmacy) ? c : null;
-  } catch (e) { return null; }
-}
-function clearProfileCache() { try { localStorage.removeItem(PROFILE_CACHE_KEY); } catch (e) {} }
-function profileSig() { return JSON.stringify([STATE.profile, STATE.pharmacy]); }
-
-async function refreshProfileInBackground(sigBefore) {
-  try {
-    await loadProfileAndPharmacy();
-    // Account switched off, expired or removed: show the sign-in screen with its message.
-    if (!STATE.profile) { render(); return; }
-    // Only redraw if something the frame shows actually changed.
-    if (profileSig() !== sigBefore) render();
-  } catch (e) { /* offline or a hiccup: keep working from the saved copy */ }
-}
 
 async function init() {
   try {
     var { data } = await sb.auth.getSession();
     STATE.session = data.session;
-    var cached = STATE.session ? readProfileCache(STATE.session.user.id) : null;
-    if (cached) {
-      STATE.profile = cached.profile; STATE.pharmacy = cached.pharmacy;
-      STATE.categoriesCache = cached.cats || []; STATE.suppliersCache = cached.sups || [];
-      var sig = profileSig();
-      render();
-      warmXlsx();
-      refreshProfileInBackground(sig);
-      return finishInit();
-    }
     if (STATE.session) await loadProfileAndPharmacy();
     render();
-    if (STATE.profile) warmXlsx();
   } catch (e) {
     $('#app').innerHTML =
       '<div class="auth-wrap-simple"><div class="auth-card">' + logoMarkHtml(44) + '<div class="mark">Pharma</div>' +
@@ -447,23 +251,10 @@ async function init() {
       '<button class="btn primary" onclick="location.reload()">Reload</button></div></div></div></div>';
     return;
   }
-  finishInit();
-}
-
-function finishInit() {
-  sb.auth.onAuthStateChange(async function (evt, session) {
+  sb.auth.onAuthStateChange(function (evt, session) {
     STATE.session = session;
     if (evt === 'PASSWORD_RECOVERY') { STATE.recoveryMode = true; render(); return; }
-    if (!session) { STATE.profile = null; STATE.pharmacy = null; clearProfileCache(); clearDashCache(); render(); return; }
-    // A session arriving that this tab didn't create — signed in on another
-    // tab, or a session restored after this one was opened — used to update
-    // STATE.session and nothing else, leaving the tab on the login screen with
-    // a perfectly good session behind it. doLogin/doSignup/doJoin load the
-    // profile themselves, so only handle the case where we don't have one.
-    if (evt === 'SIGNED_IN' && !STATE.profile) {
-      try { await loadProfileAndPharmacy(); } catch (e) { return; }
-      render();
-    }
+    if (!session) { STATE.profile = null; STATE.pharmacy = null; render(); }
   });
 }
 
@@ -523,10 +314,7 @@ async function finishPendingSignupIfAny() {
 async function loadProfileAndPharmacy() {
   var uid = STATE.session.user.id;
   var { data: profile, error } = await sb.from('profiles').select('*').eq('id', uid).maybeSingle();
-  // A failed request (offline, server hiccup) is not "no profile": throwing lets
-  // callers keep what they have instead of treating the account as unlinked.
-  if (error) throw error;
-  if (!profile) {
+  if (error || !profile) {
     // No profile yet — if this is a returning-after-email-confirmation
     // session with a pending signup queued on this device, finish it now.
     if (await finishPendingSignupIfAny()) {
@@ -537,11 +325,9 @@ async function loadProfileAndPharmacy() {
   if (!profile) {
     STATE.profile = null;
     STATE.noPharmacyYet = true;
-    clearProfileCache();
     return;
   }
   if (profile.active === false) {
-    clearProfileCache();
     STATE.profile = null;
     STATE.disabledMessage = 'Your access to this pharmacy has been switched off by the owner. Ask them to reactivate your account.';
     return;
@@ -553,24 +339,17 @@ async function loadProfileAndPharmacy() {
   // pharmacy" policy) precisely so this specific message can be shown
   // instead of a generic/blank one.
   if (profile.account_expires_at && new Date(profile.account_expires_at) <= new Date()) {
-    clearProfileCache();
     STATE.profile = null;
     STATE.disabledMessage = 'Your temporary access has expired. Ask the pharmacy owner for a new code.';
     return;
   }
-  // The pharmacy, categories and suppliers don't depend on each other, so ask
-  // for all three at once (one round trip instead of three in a row).
-  var rest = await Promise.all([
-    sb.from('pharmacies').select('*').eq('id', profile.pharmacy_id).maybeSingle(),
-    sb.from('drug_categories').select('*').eq('pharmacy_id', profile.pharmacy_id).order('name'),
-    sb.from('suppliers').select('*').eq('pharmacy_id', profile.pharmacy_id).order('name')
-  ]);
-  if (rest[0].error) throw rest[0].error;
   STATE.profile = profile;
-  STATE.pharmacy = rest[0].data;
-  STATE.categoriesCache = rest[1].data || [];
-  STATE.suppliersCache = rest[2].data || [];
-  saveProfileCache();
+  var { data: pharmacy } = await sb.from('pharmacies').select('*').eq('id', profile.pharmacy_id).maybeSingle();
+  STATE.pharmacy = pharmacy;
+  var { data: cats } = await sb.from('drug_categories').select('*').eq('pharmacy_id', profile.pharmacy_id).order('name');
+  STATE.categoriesCache = cats || [];
+  var { data: sups } = await sb.from('suppliers').select('*').eq('pharmacy_id', profile.pharmacy_id).order('name');
+  STATE.suppliersCache = sups || [];
 }
 
 function render() {
@@ -585,186 +364,13 @@ function render() {
     return;
   }
   app.innerHTML =
-    '<div class="topbar">' +
-    '<div class="topbar-left">' +
-    // Phone only (hidden at 860px+, where the sidebar already lists every
-    // destination). Opens the menu drawer — see navDrawerHtml/wireNavDrawer.
-    '<button class="burgerbtn" id="btnNavMenu" title="Menu" aria-label="Open menu">' +
-      '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" ' +
-      'stroke-width="2" stroke-linecap="round"><line x1="4" y1="7" x2="20" y2="7"></line>' +
-      '<line x1="4" y1="12" x2="20" y2="12"></line><line x1="4" y1="17" x2="20" y2="17"></line></svg></button>' +
-    '<div class="topbar-id">' + logoMarkHtml(30) + '<div><div class="brand">Pharma</div>' +
+    '<div class="topbar"><div class="topbar-id">' + logoMarkHtml(30) + '<div><div class="brand">Pharma</div>' +
     '<div class="sub">' + esc(STATE.pharmacy ? STATE.pharmacy.name : '') + '</div></div></div>' +
-    '</div>' +
     '<button onclick="logout()">Log out</button></div>' +
     '<div class="content" id="content"></div>' +
     navBar() +
-    navDrawerHtml();
-  wireNavDrawer();
-  return renderTab();
-}
-
-// ---------------------------------------------------------------------------
-// MENU DRAWER (phone only) — ported from Kodi's own drawer, see the matching
-// block in style.css for the geometry and why it exists. The bottom bar can
-// carry about five thumb-sized targets; this is where everything else lives,
-// including the five Reports sub-screens, which previously took two taps
-// (Reports, then the tile) from anywhere in the app.
-//
-// Rows are either a tab (`tab`), a Reports sub-view (`report`), or a grouping
-// label (`grp`). Every row is permission-gated with the same can() checks the
-// bottom bar and the screens themselves use, so the drawer can never offer an
-// action the database would refuse.
-// ---------------------------------------------------------------------------
-function navMenuItems() {
-  var out = [{ tab: 'dashboard', label: 'Overview', ic: '&#127968;' }];
-  var seeStock = can('view_inventory');
-  var seeReports = can('view_reports');
-  if (seeStock || can('sell') || canSeeCustomers() || canSeeControlled()) {
-    out.push({ grp: 'Stock' });
-    if (seeStock) out.push({ tab: 'inventory', label: 'Inventory', ic: '&#128138;' });
-    if (can('sell')) out.push({ tab: 'sell', label: 'Sell', ic: '&#129534;' });
-    if (canSeeCustomers()) out.push({ tab: 'customers', label: 'Customers', ic: '&#128101;' });
-    if (can('stock_take')) out.push({ tab: 'stocktake', label: 'Stock Take', ic: '&#128203;' });
-    if (canSeeControlled()) out.push({ tab: 'controlled', label: 'Controlled <br>Drugs', ic: '&#128274;' });
-    if (seeReports) {
-      out.push({ report: 'lowstock', label: 'Reorder <br>List', ic: '&#128230;' });
-      out.push({ report: 'expiry', label: 'Expiry <br>Dates', ic: '&#9200;' });
-    }
-  }
-  var seeSuppliers = can('suppliers') || can('view_suppliers');
-  var seeExpenses = can('expenses') || can('view_expenses');
-  if (seeSuppliers || seeExpenses || seeReports) {
-    out.push({ grp: 'Money' });
-    if (seeSuppliers) out.push({ tab: 'suppliers', label: 'Suppliers', ic: '&#128666;' });
-    if (seeExpenses) out.push({ tab: 'expenses', label: 'Expenses', ic: '&#128181;' });
-    if (seeReports) out.push({ report: 'valuation', label: 'Stock <br>Valuation', ic: '&#128176;' });
-    if (can('claims')) out.push({ report: 'claims', label: 'Insurance <br>Claims', ic: '&#127973;' });
-  }
-  out.push({ grp: 'More' });
-  if (seeReports) out.push({ tab: 'reports', label: 'All Reports', ic: '&#128202;' });
-  out.push({ tab: 'settings', label: 'Settings', ic: '&#9881;' });
-  return out;
-}
-
-function navDrawerHtml() {
-  return '<div class="navscrim" id="navScrim"></div>' +
-    '<aside class="navdrawer" id="navDrawer">' +
-      '<div class="nd-head">Menu</div>' +
-      '<div class="nd-navwrap">' +
-      '<nav class="nd-nav">' + navMenuItems().map(function (m) {
-        if (m.grp) return '<div class="nd-grp">' + esc(m.grp) + '</div>';
-        var attr = m.report ? 'data-report="' + m.report + '"' : 'data-nav="' + m.tab + '"';
-        // A Reports sub-view counts as current only while that exact view is
-        // open, so "All Reports" and e.g. "Expiry Dates" never both highlight.
-        var on = m.report
-          ? (STATE.tab === 'reports' && reportsView === m.report)
-          : (STATE.tab === m.tab && !(m.tab === 'reports' && reportsView !== 'hub'));
-        return '<button class="nd-row' + (on ? ' active' : '') + '" ' + attr + '>' +
-          '<span class="nd-chip">' + m.ic + '</span>' +
-          '<span class="nd-lab">' + m.label + '</span></button>';
-      }).join('') + '</nav>' +
-      '<div class="nd-sb" id="navSb"><div class="nd-sb-th" id="navSbTh"></div></div>' +
-      '</div>' +
-      '<div class="nd-foot">Pharma &copy; 2026</div>' +
-    '</aside>';
-}
-
-function closeNavDrawer() { document.body.classList.remove('nav-open'); }
-
-function wireNavDrawer() {
-  var btn = document.getElementById('btnNavMenu');
-  var scrim = document.getElementById('navScrim');
-  var drawer = document.getElementById('navDrawer');
-  var list = drawer && drawer.querySelector('.nd-nav');
-  var sb = document.getElementById('navSb');
-  var th = document.getElementById('navSbTh');
-  if (!btn || !drawer) return;
-
-  // Size and place the drawn thumb. Hidden outright when the list already
-  // fits, so the bar only ever appears when there is genuinely more below.
-  function updateNavScrollbar() {
-    if (!list || !sb || !th) return;
-    var hidden = list.scrollHeight - list.clientHeight;
-    if (hidden <= 2) { sb.classList.remove('on'); return; }
-    sb.classList.add('on');
-    var trackH = sb.clientHeight;
-    var thumbH = Math.max(24, Math.round(trackH * (list.clientHeight / list.scrollHeight)));
-    th.style.height = thumbH + 'px';
-    th.style.top = Math.round((trackH - thumbH) * (list.scrollTop / hidden)) + 'px';
-  }
-  // The drawer's own elements are rebuilt by every render(), so their
-  // listeners go on fresh nodes each time and die with them. The window and
-  // document ones would NOT — re-binding them on every render would stack up
-  // a new listener per render for the life of the session — so they are
-  // attached once and read the current drawer through the DOM instead.
-  if (list) list.addEventListener('scroll', updateNavScrollbar, { passive: true });
-  if (!wireNavDrawer._global) {
-    wireNavDrawer._global = true;
-    window.addEventListener('resize', function () {
-      var el = document.getElementById('navSb');
-      if (el && document.body.classList.contains('nav-open')) wireNavDrawer.refresh();
-    });
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape') closeNavDrawer();
-    });
-  }
-  wireNavDrawer.refresh = updateNavScrollbar;
-
-  // Mouse and pen only: drag the thumb, or click the track to jump. A finger
-  // scrolls the list itself, so touch is deliberately ignored here.
-  if (sb && th && list) {
-    var dragging = false, startY = 0, startTop = 0;
-    th.addEventListener('pointerdown', function (e) {
-      if (e.pointerType === 'touch') return;
-      dragging = true; startY = e.clientY; startTop = list.scrollTop;
-      th.setPointerCapture(e.pointerId);
-      th.classList.add('drag');
-      e.preventDefault(); e.stopPropagation();
-    });
-    th.addEventListener('pointermove', function (e) {
-      if (!dragging) return;
-      var trackH = sb.clientHeight - th.offsetHeight;
-      var hidden = list.scrollHeight - list.clientHeight;
-      if (trackH > 0) list.scrollTop = startTop + ((e.clientY - startY) / trackH) * hidden;
-    });
-    var stopDrag = function () { dragging = false; th.classList.remove('drag'); };
-    th.addEventListener('pointerup', stopDrag);
-    th.addEventListener('pointercancel', stopDrag);
-    sb.addEventListener('pointerdown', function (e) {
-      if (e.pointerType === 'touch' || e.target === th) return;
-      var r = sb.getBoundingClientRect();
-      var trackH = r.height - th.offsetHeight;
-      var hidden = list.scrollHeight - list.clientHeight;
-      if (trackH > 0) {
-        var ratio = (e.clientY - r.top - th.offsetHeight / 2) / trackH;
-        list.scrollTop = Math.max(0, Math.min(1, ratio)) * hidden;
-      }
-    });
-  }
-
-  btn.onclick = function () {
-    document.body.classList.toggle('nav-open');
-    // Measured once the drawer is actually on screen — a hidden element has
-    // no height to measure, so this cannot run at build time.
-    if (document.body.classList.contains('nav-open')) updateNavScrollbar();
-  };
-  if (scrim) scrim.onclick = closeNavDrawer;
-  drawer.onclick = function (e) {
-    var b = e.target.closest('[data-nav],[data-report]');
-    if (!b) return;
-    closeNavDrawer();
-    var rep = b.getAttribute('data-report');
-    if (rep) { goReport(rep); return; }
-    setTab(b.getAttribute('data-nav'));
-  };
-}
-
-// Opens a Reports sub-screen directly, instead of Reports-then-tile. Used by
-// the drawer; renderReports() reads reportsView on its way in.
-function goReport(view) {
-  reportsView = view;
-  setTab('reports');
+    (STATE.tab === 'sell' ? cartFab() : '');
+  renderTab();
 }
 
 // Same markup renders as the phone's bottom tab bar and the desktop's full
@@ -776,109 +382,47 @@ function navBar() {
   // stay unconditional — but inventory and sell aren't (e.g. accountant
   // has neither, stock_taker has no 'sell'), so they're now gated the same
   // way suppliers/expenses already were.
-  // The fourth element marks a destination as desktop-sidebar-only. Seven
-  // items crammed into a phone's bottom bar left each target well under the
-  // ~40px a thumb needs, so Suppliers and Settings now live in the menu
-  // drawer on a phone (navMenuItems above) and stay on the sidebar at 860px+,
-  // where there is a full column and no size pressure at all. The bar itself
-  // is unchanged on desktop — see .nav-desktop-extra in style.css.
-  // The glass 3D chip shown on phones (the desktop sidebar keeps the line
-  // icon). Same emoji as the menu drawer's rows (navMenuItems) so the two
-  // always match.
-  var CHIP = { dashboard: '&#127968;', inventory: '&#128138;', sell: '&#129534;', suppliers: '&#128666;',
-               expenses: '&#128181;', reports: '&#128202;', settings: '&#9881;', customers: '&#128101;' };
   var items = [['dashboard', 'home', t('home')]];
-  if (can('view_inventory')) items.push(['inventory', 'stock', 'Inventory']);
+  if (can('view_inventory')) items.push(['inventory', 'stock', t('stock')]);
   if (can('sell')) items.push(['sell', 'sell', t('sell')]);
   var seeSuppliers = can('suppliers') || can('view_suppliers');
   var seeExpenses = can('expenses') || can('view_expenses');
-  if (canSeeCustomers()) items.push(['customers', 'people', 'Customers', true]);
-  if (seeSuppliers) items.push(['suppliers', 'truck', t('suppliers'), true]);
+  if (seeSuppliers) items.push(['suppliers', 'truck', t('suppliers')]);
   if (seeExpenses) items.push(['expenses', 'wallet', t('expenses')]);
   items.push(['reports', 'reports', t('reports')]);
-  items.push(['settings', 'settings', t('settings'), true]);
+  items.push(['settings', 'settings', t('settings')]);
   var p = STATE.profile || {};
   var pharmacy = STATE.pharmacy || {};
   return '<div class="navbar">' +
     '<div class="navbar-brand">' + logoMarkHtml(38) + '<div class="word">Pharma</div></div>' +
     items.map(function (i) {
-      var cls = (navTabOn(i[0]) ? 'active' : '') + (i[3] ? ' nav-desktop-extra' : '');
-      return '<button class="' + cls.trim() + '" onclick="setTab(\'' + i[0] + '\')">' +
-        '<span class="ic">' + icon(i[1], 20) + '</span>' +
-        '<span class="ic3d" aria-hidden="true">' + (CHIP[i[0]] || '') + '</span>' + i[2] + '</button>';
+      return '<button class="' + (STATE.tab === i[0] ? 'active' : '') + '" onclick="setTab(\'' + i[0] + '\')">' +
+        '<span class="ic">' + icon(i[1], 20) + '</span>' + i[2] + '</button>';
     }).join('') +
     '<div class="navbar-spacer"></div>' +
     '<div class="navbar-foot"><div class="who">' + esc(pharmacy.name || '') + '</div>' +
-    '<div class="role">' + esc(p.full_name || '') + '</div>' + (p.role ? '<div class="role">' + esc(roleLabel(p.role)) + '</div>' : '') + '</div>' +
+    '<div class="role">' + esc(p.full_name || '') + (p.role ? ' · ' + esc(roleLabel(p.role)) : '') + '</div></div>' +
     '</div>';
 }
 
-// UI fix: was a round floating button that only refreshed on a full
-// re-render (so its item count went stale as drugs were added) and, on
-// desktop, sat on top of the drug list. Now a checkout bar showing items +
-// total, kept in sync by drawSell() via syncCartBar().
 function cartFab() {
   if (!STATE.cart.length) return '';
   var n = STATE.cart.reduce(function (a, c) { return a + c.qty; }, 0);
-  var total = STATE.cart.reduce(function (a, c) { return a + c.qty * c.price; }, 0);
-  return '<button class="cart-bar" onclick="openCheckout()" title="Checkout">' +
-    '<span class="cb-ic">' + icon('cart', 20) + '<span class="cb-n">' + n + '</span></span>' +
-    '<span class="cb-txt">' + n + (n === 1 ? ' item' : ' items') + ' · ' + fmt(total) + '</span>' +
-    '<span class="cb-go">Checkout &rarr;</span></button>';
-}
-function syncCartBar() {
-  var old = document.querySelector('.cart-bar');
-  if (old) old.remove();
-  var html = STATE.tab === 'sell' ? cartFab() : '';
-  var c = document.getElementById('content');
-  if (c) c.classList.toggle('has-cart-bar', !!html);
-  if (html) document.getElementById('app').insertAdjacentHTML('beforeend', html);
+  return '<button class="fab" onclick="openCheckout()" title="Checkout">' + icon('cart',22) + '<span style="position:absolute;top:-4px;right:-4px;background:#B3261E;color:#fff;border-radius:50%;width:20px;height:20px;font-size:11px;display:flex;align-items:center;justify-content:center;">' + n + '</span></button>';
 }
 
-// Stock take and the controlled-drug register are part of the Stock area, so
-// the Inventory item stays lit while they are open.
-function navTabOn(tab) {
-  return STATE.tab === tab || (tab === 'inventory' && (STATE.tab === 'stocktake' || STATE.tab === 'controlled'));
-}
-// While a screen is loading, a clear "Please wait, loading…" shows and every
-// tap is ignored, so nobody can press tab after tab and pile up requests. The
-// pill itself waits ~120 ms so a screen that opens instantly does not flicker.
-var veilBusy = false;
-function runWithVeil(fn) {
-  if (veilBusy) return Promise.resolve();
-  veilBusy = true;
-  var v = document.createElement('div');
-  v.className = 'loadveil'; v.id = 'loadVeil';
-  v.innerHTML = '<div class="loadveil-pill" role="status"><span class="loadveil-spin"></span>Please wait, loading…</div>';
-  document.body.appendChild(v);
-  var showT = setTimeout(function () { v.classList.add('show'); }, 120);
-  var failSafe = setTimeout(function () { end(); }, 20000);
-  var ended = false;
-  function end() { if (ended) return; ended = true; clearTimeout(showT); clearTimeout(failSafe); v.remove(); veilBusy = false; }
-  var p;
-  try { p = Promise.resolve(fn()); } catch (e) { end(); throw e; }
-  return p.catch(function (e) { toast(friendlyError(e), 'bad'); }).then(end);
-}
-function setTab(t) {
-  if (veilBusy) return;
-  if (t !== STATE.tab) { custDetailId = null; controlledDetailId = null; stViewing = null; }
-  STATE.tab = t;
-  runWithVeil(function () { return render(); });
-}
+function setTab(t) { STATE.tab = t; render(); }
 
-async function logout() { clearProfileCache(); clearDashCache(); await sb.auth.signOut(); STATE.tab = 'dashboard'; STATE.cart = []; render(); }
+async function logout() { await sb.auth.signOut(); STATE.tab = 'dashboard'; STATE.cart = []; render(); }
 
 function renderTab() {
-  if (STATE.tab === 'dashboard') return renderDashboard();
-  else if (STATE.tab === 'inventory') return renderInventory();
-  else if (STATE.tab === 'sell') return renderSell();
-  else if (STATE.tab === 'reports') return renderReports();
-  else if (STATE.tab === 'settings') return renderSettings();
-  else if (STATE.tab === 'suppliers') return renderSuppliers();
-  else if (STATE.tab === 'expenses') return renderExpenses();
-  else if (STATE.tab === 'customers') return renderCustomers();
-  else if (STATE.tab === 'stocktake') return renderStockTake();
-  else if (STATE.tab === 'controlled') return renderControlled();
+  if (STATE.tab === 'dashboard') renderDashboard();
+  else if (STATE.tab === 'inventory') renderInventory();
+  else if (STATE.tab === 'sell') renderSell();
+  else if (STATE.tab === 'reports') renderReports();
+  else if (STATE.tab === 'settings') renderSettings();
+  else if (STATE.tab === 'suppliers') renderSuppliers();
+  else if (STATE.tab === 'expenses') renderExpenses();
 }
 
 // ---------------------------------------------------------------------------
@@ -912,65 +456,20 @@ function tableHtml(headers, rows) {
 
 function exportExcel(filename, sheetName, rows) {
   if (!rows.length) { toast('Nothing to export.', 'bad'); return; }
-  var write = function () {
-    var ws = XLSX.utils.json_to_sheet(rows);
-    var wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, sheetName || 'Sheet1');
-    XLSX.writeFile(wb, filename);
-  };
-  if (window.XLSX) { write(); return; }
-  toast('Preparing Excel file…');
-  loadXlsx().then(write).catch(function (e) { toast(friendlyError(e), 'bad'); });
+  var ws = XLSX.utils.json_to_sheet(rows);
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, sheetName || 'Sheet1');
+  XLSX.writeFile(wb, filename);
 }
 
 // ---------------------------------------------------------------------------
 // AUTH
 // ---------------------------------------------------------------------------
 
-// Phone sign-in pieces (hidden at >= 860px by style.css). The mark is the
-// white-on-red hospital cross; the benefit row only shows on the log-in
-// screen and only when the screen is tall enough (style.css).
-function crossMarkHtml() {
-  return '<div class="auth-hero-mark"><svg viewBox="0 0 48 48" aria-hidden="true">' +
-    '<polygon points="18,6 30,6 30,18 42,18 42,30 30,30 30,42 18,42 18,30 6,30 6,18 18,18" fill="#fff" stroke="#fff" stroke-width="6" stroke-linejoin="round"/>' +
-    '</svg></div>';
-}
-function authHeroHtml() {
-  return '<div class="auth-hero">' + crossMarkHtml() +
-    '<h1 class="auth-hero-word">Pharma</h1>' +
-    '<p class="auth-hero-tag">Know your stock</p>' +
-    '<div class="auth-feats">' +
-    '<div class="auth-feat"><i>&#128138;</i>Batch<br>tracking</div>' +
-    '<div class="auth-feat"><i>&#9200;</i>Expiry<br>alerts</div>' +
-    '<div class="auth-feat"><i>&#128202;</i>Daily<br>reports</div>' +
-    '<div class="auth-feat"><i>&#129534;</i>Printed<br>receipts</div>' +
-    '</div></div>';
-}
-// Tells style.css which auth screen is showing (the benefit row is for log-in
-// only). Returns '' so it can sit at the front of each body.innerHTML string.
-// The footer line below sits inside each card, under the button (style.css uses
-// display:contents + order on #authBody so the card and the links share one column).
-function authSetMode(mode) {
-  var w = $('.auth-wrap'); if (w) w.setAttribute('data-mode', mode);
-  return '';
-}
-var AUTH_FOOT = '<div class="auth-lfoot"><span>Batches &middot; FEFO</span><span>KES</span></div>';
-// list: [prefix, label, onclick-js]. Prefix shows on the phone only; the " · "
-// separator on desktop only (style.css).
-function authLinks(list) {
-  return '<div class="auth-toggle">' + list.map(function (x) {
-    return '<a href="#" onclick="' + x[2] + ';return false;">' +
-      (x[0] ? '<span class="auth-pre">' + x[0] + ' </span>' : '') + '<b>' + x[1] + '</b></a>';
-  }).join('<span class="auth-sep"> &middot; </span>') + '</div>';
-}
-
 // Desktop gets a proper split layout (green brand panel with floating stat
 // cards + form) instead of a small centered card floating in a sea of empty
 // page; mobile gets the same green panel collapsed into a curved-gradient
-// hero above the form. The phone layout is the "dispensing label" sign-in
-// (approved sketch): hospital-cross mark, "Know your stock", an emoji benefit
-// row, and the form as a label card. It reuses the same #authBody/ids as the
-// desktop layout, which is untouched (>= 860px).
+// hero above the form, with a "Trusted by pharmacists worldwide" trust line.
 // Sketched against Kodi's own login/signup screens and approved (headline
 // wording, trust line, stat-card colors) before being wired up here — see
 // style.css's .auth-wrap/.auth-brand rules for the responsive behavior.
@@ -997,11 +496,9 @@ function authScreen() {
     '<div class="auth-bg-fill"></div>' +
     '<div class="auth-brand">' +
     '<div class="auth-brand-top">' +
-    authHeroHtml() +
-    '<div class="auth-desk-top">' + logoMarkHtml(56) +
+    logoMarkHtml(56) +
     '<h1 class="auth-brand-headline">Know Your Stock<br>Never Run Dry</h1>' +
     '<div class="auth-brand-tag">Batches, sales, expiry tracking and reports &mdash; everything a pharmacy needs, in one place.</div>' +
-    '</div>' +
     '</div>' +
     '<div class="auth-brand-line line-top"></div>' +
     '<div class="auth-stat-stack">' +
@@ -1014,55 +511,52 @@ function authScreen() {
     '<div class="auth-form-col"><div class="auth-card">' +
     (msg ? '<div class="card" style="border-color:#EFC3BE;background:#FBE9E7;margin-bottom:12px">' + esc(msg) + '</div>' : '') +
     '<div id="authBody"></div></div></div>' +
+    '<div class="auth-brand-trust">Trusted by pharmacists worldwide &#127757;</div>' +
     '</div>';
 }
 
 function renderLogin() {
   STATE.authMode = 'login';
   var body = $('#authBody') || (function () { render(); return $('#authBody'); })();
-  body.innerHTML = authSetMode('login') +
+  body.innerHTML =
     '<div class="card">' +
-    '<h2 class="auth-title">Welcome back &#128075;</h2>' +
     '<div class="field"><label>Phone number</label><input id="loPhone" type="tel" placeholder="07XXXXXXXX"></div>' +
     '<div class="field"><label>Password</label><input id="loPw" type="password" placeholder="••••••••"></div>' +
     '<div id="loErr" class="error-text"></div>' +
     '<button class="btn primary" id="loBtn" onclick="doLogin()">Log in</button>' +
-    '<div class="tiny auth-forgot"><a href="#" onclick="renderForgotPassword();return false;">Forgot password?</a></div>' +
-    AUTH_FOOT + '</div>' +
-    authLinks([['New pharmacy?', 'Create an account', 'renderSignup()'], ['Have a code?', 'Staff login', 'renderJoin()']]);
+    '<div class="tiny" style="text-align:center;margin-top:10px"><a href="#" onclick="renderForgotPassword();return false;">Forgot password?</a></div>' +
+    '</div><div class="auth-toggle"><a href="#" onclick="renderSignup();return false;">Create an account</a>' +
+    ' · <a href="#" onclick="renderJoin();return false;">Staff Login</a></div>';
 }
 
 function renderSignup() {
   STATE.authMode = 'signup';
   var body = $('#authBody') || (function () { render(); return $('#authBody'); })();
-  body.innerHTML = authSetMode('signup') +
+  body.innerHTML =
     '<div class="card">' +
-    '<h2 class="auth-title">Create your account</h2>' +
-    '<div class="field"><label>Pharmacy name</label><input id="suPharmacy" placeholder="e.g. Afya Bora Pharmacy"></div>' +
-    '<div class="field"><label>Your name</label><input id="suName" placeholder="e.g. Daud Kinyua"></div>' +
+    '<div class="field"><label>Pharmacy name</label><input id="suPharmacy" placeholder="e.g. Rubao Mukothima Pharmacy"></div>' +
+    '<div class="field"><label>Your name</label><input id="suName" placeholder="e.g. Rubao Mukothima"></div>' +
     '<div class="field"><label>Phone number</label><input id="suPhone" type="tel" placeholder="07XXXXXXXX"></div>' +
     '<div class="field"><label>Password</label><input id="suPw" type="password" placeholder="At least 8 characters"></div>' +
     '<div id="suErr" class="error-text"></div>' +
     '<button class="btn primary" id="suBtn" onclick="doSignup()">Create pharmacy account</button>' +
-    AUTH_FOOT + '</div>' +
-    authLinks([['Already registered?', 'Log in', 'renderLogin()'], ['Have a code?', 'Staff login', 'renderJoin()']]);
+    '</div><div class="auth-toggle"><a href="#" onclick="renderLogin();return false;">Log in</a>' +
+    ' · <a href="#" onclick="renderJoin();return false;">Staff Login</a></div>';
 }
 
-// Staff with an invite code (Settings -> Staff, in the owner's app) join here
-// from the "Have a code? Staff login" link on the log-in and create-account screens.
 function renderJoin() {
   STATE.authMode = 'join';
   var body = $('#authBody') || (function () { render(); return $('#authBody'); })();
-  body.innerHTML = authSetMode('join') +
+  body.innerHTML =
     '<div class="card">' +
-    '<h2 class="auth-title">Join pharmacy</h2>' +
+    '<div class="tiny" style="margin-bottom:10px">Ask the pharmacy owner for a staff invite code (Settings → Staff, in their app).</div>' +
     '<div class="field"><label>Staff code</label><input id="jnCode" placeholder="e.g. 2E530A" style="text-transform:uppercase"></div>' +
-    '<div class="field"><label>Your name</label><input id="jnName" placeholder="e.g. Daud Kinyua"></div>' +
+    '<div class="field"><label>Your name</label><input id="jnName" placeholder="e.g. Peter Attendant"></div>' +
     '<div class="field"><label>Phone number</label><input id="jnPhone" type="tel" placeholder="07XXXXXXXX"></div>' +
     '<div class="field"><label>Password</label><input id="jnPw" type="password" placeholder="At least 8 characters"></div>' +
     '<div id="jnErr" class="error-text"></div>' +
     '<button class="btn primary" id="jnBtn" onclick="doJoin()">Join pharmacy</button>' +
-    AUTH_FOOT + '</div>' + authLinks([['', 'Back to log in', 'renderLogin()']]);
+    '</div><div class="auth-toggle"><a href="#" onclick="renderLogin();return false;">Back to log in</a></div>';
 }
 
 // Was a native browser prompt() — looks broken/untrustworthy on mobile,
@@ -1092,33 +586,30 @@ function renderForgotPassword() {
 function drawForgotPassword() {
   var body = $('#authBody') || (function () { render(); return $('#authBody'); })();
   if (fpStep === 'phone') {
-    body.innerHTML = authSetMode('forgot') +
+    body.innerHTML =
       '<div class="card">' +
-      '<h2 class="auth-title">Forgot your password?</h2>' +
       '<div class="tiny" style="margin-bottom:10px">Enter the phone number on the account — we\'ll text you a 6-digit code.</div>' +
       '<div class="field"><label>Phone number</label><input id="fpPhone" type="tel" placeholder="07XXXXXXXX" value="' + esc(fpPhoneVal) + '"></div>' +
       '<div id="fpErr" class="error-text"></div>' +
       '<button class="btn primary" id="fpBtn" onclick="doSendResetCode()">Send code</button>' +
-      AUTH_FOOT + '</div>' + authLinks([['', 'Back to log in', 'renderLogin()']]);
+      '</div><div class="auth-toggle"><a href="#" onclick="renderLogin();return false;">Back to log in</a></div>';
   } else if (fpStep === 'code') {
-    body.innerHTML = authSetMode('forgot') +
+    body.innerHTML =
       '<div class="card">' +
-      '<h2 class="auth-title">Enter the code</h2>' +
       '<div class="tiny" style="margin-bottom:10px">Enter the 6-digit code sent to ' + esc(fpPhoneVal) + '.</div>' +
       '<div class="field"><label>Code</label><input id="fpCode" type="tel" maxlength="6" placeholder="123456"></div>' +
       '<div id="fpErr" class="error-text"></div>' +
       '<button class="btn primary" id="fpBtn" onclick="doVerifyResetCode()">Verify</button>' +
-      AUTH_FOOT + '</div>' +
-      authLinks([['', 'Use a different number', 'renderForgotPassword()'], ['', 'Resend code', 'doSendResetCode()']]);
+      '</div><div class="auth-toggle"><a href="#" onclick="renderForgotPassword();return false;">Use a different number</a>' +
+      ' · <a href="#" onclick="doSendResetCode();return false;">Resend code</a></div>';
   } else {
-    body.innerHTML = authSetMode('forgot') +
+    body.innerHTML =
       '<div class="card">' +
-      '<h2 class="auth-title">Choose a new password</h2>' +
       '<div class="tiny" style="margin-bottom:10px">Phone number verified. Choose a new password.</div>' +
       '<div class="field"><label>New password</label><input id="fpPw" type="password" placeholder="At least 8 characters"></div>' +
       '<div id="fpErr" class="error-text"></div>' +
       '<button class="btn primary" id="fpBtn" onclick="doSetResetPassword()">Set new password</button>' +
-      AUTH_FOOT + '</div>' + authLinks([['', 'Back to log in', 'renderLogin()']]);
+      '</div><div class="auth-toggle"><a href="#" onclick="renderLogin();return false;">Back to log in</a></div>';
   }
 }
 
@@ -1135,7 +626,7 @@ async function doSendResetCode() {
       return;
     }
     if (data.sent === false) {
-      err.textContent = friendlyError({ message: data.message }) === 'Something went wrong.' ? 'Could not send a code right now. Try again shortly.' : friendlyError({ message: data.message });
+      err.textContent = data.message || 'Could not send a code right now. Try again shortly.';
       return;
     }
     fpPhoneVal = phone;
@@ -1197,7 +688,7 @@ async function doSetNewPassword() {
     var pw = $('#rcPw').value;
     if (pw.length < 8) { err.textContent = 'Use at least 8 characters.'; return; }
     var { error } = await sb.auth.updateUser({ password: pw });
-    if (error) { err.textContent = friendlyError(error); return; }
+    if (error) { err.textContent = error.message; return; }
     STATE.recoveryMode = false;
     toast('Password updated — you are now logged in.', 'good');
     STATE.session = (await sb.auth.getSession()).data.session;
@@ -1215,7 +706,7 @@ async function doJoin() {
     var pw = $('#jnPw').value;
     if (!code || !phone || pw.length < 8) { err.textContent = 'Fill in the staff code, phone number, and an 8+ character password.'; return; }
     var { data: signUpData, error: suErr } = await sb.auth.signUp({ email: phoneToAuthEmail(phone), password: pw });
-    if (suErr) { err.textContent = friendlyError(suErr); return; }
+    if (suErr) { err.textContent = suErr.message; return; }
     stashPendingSignup({ kind: 'staff', code: code, fullName: fullName, phone: phone });
     if (!signUpData.session) {
       toast('Account created — log in with your phone number and password and it will pick up your staff code automatically.', 'good');
@@ -1240,23 +731,17 @@ async function doLogin() {
       if (/invalid login credentials/i.test(error.message)) {
         err.textContent = 'Incorrect phone number or password.';
       } else {
-        err.textContent = friendlyError(error);
+        err.textContent = error.message;
       }
       return;
     }
     STATE.session = (await sb.auth.getSession()).data.session;
-    // Signed in: show the branded loading screen straight away rather than
-    // leaving the button on "Please wait…" while the pharmacy loads.
-    $('#app').innerHTML = loadScreenHtml();
-    try { await loadProfileAndPharmacy(); }
-    catch (loadErr) { render(); toast(friendlyError(loadErr), 'bad'); return; }
+    await loadProfileAndPharmacy();
     if (!STATE.profile && STATE.noPharmacyYet) {
-      render(); err = $('#loErr') || err;
       err.textContent = "You're logged in, but this account isn't linked to a pharmacy yet. If you just signed up, try logging in again in a moment — if that doesn't work, sign up again.";
       return;
     }
     render();
-    warmXlsx();
   });
 }
 
@@ -1269,7 +754,7 @@ async function doSignup() {
     var pw = $('#suPw').value;
     if (!pharmacyName || !phone || pw.length < 8) { err.textContent = 'Fill in the pharmacy name, phone number, and an 8+ character password.'; return; }
     var { data: signUpData, error: suErr } = await sb.auth.signUp({ email: phoneToAuthEmail(phone), password: pw });
-    if (suErr) { err.textContent = friendlyError(suErr); return; }
+    if (suErr) { err.textContent = suErr.message; return; }
     // Stash what they typed BEFORE checking for a session — if this Supabase
     // project requires email confirmation, signUp() returns no session at
     // all, so there's no authenticated user yet to attach a pharmacy to.
@@ -1308,46 +793,6 @@ async function doSignup() {
 
 var dashRange = 'week';
 var dashLoading = false;
-var dashStale = false;   // true while older numbers are on screen and fresh ones are on their way
-
-// The last dashboard is also kept on this device so the next visit opens with
-// numbers on screen instead of placeholders. Cleared on log out. Skipped for
-// custom date ranges and for very large stock lists (localStorage is small).
-var DASH_CACHE_KEY = 'hodhi_dash_cache_v2'; // v2: the week view became a rolling 7 days
-function saveDashCache() {
-  try {
-    if (dashRange === 'custom') return;
-    var s = JSON.stringify({ pid: STATE.profile.pharmacy_id, range: dashRange, snap: dashSnap, data: dashData, at: Date.now() });
-    if (s.length < 800000) localStorage.setItem(DASH_CACHE_KEY, s);
-  } catch (e) {}
-}
-function readDashCache() {
-  try {
-    var c = JSON.parse(localStorage.getItem(DASH_CACHE_KEY) || 'null');
-    if (!c || c.pid !== STATE.profile.pharmacy_id || c.range !== dashRange || dashRange === 'custom') return null;
-    if (Date.now() - c.at > 36 * 3600 * 1000) return null;
-    return (c.snap && c.data) ? c : null;
-  } catch (e) { return null; }
-}
-function clearDashCache() {
-  dashSnap = null; dashData = null;
-  try { localStorage.removeItem(DASH_CACHE_KEY); } catch (e) {}
-}
-
-// Placeholder shapes (no text) shown while the dashboard's numbers load: four
-// small stat cards, a chart-sized card and a list card, in the same places the
-// real ones will appear, so nothing jumps when the data arrives.
-function dashSkeletonHtml() {
-  var stat = '<div class="skel-card"><span class="skel" style="height:10px;width:55%"></span>' +
-    '<span class="skel" style="height:24px;width:75%;margin-top:12px"></span></div>';
-  return '<div class="skel-grid" aria-hidden="true">' + stat + stat + stat + stat + '</div>' +
-    '<div class="skel-card" aria-hidden="true"><span class="skel" style="height:10px;width:35%"></span>' +
-    '<span class="skel" style="height:120px;margin-top:12px"></span></div>' +
-    '<div class="skel-card" aria-hidden="true"><span class="skel" style="height:10px;width:45%"></span>' +
-    '<span class="skel" style="height:14px;margin-top:14px"></span>' +
-    '<span class="skel" style="height:14px;margin-top:10px;width:85%"></span>' +
-    '<span class="skel" style="height:14px;margin-top:10px;width:70%"></span></div>';
-}
 var dashData = null;   // last dashboard_data() RPC result for the current dashRange
 var dashSnap = null;   // point-in-time snapshot: stock value/health, expiring, supplier debt
 
@@ -1366,10 +811,10 @@ var DCOLOR = {
   // gridlines themselves stay light, since those are lines, not text.
   gridline: '#E7E2DC', inkSoft: '#201E1B'
 };
-var DASH_RANGE_LABELS = { today: 'Today', week: '7 Days', month: 'Month', year: 'Year', custom: 'Custom' };
-var DASH_PERIOD_LABEL = { today: 'Today', week: 'Last 7 days', month: 'This month', year: 'This year', custom: 'Custom range' };
-var DASH_VS_LABEL = { today: 'yesterday', week: 'the 7 days before', month: 'last month', year: 'last year', custom: 'the previous period' };
-var DASH_TOPSELLERS_TITLE = { today: 'Top sellers today', week: 'Top sellers, last 7 days', month: 'Top sellers this month', year: 'Top sellers this year', custom: 'Top sellers' };
+var DASH_RANGE_LABELS = { today: 'Today', week: 'Week', month: 'Month', year: 'Year', custom: 'Custom' };
+var DASH_PERIOD_LABEL = { today: 'Today', week: 'This week', month: 'This month', year: 'This year', custom: 'Custom range' };
+var DASH_VS_LABEL = { today: 'yesterday', week: 'last week', month: 'last month', year: 'last year', custom: 'the previous period' };
+var DASH_TOPSELLERS_TITLE = { today: 'Top sellers today', week: 'Top sellers this week', month: 'Top sellers this month', year: 'Top sellers this year', custom: 'Top sellers' };
 var RUSH_LABELS = ['12-3am', '3-6am', '6-9am', '9am-12pm', '12-3pm', '3-6pm', '6-9pm', '9pm-12am'];
 // Item 33: a custom date range picked via the dashboard's calendar button.
 // Set together with dashRange = 'custom'; cleared whenever a preset range
@@ -1391,74 +836,51 @@ function fetchDashboardData() {
 
 async function renderDashboard() {
   var c = $('#content');
-  // Show the last dashboard we had (kept in memory while the app is open, and
-  // on this device between visits) the instant the tab opens, with a thin
-  // "updating" bar, and swap in fresh numbers when they land. Only if there is
-  // nothing to show yet do we draw the shimmering placeholders.
-  if (!dashSnap || !dashData) {
-    var saved = readDashCache();
-    if (saved) { dashSnap = saved.snap; dashData = saved.data; }
-  }
-  var hadStale = !!(dashSnap && dashData);
-  if (hadStale) { dashStale = true; drawDashboard(); }
-  else c.innerHTML = dashSkeletonHtml();
+  c.innerHTML = '<div class="empty">Loading dashboard…</div>';
   try {
-    // Five requests, all at once (four, plus the optional alerts one). (It used to be eight: out-of-stock and
-    // low-stock came from two more views that each re-ran the same stock
-    // calculation v_drug_stock already did, and supplier debt downloaded every
-    // supplier, delivery and payment to add them up here. Both are now worked
-    // out from what is already in hand or inside the database.)
     var results = await Promise.all([
       sb.from('v_drug_stock').select('drug_id,name,unit,qty_in_stock,reorder_level,stock_value_retail'),
+      sb.from('v_out_of_stock').select('drug_id,name,unit'),
+      sb.from('v_low_stock').select('drug_id,name,unit,qty_in_stock,reorder_level'),
       sb.from('v_expiring_batches').select('*').order('expiry_date'),
-      sb.rpc('supplier_owed_summary', { p_pharmacy_id: STATE.profile.pharmacy_id }),
-      fetchDashboardData(),
-      // The new alerts (customer debts, refills due, controlled-drug mismatch,
-      // open stock take). Optional: if it fails the dashboard still draws.
-      sb.rpc('dashboard_extras', { p_pharmacy_id: STATE.profile.pharmacy_id }).then(function (r) { return r; }, function () { return { data: null }; })
+      sb.from('suppliers').select('id,opening_balance').eq('pharmacy_id', STATE.profile.pharmacy_id),
+      sb.from('supplier_lpos').select('supplier_id,total_amount').eq('pharmacy_id', STATE.profile.pharmacy_id),
+      sb.from('supplier_payments').select('supplier_id,amount').eq('pharmacy_id', STATE.profile.pharmacy_id),
+      fetchDashboardData()
     ]);
-    var stockRes = results[0], expRes = results[1], oweRes = results[2], dashRes = results[3], extrasRes = results[4];
+    var stockRes = results[0], outRes = results[1], lowRes = results[2], expRes = results[3],
+        supsRes = results[4], lposRes = results[5], paysRes = results[6], dashRes = results[7];
     if (dashRes.error) throw dashRes.error;
-    if (stockRes.error) throw stockRes.error;
 
-    var drugs = stockRes.data || [];
-    var stockValue = drugs.reduce(function (a, r) { return a + Number(r.stock_value_retail || 0); }, 0);
-    // Same rules as the v_out_of_stock and v_low_stock views in schema.sql:
-    // out = no live stock; low = some stock, at or below the reorder level.
-    var outList = drugs.filter(function (r) { return Number(r.qty_in_stock) === 0; })
-      .map(function (r) { return { drug_id: r.drug_id, name: r.name, unit: r.unit }; });
-    var lowList = drugs.filter(function (r) { var q = Number(r.qty_in_stock); return q > 0 && q <= Number(r.reorder_level); })
-      .map(function (r) { return { drug_id: r.drug_id, name: r.name, unit: r.unit, qty_in_stock: r.qty_in_stock, reorder_level: r.reorder_level }; });
-    var oweRow = (oweRes.data && oweRes.data[0]) || {};
-    var supplierOwed = Number(oweRow.owed || 0), suppliersOwedCount = Number(oweRow.owed_count || 0);
+    var stockValue = (stockRes.data || []).reduce(function (a, r) { return a + Number(r.stock_value_retail || 0); }, 0);
+    var sups = supsRes.data || [], lpos = lposRes.data || [], pays = paysRes.data || [];
+    var supplierOwed = 0, suppliersOwedCount = 0;
+    sups.forEach(function (s) {
+      var delivered = lpos.filter(function (l) { return l.supplier_id === s.id; }).reduce(function (a, l) { return a + Number(l.total_amount || 0); }, 0);
+      var paid = pays.filter(function (p) { return p.supplier_id === s.id; }).reduce(function (a, p) { return a + Number(p.amount || 0); }, 0);
+      var bal = Number(s.opening_balance || 0) + delivered - paid;
+      if (bal > 0.5) { supplierOwed += bal; suppliersOwedCount++; }
+    });
 
     dashSnap = {
       stockValue: stockValue,
-      drugCount: drugs.length,
-      outOfStock: outList,
-      lowStock: lowList,
+      drugCount: (stockRes.data || []).length,
+      outOfStock: outRes.data || [],
+      lowStock: lowRes.data || [],
       expiring: expRes.data || [],
       supplierOwed: supplierOwed,
       suppliersOwedCount: suppliersOwedCount,
       // Item 27 (Dashboard quick access): a lightweight name/qty list kept
       // around purely for the "is this drug in stock?" quick-search box —
       // avoids a second round trip on every keystroke.
-      drugList: stockRes.data || [],
-      extras: (extrasRes && !extrasRes.error && extrasRes.data) || null
+      drugList: stockRes.data || []
     };
     dashData = dashRes.data;
-    saveDashCache();
   } catch (e) {
-    dashStale = false;
-    // Keep showing the last numbers if we have them; only a first-ever load shows the retry card.
-    if (STATE.tab !== 'dashboard') return;
-    if (hadStale) { toast(friendlyError(e), 'bad'); drawDashboard(); }
-    else errorCard(c, friendlyError(e), 'renderDashboard');
+    errorCard(c, friendlyError(e), 'renderDashboard');
     return;
   }
-  dashStale = false;
-  // The person may have moved to another tab while this was loading; don't paint over it.
-  if (STATE.tab === 'dashboard') drawDashboard();
+  drawDashboard();
 }
 
 async function setDashRange(r) {
@@ -1540,9 +962,7 @@ function drawDashboard() {
   var c = $('#content');
   var refetching = dashLoading ? ' dash-refetching' : '';
   c.innerHTML =
-    (dashStale ? '<div class="updating-bar" aria-hidden="true"></div>' : '') +
     dashAlertHtml(dashSnap) +
-    dashExtrasHtml(dashSnap) +
     dashQuickAccessHtml() +
     dashFilterRowHtml() +
     '<div class="card dash-graph-card t-sales' + refetching + '">' + dashSalesGraphHtml(dashData) + '</div>' +
@@ -1598,7 +1018,7 @@ function dashStockCheckSearch(val) {
     var kind = d.qty_in_stock === 0 ? 'bad' : d.qty_in_stock <= (d.reorder_level || 0) ? 'warn' : 'good';
     var badge = kind === 'bad' ? '<span class="badge bad">Out of stock</span>' : kind === 'warn' ? '<span class="badge warn">Low stock</span>' : '<span class="badge good">In stock</span>';
     return '<div class="dash-quick-result-row" onclick="dashStockCheckGoInventory(\'' + d.drug_id + '\')">' +
-      '<div><div class="name">' + esc(d.name) + '</div><div class="meta">' + esc(qtyUnit(d.qty_in_stock, d.unit)) + ' available</div></div>' +
+      '<div><div class="name">' + esc(d.name) + '</div><div class="meta">' + d.qty_in_stock + ' ' + esc(d.unit) + ' available</div></div>' +
       '<div class="right">' + badge + '<button class="btn small secondary" style="margin-left:8px" onclick="event.stopPropagation();dashStockCheckSell(\'' + d.drug_id + '\')">Sell</button></div>' +
       '</div>';
   }).join('') : '<div class="dash-quick-result-row empty">No drug matches that search.</div>';
@@ -1660,23 +1080,9 @@ function niceTicks(maxVal) {
 }
 function fmtCompact(n) { return Math.round(n).toLocaleString(); }
 
-// UI fix: the chart used to be drawn on a fixed 600-wide canvas and then
-// stretched to the card — so on a wide desktop its axis text blew up to
-// ~20px and on a phone it shrank to ~6px (unreadable), and the last x-label
-// and end dot were clipped at the right edge. It's now drawn at the card's
-// real pixel width, with right padding and thinned x-labels.
-function dashChartW() {
-  var c = document.getElementById('content');
-  if (!c || !c.clientWidth) return 600;
-  var cs = getComputedStyle(c);
-  return Math.max(260, Math.round(c.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - 40));
-}
 function axisLineChart(values, labels, w, h, color, isEmpty) {
   var ticks = niceTicks(values.length ? Math.max.apply(null, values) : 0);
-  var gutter = 46, padR = 20, plotW = w - gutter - padR, labelBand = 20, totalH = h + labelBand;
-  // A week (7 labels) always shows every day name, in a slightly smaller size when the screen is narrow.
-  var labelEvery = labels.length <= 7 ? 1 : Math.max(1, Math.ceil(labels.length * 30 / Math.max(plotW, 1)));
-  var labelSize = (labels.length <= 7 && plotW / Math.max(labels.length, 1) < 32) ? 10 : 11;
+  var gutter = 50, plotW = w - gutter, labelBand = 18, totalH = h + labelBand;
   var hi = ticks[ticks.length - 1] || 1;
   var n = Math.max(values.length, 1);
   function px(i) { return gutter + (n > 1 ? (i / (n - 1)) * plotW : plotW / 2); }
@@ -1684,14 +1090,11 @@ function axisLineChart(values, labels, w, h, color, isEmpty) {
   var grid = '', ticksHtml = '', axisLabels = '';
   ticks.forEach(function (t) {
     var y = py(t);
-    grid += '<line x1="' + gutter + '" y1="' + y.toFixed(1) + '" x2="' + (gutter + plotW) + '" y2="' + y.toFixed(1) + '" stroke="' + DCOLOR.gridline + '" stroke-width="1"/>';
-    ticksHtml += '<text x="' + (gutter - 8) + '" y="' + (y + 3).toFixed(1) + '" text-anchor="end" font-size="11" fill="' + DCOLOR.inkSoft + '">' + fmtCompact(t) + '</text>';
+    grid += '<line x1="' + gutter + '" y1="' + y.toFixed(1) + '" x2="' + w + '" y2="' + y.toFixed(1) + '" stroke="' + DCOLOR.gridline + '" stroke-width="1"/>';
+    ticksHtml += '<text x="' + (gutter - 8) + '" y="' + (y + 3).toFixed(1) + '" text-anchor="end" font-size="10" fill="' + DCOLOR.inkSoft + '">' + fmtCompact(t) + '</text>';
   });
-  var lastI = labels.length - 1;
   labels.forEach(function (l, i) {
-    var show = i === lastI || (i % labelEvery === 0 && lastI - i >= labelEvery);
-    if (!show) return;
-    axisLabels += '<text x="' + px(i).toFixed(1) + '" y="' + (h + 15) + '" text-anchor="middle" font-size="' + labelSize + '" font-weight="600" fill="' + DCOLOR.inkSoft + '">' + esc(l) + '</text>';
+    axisLabels += '<text x="' + px(i).toFixed(1) + '" y="' + (h + 13) + '" text-anchor="middle" font-size="10.5" font-weight="600" fill="' + DCOLOR.inkSoft + '">' + esc(l) + '</text>';
   });
   var body;
   if (!isEmpty && values.length) {
@@ -1708,7 +1111,7 @@ function axisLineChart(values, labels, w, h, color, isEmpty) {
   } else {
     body = '<text x="' + (gutter + plotW / 2).toFixed(1) + '" y="' + (h / 2).toFixed(1) + '" text-anchor="middle" font-size="12" font-weight="600" fill="' + DCOLOR.inkSoft + '">No sales recorded yet</text>';
   }
-  return '<svg viewBox="0 0 ' + w + ' ' + totalH + '" style="width:100%;height:auto;display:block;overflow:visible">' + grid + ticksHtml + body + axisLabels + '</svg>';
+  return '<svg viewBox="0 0 ' + w + ' ' + totalH + '" style="width:100%;height:auto;display:block">' + grid + ticksHtml + body + axisLabels + '</svg>';
 }
 
 function axisBarChart(values, labels, w, h, color, isEmpty, peakLabel) {
@@ -1785,7 +1188,7 @@ function dashSalesGraphHtml(d) {
   var periodLabel = (DASH_PERIOD_LABEL[dashRange] || 'Today').toLowerCase();
   return '<div class="dash-card-head"><div class="t">Sales &mdash; ' + esc(periodLabel) + '</div><div class="v">' + fmt(total) + '</div></div>' +
     (chip ? '<div class="dash-graph-chip-row">' + chip + '</div>' : '') +
-    '<div class="dash-chart-wrap">' + axisLineChart(values, labels, dashChartW(), dashChartW() > 640 ? 180 : 140, DCOLOR.sales, isEmpty) + '</div>';
+    '<div class="dash-chart-wrap">' + axisLineChart(values, labels, 600, 140, DCOLOR.sales, isEmpty) + '</div>';
 }
 
 function dashRushGraphHtml(d) {
@@ -1918,7 +1321,7 @@ function dashUrgencyRowHtml(name, meta, daysTxt, pct, kind) {
     '</div>' +
     '<div class="dash-bar-track"><div class="dash-bar-fill" style="width:' + pct.toFixed(1) + '%;background:' + color + '"></div></div>' +
     '<div class="dash-bar-value" style="width:34px">' + esc(daysTxt) + '</div>' +
-    '<div class="dash-bar-status ' + kind + '">' + word + '</div>' +
+    '<div class="dash-bar-status" style="color:' + color + '">' + word + '</div>' +
   '</div>';
 }
 
@@ -1945,7 +1348,7 @@ function dashExpiringCard(snap) {
     var days = daysUntil(b.expiry_date);
     var kind = days <= 14 ? 'critical' : days <= 30 ? 'serious' : 'warning';
     var pct = Math.max(6, Math.min(100, 100 - Math.min(days, 90) / 90 * 100));
-    return dashUrgencyRowHtml(b.drug_name, 'batch ' + (b.batch_no || '—') + ' · ' + qtyUnit(b.quantity_remaining, b.unit), days + 'd', pct, kind);
+    return dashUrgencyRowHtml(b.drug_name, 'batch ' + (b.batch_no || '—') + ' · ' + b.quantity_remaining + ' ' + b.unit, days + 'd', pct, kind);
   }).join('');
   for (var i = top4.length; i < 4; i++) rows += dashPlaceholderRowHtml();
   var empty = all.length === 0 ? '<div class="tiny" style="text-align:center;margin-top:14px">Nothing expiring soon.</div>' : '';
@@ -1969,7 +1372,7 @@ function openExpiringFull() {
     var days = daysUntil(b.expiry_date);
     var kind = days <= 14 ? 'critical' : days <= 30 ? 'serious' : 'warning';
     var pct = Math.max(6, Math.min(100, 100 - Math.min(days, 90) / 90 * 100));
-    return dashUrgencyRowHtml(b.drug_name, 'batch ' + (b.batch_no || '—') + ' · ' + qtyUnit(b.quantity_remaining, b.unit), days + 'd', pct, kind);
+    return dashUrgencyRowHtml(b.drug_name, 'batch ' + (b.batch_no || '—') + ' · ' + b.quantity_remaining + ' ' + b.unit, days + 'd', pct, kind);
   }).join('') : '<div class="empty">Nothing expiring soon.</div>') + '</div>';
   sheet('Expiring soon — full list', body);
 }
@@ -2018,10 +1421,6 @@ function drawInventory() {
       '<button class="btn" onclick="openSyncMasterDrugs()">' + icon('box',15) + ' Sync common drugs</button>' +
       '<button class="btn" onclick="openImportExcel()">' + icon('upload',15) + ' Import</button>' +
       '</div>' : '') +
-    (can('stock_take') || canSeeControlled() ? '<div class="toolbar-segment">' +
-      (can('stock_take') ? '<button class="btn" onclick="setTab(\'stocktake\')">' + icon('clipboard',15) + ' Stock Take</button>' : '') +
-      (canSeeControlled() ? '<button class="btn" onclick="setTab(\'controlled\')">' + icon('warn',15) + ' Controlled</button>' : '') +
-      '</div>' : '') +
     '<div class="toolbar-segment toolbar-end">' +
     '<button class="btn" onclick="exportInventoryExcel()">' + icon('download',15) + ' Excel</button>' +
     '<button class="btn" onclick="printInventory()">' + icon('printer',15) + ' Print</button>' +
@@ -2040,7 +1439,7 @@ function drawInventory() {
       return '<div class="list-row" onclick="openDrugDetail(\'' + d.drug_id + '\')" style="cursor:pointer">' +
         '<div style="display:flex;align-items:center;gap:12px"><div class="row-avatar ' + (kind === 'good' ? '' : kind) + '">' + esc((d.name || '?').charAt(0).toUpperCase()) + '</div>' +
         '<div><div class="name">' + esc(d.name) + '</div><div class="meta">' + fmt(d.stock_value_retail) + ' in stock value' + expBadge + '</div></div></div>' +
-        '<div class="right">' + badge + '<div class="meta">' + esc(qtyUnit(d.qty_in_stock, d.unit)) + '</div></div></div>';
+        '<div class="right">' + badge + '<div class="meta">' + d.qty_in_stock + ' ' + esc(d.unit) + '</div></div></div>';
     }).join('') : '<div class="empty">No drugs match. Try clearing the search or add a new one.</div>') + '</div>' +
     (allRows.length > rows.length ? '<button class="btn ghost" style="margin-top:10px" onclick="invPage++;drawInventory()">Load more (' + (allRows.length - rows.length) + ' more)</button>' : ''));
 }
@@ -2162,25 +1561,21 @@ function openImportExcel() {
     if (!input.files.length) return;
     var reader = new FileReader();
     reader.onload = function (e) {
-      loadXlsx().then(function () { readImportBuffer(e.target.result); })
-        .catch(function (err) { toast(friendlyError(err), 'bad'); });
+      try {
+        var wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array', cellDates: true });
+        var ws = wb.Sheets[wb.SheetNames[0]];
+        var allRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+        var headerIdx = findImportHeaderRow(allRows);
+        var colMap = buildImportColumnMap(allRows[headerIdx] || []);
+        var dataRows = allRows.slice(headerIdx + 1);
+        previewImport(dataRows, colMap);
+      } catch (err) {
+        toast('Could not read that file — is it a valid Excel/CSV file?', 'bad');
+      }
     };
     reader.readAsArrayBuffer(input.files[0]);
   };
   input.click();
-}
-function readImportBuffer(buffer) {
-  try {
-    var wb = XLSX.read(new Uint8Array(buffer), { type: 'array', cellDates: true });
-    var ws = wb.Sheets[wb.SheetNames[0]];
-    var allRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-    var headerIdx = findImportHeaderRow(allRows);
-    var colMap = buildImportColumnMap(allRows[headerIdx] || []);
-    var dataRows = allRows.slice(headerIdx + 1);
-    previewImport(dataRows, colMap);
-  } catch (err) {
-    toast('Could not read that file — is it a valid Excel/CSV file?', 'bad');
-  }
 }
 
 function previewImport(dataRows, colMap) {
@@ -2251,9 +1646,7 @@ function previewImport(dataRows, colMap) {
     '</div>' +
     '<div class="card" style="max-height:260px;overflow-y:auto">' +
     (parsed.length ? parsed.slice(0, 50).map(function (p) {
-      // listRow() escapes its name argument but not meta — and p.unit here is
-      // a raw cell out of an uploaded spreadsheet.
-      return listRow(p.name, p.qty + ' ' + esc(p.unit) + ' · exp ' + (p.expiryUnknown ? 'unknown' : fmtDate(p.expiry)), fmt(p.sellPrice));
+      return listRow(p.name, p.qty + ' ' + p.unit + ' · exp ' + (p.expiryUnknown ? 'unknown' : fmtDate(p.expiry)), fmt(p.sellPrice));
     }).join('') : '<div class="empty">Nothing importable was found in that file.</div>') +
     (parsed.length > 50 ? '<div class="tiny" style="margin-top:8px">…and ' + (parsed.length - 50) + ' more</div>' : '') +
     '</div>' +
@@ -2453,7 +1846,7 @@ async function submitMasterDrugsSync() {
       });
     }
     var { error } = await sb.rpc('sync_master_drugs', { p_pharmacy_id: STATE.profile.pharmacy_id, p_items: items });
-    if (error) { toast(friendlyError(error), 'bad'); return; }
+    if (error) { toast(error.message, 'bad'); return; }
     toast('Added ' + items.length + ' drug' + (items.length === 1 ? '' : 's') + ' to inventory.', 'good');
     STATE.syncSelected = {};
     closeSheet();
@@ -2475,14 +1868,14 @@ function openReorderList() {
       return { name: d.name, unit: d.unit, current: d.qty_in_stock, reorderLevel: d.reorder_level, suggested: suggested };
     });
   pendingReorderList = needed;
-  var body = sheet('Reorder List', '');
+  var body = sheet('Reorder list', '');
   body.innerHTML =
     '<div class="toolbar-row"><div class="toolbar-segment toolbar-end">' +
     '<button class="btn" onclick="exportReorderExcel()">' + icon('download',15) + ' Excel</button>' +
     '<button class="btn" onclick="printReorderList()">' + icon('printer',15) + ' Print</button>' +
     '</div></div>' +
     '<div class="card">' + (needed.length ? needed.map(function (n) {
-      return listRow(n.name, 'Have ' + n.current + ' ' + esc(n.unit) + ' · reorder level ' + n.reorderLevel, '<b>Order ' + n.suggested + '</b>');
+      return listRow(n.name, 'Have ' + n.current + ' ' + n.unit + ' · reorder level ' + n.reorderLevel, '<b>Order ' + n.suggested + '</b>');
     }).join('') : '<div class="empty">Nothing needs reordering right now.</div>') + '</div>';
 }
 
@@ -2606,7 +1999,7 @@ async function saveNewDrug() {
       pack_label: $('#dPackLabel').value.trim() || null
     };
     var { data, error } = await sb.from('drugs').insert(payload).select().single();
-    if (error) { toast(friendlyError(error), 'bad'); return; }
+    if (error) { toast(error.message, 'bad'); return; }
     toast('Drug added.', 'good');
     openRestock(encodeDrugForRestock(data));
   });
@@ -2622,11 +2015,10 @@ async function openDrugDetail(drugId) {
   var body = sheet(d.name, '');
   body.innerHTML =
     '<div class="kpi-grid" style="margin-bottom:14px">' +
-    kpi('In stock', esc(qtyUnit(d.qty_in_stock, d.unit)), 't-sales') +
+    kpi('In stock', d.qty_in_stock + ' ' + esc(d.unit), 't-sales') +
     kpi('Stock value', fmt(d.stock_value_retail), 't-orange') +
     '</div>' +
     (can('restock') ? '<button class="btn primary" style="margin-bottom:14px" onclick="closeSheet();openRestock(' + "'" + encodeDrugForRestock(drugRow) + "'" + ')">+ Restock this drug</button>' : '') +
-    drugControlHtml(drugRow) +
     '<div class="section-title">Batches</div>' +
     (batches && batches.length ? batches.map(function (b) {
       var d2 = daysUntil(b.expiry_date);
@@ -2636,10 +2028,9 @@ async function openDrugDetail(drugId) {
       var kind = b.quantity_remaining === 0 ? 'muted' : b.expiry_unknown ? 'good' : d2 < 0 ? 'bad' : d2 <= 30 ? 'bad' : d2 <= 90 ? 'warn' : 'good';
       var expiryLabel = b.expiry_unknown ? 'Expiry unknown' : fmtDate(b.expiry_date);
       var discountBadge = b.discount_percent > 0 ? ' <span class="badge warn">-' + b.discount_percent + '%</span>' : '';
-      return '<div class="batch-row"><div class="batch-head"><div class="name">' + esc(b.batch_no || 'Batch') + ' · ' + expiryLabel + discountBadge + '</div>' +
-        '<span class="badge ' + kind + '">' + b.quantity_remaining + ' left</span></div>' +
+      return '<div class="list-row"><div><div class="name">' + esc(b.batch_no || 'Batch') + ' · ' + expiryLabel + discountBadge + '</div>' +
         '<div class="meta">Received ' + fmtDate(b.received_at) + (b.supplier ? ' from ' + esc(b.supplier) : '') + '</div>' +
-        ((can('write_off') || can('correct_stock') || can('edit_expiry')) && b.quantity_remaining > 0 ? '<div class="batch-actions">' +
+        ((can('write_off') || can('correct_stock') || can('edit_expiry')) && b.quantity_remaining > 0 ? '<div class="toolbar-row" style="margin-top:6px">' +
           (can('write_off') ? '<button class="btn ghost small" onclick="openWriteOff(\'' + b.id + '\',\'' + esc(d.name).replace(/'/g, "\\'") + '\',' + b.quantity_remaining + ')">Write off</button>' : '') +
           // Was gated on can('write_off') — a real pre-existing bug: this
           // button is "Correct count" (record_correction), a different
@@ -2654,7 +2045,7 @@ async function openDrugDetail(drugId) {
           // silently drops it out of "in stock" with no other way to correct it.
           (can('edit_expiry') ? '<button class="btn ghost small" onclick="openEditExpiry(\'' + b.id + '\',\'' + esc(d.name).replace(/'/g, "\\'") + '\',\'' + (b.expiry_unknown ? '' : b.expiry_date) + '\')">Edit expiry</button>' : '') +
           '</div>' : '') +
-        '</div>';
+        '</div><div class="right"><span class="badge ' + kind + '">' + b.quantity_remaining + ' left</span></div></div>';
     }).join('') : '<div class="empty">No batches yet.</div>');
 }
 
@@ -2699,7 +2090,7 @@ async function saveRestock(drugId) {
       p_supplier: supplierName,
       p_supplier_id: matchedSupplier ? matchedSupplier.id : null
     });
-    if (error) { toast(friendlyError(error), 'bad'); return; }
+    if (error) { toast(error.message, 'bad'); return; }
     toast('Restocked.', 'good');
     closeSheet();
     renderInventory();
@@ -2720,7 +2111,7 @@ function openWriteOff(batchId, drugName, maxQty) {
     '<option value="expired_disposal">Expired — disposed of</option>' +
     '<option value="write_off">Damaged / other write-off</option></select></div>' +
     '<div class="field"><label>Quantity</label><input id="woQty" type="number" min="1" max="' + maxQty + '"></div>' +
-    '<div class="field"><label>Reason (required)</label><textarea id="woReason" rows="2" placeholder="e.g. expired, disposed of per PPB"></textarea></div>' +
+    '<div class="field"><label>Reason / notes</label><textarea id="woReason" rows="2"></textarea></div>' +
     '<button class="btn danger" id="woSaveBtn" onclick="saveWriteOff(\'' + batchId + '\')">Write off stock</button>';
 }
 
@@ -2729,17 +2120,12 @@ async function saveWriteOff(batchId) {
   act(btn, async function () {
     var qty = parseInt($('#woQty').value, 10);
     if (!qty || qty <= 0) { toast('Enter a valid quantity.', 'bad'); return; }
-    // The reason is what the stock audit trail carries into a GSDP
-    // inspection, so record_write_off now requires it. Catch it here too,
-    // before the round trip, so the message points at the right field.
-    var woReason = $('#woReason').value.trim();
-    if (!woReason) { toast('Give a reason — it goes on the stock audit trail.', 'bad'); return; }
     // Write-offs permanently remove stock with no undo — a fat-fingered tap
     // at a busy counter shouldn't be able to do that with zero friction.
-    if (!(await askConfirm('Write off stock', 'Write off ' + qty + ' unit(s)? This cannot be undone.', 'Write off', true))) return;
+    if (!confirm('Write off ' + qty + ' unit(s)? This cannot be undone.')) return;
     var { error } = await sb.rpc('record_write_off', {
       p_pharmacy_id: STATE.profile.pharmacy_id, p_batch_id: batchId, p_quantity: qty,
-      p_reason: woReason, p_type: $('#woType').value
+      p_reason: $('#woReason').value.trim() || null, p_type: $('#woType').value
     });
     if (error) { toast(friendlyError(error), 'bad'); return; }
     toast('Recorded.', 'good');
@@ -2753,7 +2139,7 @@ function openCorrection(batchId, drugName, currentQty) {
   body.innerHTML =
     '<div class="tiny" style="margin-bottom:10px">System currently shows ' + currentQty + '. Enter what you actually counted.</div>' +
     '<div class="field"><label>Actual quantity</label><input id="coQty" type="number" min="0" value="' + currentQty + '"></div>' +
-    '<div class="field"><label>Reason (required)</label><textarea id="coReason" rows="2" placeholder="e.g. physical stock take, 30 Sep"></textarea></div>' +
+    '<div class="field"><label>Reason / notes</label><textarea id="coReason" rows="2" placeholder="e.g. physical stock take, 30 Sep"></textarea></div>' +
     '<button class="btn primary" id="coSaveBtn" onclick="saveCorrection(\'' + batchId + '\')">Save correction</button>';
 }
 
@@ -2762,17 +2148,13 @@ async function saveCorrection(batchId) {
   act(btn, async function () {
     var qty = parseInt($('#coQty').value, 10);
     if (qty === '' || isNaN(qty) || qty < 0) { toast('Enter a valid quantity.', 'bad'); return; }
-    // Same as write-off: a correction overwrites a counted quantity outright,
-    // and record_correction now insists on an explanation for the audit row.
-    var coReason = $('#coReason').value.trim();
-    if (!coReason) { toast('Give a reason — it goes on the stock audit trail.', 'bad'); return; }
     // A correction directly overwrites the batch's counted quantity — cheap
     // to close the same confirmation gap write-off and void already have,
     // so a fat-fingered tap doesn't silently overwrite a real count.
-    if (!(await askConfirm('Correct the count', 'Set this batch\'s quantity to ' + qty + '? This overwrites the current count.', 'Set quantity', true))) return;
+    if (!confirm('Set this batch\'s quantity to ' + qty + '? This overwrites the current count.')) return;
     var { error } = await sb.rpc('record_correction', {
       p_pharmacy_id: STATE.profile.pharmacy_id, p_batch_id: batchId, p_new_quantity: qty,
-      p_reason: coReason
+      p_reason: $('#coReason').value.trim() || null
     });
     if (error) { toast(friendlyError(error), 'bad'); return; }
     toast('Corrected.', 'good');
@@ -2854,41 +2236,19 @@ async function renderSell() {
   drawSell();
 }
 
-// The search box is drawn once and never rebuilt while typing: typing only
-// refreshes the result lists beneath it (rebuilding the box on every key press
-// confuses phone keyboards and can drop letters). While a search is active the
-// matches sit directly under the box, above the cart, so they are always in
-// view; with an empty box the full stock list sits below the cart as before.
-function sellRowHtml(d) {
-  return '<div class="list-row" onclick="addToCart(\'' + d.drug_id + '\')" style="cursor:pointer">' +
-    '<div><div class="name">' + esc(d.name) + (isControlledDrug(d) ? ' <span class="badge bad">' + CONTROL_LABEL[d.control_class] + '</span>' : d.is_prescription ? ' <span class="badge warn">Rx</span>' : '') + '</div><div class="meta">' + esc(qtyUnit(d.qty_in_stock, d.unit)) + ' available' + (d.default_price ? ' · ' + fmt(d.default_price) : '') + '</div></div>' +
-    '<div class="right btn small secondary">Add</div></div>';
-}
-function sellListsHtml() {
-  var raw = sellFilter.trim(), q = raw.toLowerCase();
-  var rows = STATE.drugsCache.filter(function (d) { return d.name.toLowerCase().indexOf(q) !== -1; });
-  var inner = rows.length ? rows.map(sellRowHtml).join('')
-    : '<div class="empty">Nothing in stock matches &ldquo;' + esc(raw) + '&rdquo;. If you expected it, check Inventory: it may be out of stock or not added yet.</div>';
-  var head = q ? '<div class="section-title" style="margin-top:0">' + rows.length + (rows.length === 1 ? ' match' : ' matches') + ' in stock</div>' : '';
-  return { searching: !!q, html: '<div class="card">' + head + inner + '</div>' };
-}
-function refreshSellLists() {
-  var top = $('#sellMatches'), all = $('#sellAll');
-  if (!top || !all) { drawSell(); return; }
-  var r = sellListsHtml();
-  top.innerHTML = r.searching ? r.html : '';
-  all.innerHTML = r.searching ? '' : r.html;
-}
 function drawSell() {
   var c = $('#content');
-  var r = sellListsHtml();
+  var q = sellFilter.toLowerCase();
+  var rows = STATE.drugsCache.filter(function (d) { return d.name.toLowerCase().indexOf(q) !== -1; });
   redrawKeepingFocus(c,
     (heldSalesCache.length ? heldSalesCard() : '') +
-    '<div class="searchbox field"><input id="sellSearchInput" type="search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" placeholder="Search a drug to sell…" value="' + esc(sellFilter) + '" oninput="sellFilter=this.value;refreshSellLists()"></div>' +
-    '<div id="sellMatches">' + (r.searching ? r.html : '') + '</div>' +
+    '<div class="searchbox field"><input id="sellSearchInput" placeholder="Search a drug to sell…" value="' + esc(sellFilter) + '" oninput="sellFilter=this.value;drawSell()"></div>' +
     (STATE.cart.length ? cartSummaryCard() : '') +
-    '<div id="sellAll">' + (r.searching ? '' : r.html) + '</div>');
-  syncCartBar();
+    '<div class="card">' + (rows.length ? rows.map(function (d) {
+      return '<div class="list-row" onclick="addToCart(\'' + d.drug_id + '\')" style="cursor:pointer">' +
+        '<div><div class="name">' + esc(d.name) + (d.is_prescription ? ' <span class="badge warn">Rx</span>' : '') + '</div><div class="meta">' + d.qty_in_stock + ' ' + esc(d.unit) + ' available' + (d.default_price ? ' · ' + fmt(d.default_price) : '') + '</div></div>' +
+        '<div class="right btn small secondary">Add</div></div>';
+    }).join('') : '<div class="empty">Nothing in stock matches that search.</div>') + '</div>');
 }
 
 function heldSalesCard() {
@@ -2896,18 +2256,15 @@ function heldSalesCard() {
     heldSalesCache.map(function (h) {
       var cart = h.cart || [];
       var total = cart.reduce(function (a, c) { return a + c.qty * c.price; }, 0);
-      return '<div class="list-row"><div><div class="name">' + esc(h.label || 'Held sale') + '</div><div class="meta">' + cart.length + (cart.length === 1 ? ' item · ' : ' items · ') + fmt(total) + ' · ' + new Date(h.created_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) + '</div></div>' +
-        '<div class="right" style="display:flex;gap:6px"><button class="btn small secondary" onclick="resumeHeldSale(this,\'' + h.id + '\')">Resume</button><button class="btn small danger" title="Discard" aria-label="Discard held sale" onclick="deleteHeldSale(this,\'' + h.id + '\')">' + icon('close',14) + '</button></div></div>';
+      return '<div class="list-row"><div><div class="name">' + esc(h.label || 'Held sale') + '</div><div class="meta">' + cart.length + ' item(s) · ' + fmt(total) + ' · ' + new Date(h.created_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) + '</div></div>' +
+        '<div class="right" style="display:flex;gap:6px"><button class="btn small secondary" onclick="resumeHeldSale(this,\'' + h.id + '\')">Resume</button><button class="btn small danger" onclick="deleteHeldSale(this,\'' + h.id + '\')">' + icon('close',14) + '</button></div></div>';
     }).join('') + '</div>';
 }
 
 async function holdSale(btn) {
-  if (!STATE.cart.length) { toast('Cart is empty.', 'bad'); return; }
-  var label = await askText('Hold this sale', 'Add a label if you like (optional), for example the customer\'s name or a counter number.', 'Label (optional)', 'Hold sale');
-  if (label === null) return;
-  label = label || null;
   act(btn, async function () {
     if (!STATE.cart.length) { toast('Cart is empty.', 'bad'); return; }
+    var label = prompt('Label for this held sale (optional) — e.g. customer name or counter number:') || null;
     var { error } = await sb.from('held_sales').insert({
       pharmacy_id: STATE.profile.pharmacy_id, label: label, cart: STATE.cart, created_by: STATE.session.user.id
     });
@@ -2918,10 +2275,10 @@ async function holdSale(btn) {
   });
 }
 
-async function resumeHeldSale(btn, id) {
+function resumeHeldSale(btn, id) {
   var h = heldSalesCache.find(function (x) { return x.id === id; });
   if (!h) return;
-  if (STATE.cart.length && !(await askConfirm('Replace the cart?', 'This will replace your current cart with the held sale.', 'Continue'))) return;
+  if (STATE.cart.length && !confirm('This will replace your current cart with the held sale. Continue?')) return;
   act(btn, async function () {
     STATE.cart = h.cart || [];
     await sb.from('held_sales').delete().eq('id', id);
@@ -2931,7 +2288,7 @@ async function resumeHeldSale(btn, id) {
 }
 
 async function deleteHeldSale(btn, id) {
-  if (!(await askConfirm('Discard this held sale?', 'Its items were never taken off the stock, so there is nothing to undo.', 'Discard', true))) return;
+  if (!confirm('Discard this held sale? Its items are not deducted from stock, so nothing to undo.')) return;
   act(btn, async function () {
     await sb.from('held_sales').delete().eq('id', id);
     heldSalesCache = heldSalesCache.filter(function (x) { return x.id !== id; });
@@ -2943,11 +2300,11 @@ function cartSummaryCard() {
   var total = STATE.cart.reduce(function (a, c) { return a + c.qty * c.price; }, 0);
   return '<div class="card"><div class="section-title" style="margin-top:0">Cart</div>' +
     STATE.cart.map(function (item, i) {
-      return '<div class="cart-line"><div><div class="name">' + esc(item.name) + (isControlledDrug(item) ? ' <span class="badge bad">' + CONTROL_LABEL[item.control_class] + '</span>' : item.is_prescription ? ' <span class="badge warn">Rx</span>' : '') + '</div><div class="meta">' + fmt(item.price) + ' each' + (item.patient_name ? ' · Patient: ' + esc(item.patient_name) : '') + '</div></div>' +
+      return '<div class="cart-line"><div><div class="name">' + esc(item.name) + (item.is_prescription ? ' <span class="badge warn">Rx</span>' : '') + '</div><div class="meta">' + fmt(item.price) + ' each' + (item.patient_name ? ' · Patient: ' + esc(item.patient_name) : '') + '</div></div>' +
         '<div class="qty-ctrl"><button onclick="changeQty(' + i + ',-1)">−</button><span>' + item.qty + '</span><button onclick="changeQty(' + i + ',1)">+</button></div></div>';
     }).join('') +
     '<div class="list-row"><div class="name">Total</div><div class="name">' + fmt(total) + '</div></div>' +
-    '<div class="toolbar-row" style="margin-top:10px"><button class="btn ghost" onclick="holdSale(this)">Hold sale</button><button class="btn primary" onclick="openCheckout()">Checkout</button></div></div>';
+    '<div class="toolbar-row" style="margin-top:10px"><button class="btn ghost" onclick="holdSale(this)">⏸ Hold</button><button class="btn primary" onclick="openCheckout()">Checkout</button></div></div>';
 }
 
 function addToCart(drugId) {
@@ -2960,16 +2317,12 @@ function addToCart(drugId) {
   drawSell();
 }
 
-function isControlledDrug(d) { return !!d && !!d.control_class && d.control_class !== 'none'; }
 function openRxCapture(d) {
   var body = sheet('Prescription details — ' + d.name, '');
   body.innerHTML =
-    '<div class="tiny" style="margin-bottom:10px">' + (isControlledDrug(d)
-      ? 'This is a controlled drug (' + CONTROL_LONG[d.control_class] + '). The patient, the prescriber and the prescription number are all recorded in its register.'
-      : 'This is a prescription-only drug. Record who it is for.') + '</div>' +
+    '<div class="tiny" style="margin-bottom:10px">This is a prescription-only drug. Record who it is for.</div>' +
     '<div class="field"><label>Patient name</label><input id="rxPatient" placeholder="Required"></div>' +
-    '<div class="field"><label>Prescriber name' + (isControlledDrug(d) ? '' : ' (optional)') + '</label><input id="rxPrescriber"' + (isControlledDrug(d) ? ' placeholder="Required"' : '') + '></div>' +
-    (isControlledDrug(d) ? '<div class="field"><label>Prescription number</label><input id="rxNumber" placeholder="Required"></div>' : '') +
+    '<div class="field"><label>Prescriber name (optional)</label><input id="rxPrescriber"></div>' +
     '<button class="btn primary" id="rxSaveBtn" onclick="confirmRxCapture(\'' + d.drug_id + '\')">Add to cart</button>';
 }
 
@@ -2979,166 +2332,58 @@ function confirmRxCapture(drugId) {
   var patient = $('#rxPatient').value.trim();
   if (!patient) { toast('Patient name is required for a prescription drug.', 'bad'); return; }
   var prescriber = $('#rxPrescriber').value.trim() || null;
-  var rxNumber = $('#rxNumber') ? $('#rxNumber').value.trim() : '';
-  if (isControlledDrug(d) && (!prescriber || !rxNumber)) { toast('A controlled drug needs the prescriber and the prescription number.', 'bad'); return; }
   STATE.cart.push({
     drug_id: drugId, name: d.name, unit: d.unit, price: d.default_price || 0, qty: 1, stock: d.qty_in_stock,
-    is_prescription: true, patient_name: patient, prescriber_name: prescriber, rx_number: rxNumber || null,
-    control_class: d.control_class || 'none'
+    is_prescription: true, patient_name: patient, prescriber_name: prescriber
   });
   closeSheet();
   drawSell();
 }
 
-// addToCart caps at available stock, but the cart's own "+" button did not —
-// so a seller could push a line past what is on the shelf and only find out at
-// Confirm, when record_sale refused the whole sale. Cap it here too, against
-// the live figure rather than the one cached when the item was added. Two
-// lines for the same drug (two prescriptions of one drug, say) draw on the
-// same stock, so they are counted together.
 function changeQty(i, delta) {
   var item = STATE.cart[i];
-  if (delta > 0) {
-    var live = STATE.drugsCache.find(function (x) { return x.drug_id === item.drug_id; });
-    var available = Number(live ? live.qty_in_stock : item.stock);
-    var inCart = STATE.cart.reduce(function (a, c) { return a + (c.drug_id === item.drug_id ? c.qty : 0); }, 0);
-    if (isFinite(available) && inCart + delta > available) {
-      toast('Only ' + qtyUnit(available, item.unit) + ' of ' + item.name + ' in stock.', 'bad');
-      return;
-    }
-  }
   item.qty += delta;
   if (item.qty <= 0) STATE.cart.splice(i, 1);
   drawSell();
 }
 
 var checkoutPayments = [];
-// The server's own pricing of the current cart — see openCheckout below.
-var lastQuote = null;
 
-// The Sell screen prices a cart from drugs.default_price, which record_restock
-// overwrites with the LATEST restock price. record_sale charges something
-// different: whatever the batch FEFO lands on costs, with that batch's
-// markdown (batches.discount_percent) applied. Those two agree only while a
-// drug has exactly one batch at the current price. The moment an older batch
-// is still on the shelf at a different price, or any batch is marked down, the
-// client asked for payments summing to the wrong number and record_sale
-// rejected the entire sale with "Payments (x) do not add up to the sale total
-// (y)" — which made the markdown feature unusable and broke the ordinary
-// restock-at-a-new-price case too. So: ask the database what this cart
-// actually comes to (quote_sale, same FEFO loop, read-only) and collect money
-// against THAT. The cart's own figure stays as the indicative shelf price.
-async function openCheckout() {
+function openCheckout() {
   if (!STATE.cart.length) { toast('Cart is empty.', 'bad'); return; }
-  var indicative = STATE.cart.reduce(function (a, c) { return a + c.qty * c.price; }, 0);
-  var body = sheet('Checkout', '<div class="card empty">Checking stock and prices…</div>');
-  body.id = 'checkoutBody';
-  lastQuote = null;
-
-  var items = STATE.cart.map(function (c) { return { drug_id: c.drug_id, quantity: c.qty }; });
-  var quote;
-  try {
-    var { data, error } = await sb.rpc('quote_sale', {
-      p_pharmacy_id: STATE.profile.pharmacy_id, p_items: items
-    });
-    if (error) throw error;
-    quote = data;
-  } catch (e) {
-    body.innerHTML = '<div class="card empty">' + esc(friendlyError(e)) +
-      '<div style="margin-top:12px"><button class="btn secondary small" onclick="openCheckout()">Try again</button></div></div>';
-    return;
-  }
-
-  if (!quote || quote.ok === false) {
-    var shortItem = (quote && quote.short_drug_id)
-      ? STATE.cart.find(function (c) { return c.drug_id === quote.short_drug_id; })
-      : null;
-    body.innerHTML = '<div class="card empty">' +
-      (shortItem
-        ? 'Not enough ' + esc(shortItem.name) + ' left — short by ' + (quote.short_by || 0) + '. Someone may have sold it while this cart was open.'
-        : 'Some of these items are no longer in stock.') +
-      '<div style="margin-top:12px"><button class="btn ghost small" onclick="closeSheet()">Back to the cart</button></div></div>';
-    return;
-  }
-
-  lastQuote = quote;
-  var total = Math.round((Number(quote.total) || 0) * 100) / 100;
+  var total = STATE.cart.reduce(function (a, c) { return a + c.qty * c.price; }, 0);
   checkoutPayments = [{ method: 'cash', amount: total, reference: '' }];
-  checkoutCustomerId = '';
-  // Saved customers, for the credit (kopa) option. If this fails the sale
-  // still works for cash; only credit needs the list.
-  try { await loadCustomers(); } catch (e) { /* keep whatever was loaded before */ }
+  var body = sheet('Checkout — ' + fmt(total), '');
+  body.id = 'checkoutBody';
   body.dataset.total = total;
-  body.dataset.priceNote = Math.abs(total - indicative) > 0.01 ? '1' : '';
-  var head = document.querySelector('.mask .sheet-head h2');
-  if (head) head.textContent = 'Checkout — ' + fmt(total);
   drawCheckoutPayments();
 }
-
-var checkoutCustomerId = '';   // '' = walk-in, '__new' = add one now, otherwise a saved customer's id
-
-function checkoutCreditTotal() {
-  return checkoutPayments.reduce(function (a, p) { return a + (p.method === 'credit' ? (parseFloat(p.amount) || 0) : 0); }, 0);
-}
-function setCheckoutCustomer(v) { checkoutCustomerId = v; drawCheckoutPayments(); }
 
 function drawCheckoutPayments() {
   var body = $('#checkoutBody');
   var total = parseFloat(body.dataset.total);
   var paid = checkoutPayments.reduce(function (a, p) { return a + (parseFloat(p.amount) || 0); }, 0);
   var balance = Math.round((total - paid) * 100) / 100;
-  // What was typed in the customer boxes survives a redraw (the whole sheet
-  // is rebuilt whenever a payment line changes).
-  var keep = function (id) { var e = document.getElementById(id); return e ? e.value : ''; };
-  var typedName = keep('pCustomer'), newName = keep('pNewName'), newPhone = keep('pNewPhone');
-  var credit = checkoutCreditTotal();
-  var cust = (checkoutCustomerId && checkoutCustomerId !== '__new')
-    ? customersCache.find(function (x) { return x.customer_id === checkoutCustomerId; }) : null;
-  var overBy = 0;
-  if (credit > 0 && cust && cust.credit_limit != null) {
-    overBy = Math.round((Number(cust.balance) + credit - Number(cust.credit_limit)) * 100) / 100;
-  }
-  var needCustomer = credit > 0 && !cust && checkoutCustomerId !== '__new';
-  var custHtml =
-    '<div class="field"><label>Customer' + (credit > 0 ? '' : ' (optional)') + '</label><select id="pCustSel" onchange="setCheckoutCustomer(this.value)">' +
-    '<option value="">' + (credit > 0 ? 'Choose who is taking this on credit…' : 'Walk-in customer') + '</option>' +
-    customersCache.filter(function (x) { return x.active; }).map(function (x) {
-      return '<option value="' + x.customer_id + '"' + (x.customer_id === checkoutCustomerId ? ' selected' : '') + '>' + esc(x.name) + (Number(x.balance) > 0.5 ? ' — owes ' + fmt(x.balance) : '') + '</option>';
-    }).join('') +
-    '<option value="__new"' + (checkoutCustomerId === '__new' ? ' selected' : '') + '>+ New customer…</option></select></div>' +
-    (!checkoutCustomerId && credit <= 0
-      ? '<div class="field"><label>Customer name (optional)</label><input id="pCustomer" value="' + esc(typedName) + '"></div>' : '') +
-    (checkoutCustomerId === '__new'
-      ? '<div class="row-2"><div class="field"><label>Name</label><input id="pNewName" value="' + esc(newName) + '"></div>' +
-        '<div class="field"><label>Phone (optional)</label><input id="pNewPhone" type="tel" value="' + esc(newPhone) + '" placeholder="07XXXXXXXX"></div></div>' : '') +
-    (cust && credit > 0
-      ? '<div class="tiny" style="margin-bottom:10px">Owes ' + fmt(cust.balance) + (cust.credit_limit != null ? ' · limit ' + fmt(cust.credit_limit) : ' · no limit') +
-        ' · after this sale ' + fmt(Number(cust.balance) + credit) + '</div>' : '') +
-    (overBy > 0.005 ? '<div class="inline-notice" style="color:var(--red)">' + icon('warn', 15) + '<span>This is ' + fmt(overBy) + ' over their credit limit. Take more cash, or ask the owner or pharmacist to raise the limit.</span></div>' : '');
-  var canConfirm = balance === 0 && overBy <= 0.005 && !needCustomer;
-  redrawKeepingFocus(body,
+  body.innerHTML =
     '<div class="section-title" style="margin-top:0">Payment</div>' +
-    (body.dataset.priceNote
-      ? '<div class="tiny" style="margin-bottom:8px">This total is priced from the batches the sale will actually come out of — soonest expiry first, with any markdown applied — so it differs from the shelf price shown in the cart.</div>'
-      : '') +
     checkoutPayments.map(function (p, i) {
       var needsRef = p.method === 'mpesa' || p.method === 'insurance' || p.method === 'bank';
       return '<div class="card" style="margin-bottom:8px">' +
         '<div class="row-2">' +
         '<div class="field" style="margin-bottom:6px"><label>Method</label><select onchange="setPaymentField(' + i + ',\'method\',this.value)">' +
-        ['cash', 'mpesa', 'credit', 'insurance', 'bank', 'other'].map(function (m) {
-          return '<option value="' + m + '"' + (p.method === m ? ' selected' : '') + '>' + esc(m === 'credit' ? 'Credit' : payLabel(m)) + '</option>';
+        ['cash', 'mpesa', 'insurance', 'bank', 'other'].map(function (m) {
+          return '<option value="' + m + '"' + (p.method === m ? ' selected' : '') + '>' + m.charAt(0).toUpperCase() + m.slice(1) + '</option>';
         }).join('') + '</select></div>' +
-        '<div class="field" style="margin-bottom:6px"><label>Amount</label><input id="pAmt' + i + '" type="number" step="0.01" value="' + p.amount + '" oninput="setPaymentField(' + i + ',\'amount\',this.value)"></div>' +
+        '<div class="field" style="margin-bottom:6px"><label>Amount</label><input type="number" step="0.01" value="' + p.amount + '" oninput="setPaymentField(' + i + ',\'amount\',this.value)"></div>' +
         '</div>' +
-        (needsRef ? '<div class="field" style="margin-bottom:0"><label>' + (p.method === 'insurance' ? 'Scheme / member no.' : 'Reference') + '</label><input id="pRef' + i + '" value="' + esc(p.reference || '') + '" oninput="setPaymentField(' + i + ',\'reference\',this.value)"></div>' : '') +
+        (needsRef ? '<div class="field" style="margin-bottom:0"><label>' + (p.method === 'insurance' ? 'Scheme / member no.' : 'Reference') + '</label><input value="' + esc(p.reference || '') + '" oninput="setPaymentField(' + i + ',\'reference\',this.value)"></div>' : '') +
         (checkoutPayments.length > 1 ? '<button class="btn small danger" style="margin-top:8px" onclick="removePaymentLine(' + i + ')">Remove</button>' : '') +
         '</div>';
     }).join('') +
     '<button class="btn ghost small" onclick="addPaymentLine()">+ Split into another payment method</button>' +
     '<div class="list-row"><div class="name">Balance</div><div class="name" style="color:' + (balance === 0 ? 'var(--green)' : 'var(--red)') + '">' + fmt(balance) + '</div></div>' +
-    custHtml +
-    '<button class="btn primary" id="pSaveBtn" ' + (canConfirm ? '' : 'disabled') + ' onclick="completeSale()">Confirm sale — ' + fmt(total) + '</button>');
+    '<div class="field"><label>Customer name (optional)</label><input id="pCustomer" value="' + esc($('#pCustomer') ? $('#pCustomer').value : '') + '"></div>' +
+    '<button class="btn primary" id="pSaveBtn" ' + (balance !== 0 ? 'disabled' : '') + ' onclick="completeSale()">Confirm sale — ' + fmt(total) + '</button>';
 }
 
 function setPaymentField(i, field, value) {
@@ -3162,95 +2407,47 @@ function removePaymentLine(i) {
 async function completeSale() {
   var btn = $('#pSaveBtn');
   act(btn, async function () {
-    // Re-price the receipt lines from the quote the sale was confirmed
-    // against, so the printed receipt shows what was actually charged (batch
-    // price with markdown) rather than the cart's indicative shelf price.
-    var perDrug = {};
-    if (lastQuote && lastQuote.lines) {
-      lastQuote.lines.forEach(function (l) {
-        var a = perDrug[l.drug_id] || { qty: 0, total: 0 };
-        a.qty += Number(l.quantity) || 0;
-        a.total += Number(l.line_total) || 0;
-        perDrug[l.drug_id] = a;
-      });
-    }
-    var quotedTotal = lastQuote ? Number(lastQuote.total) || 0 : null;
-    var soldItems = STATE.cart.map(function (c) {
-      var a = perDrug[c.drug_id];
-      return {
-        drug_id: c.drug_id, name: c.name, unit: c.unit, qty: c.qty,
-        price: (a && a.qty) ? a.total / a.qty : c.price,
-        patient_name: c.patient_name || null, prescriber_name: c.prescriber_name || null,
-        is_prescription: !!c.is_prescription
-      };
-    });
-    var items = STATE.cart.map(function (c) {
-      return { drug_id: c.drug_id, quantity: c.qty, patient_name: c.patient_name || null, prescriber_name: c.prescriber_name || null, rx_number: c.rx_number || null };
+    var soldItems = STATE.cart.slice();
+    var items = soldItems.map(function (c) {
+      return { drug_id: c.drug_id, quantity: c.qty, patient_name: c.patient_name || null, prescriber_name: c.prescriber_name || null };
     });
     var payments = checkoutPayments.map(function (p) {
       return { method: p.method, amount: parseFloat(p.amount) || 0, reference: p.reference || null };
     });
-    var customer = $('#pCustomer') ? $('#pCustomer').value.trim() || null : null;
-    var customerId = (checkoutCustomerId && checkoutCustomerId !== '__new') ? checkoutCustomerId : null;
-    if (checkoutCustomerId === '__new') {
-      var nn = $('#pNewName') ? $('#pNewName').value.trim() : '';
-      if (!nn) { toast('Enter the new customer\'s name.', 'bad'); return; }
-      // Created first, so a failed sale (say, over the limit) does not make
-      // the seller type them in again.
-      customerId = await rpcCall('save_customer', {
-        p_pharmacy_id: STATE.profile.pharmacy_id, p_name: nn, p_phone: ($('#pNewPhone').value.trim() || null),
-        p_credit_limit: null, p_notes: null, p_id: null, p_sms_ok: true, p_active: true
-      });
-      checkoutCustomerId = customerId;
-      try { await loadCustomers(); } catch (e) { /* the id is what matters */ }
-    }
-    if (customerId) {
-      var picked = customersCache.find(function (x) { return x.customer_id === customerId; });
-      if (picked) customer = picked.name;
-    }
-    if (payments.some(function (p) { return p.method === 'credit'; }) && !customerId) { toast('Choose the customer who is taking this on credit.', 'bad'); return; }
+    var customer = $('#pCustomer').value.trim() || null;
     var insuranceLine = payments.find(function (p) { return p.method === 'insurance'; });
     var { data: saleId, error } = await sb.rpc('record_sale', {
       p_pharmacy_id: STATE.profile.pharmacy_id,
       p_items: items,
       p_payments: payments,
       p_customer_name: customer,
-      p_insurance_scheme: insuranceLine ? insuranceLine.reference : null,
-      p_customer_id: customerId
+      p_insurance_scheme: insuranceLine ? insuranceLine.reference : null
     });
     if (error) { toast(friendlyError(error), 'bad'); return; }
-    // The insurance claim used to be inserted here, as a second round trip
-    // after the sale had already committed — so if that call failed (dropped
-    // connection at the till, tab closed) the sale stood but the claim never
-    // existed and the pharmacy quietly lost money it was owed. record_sale
-    // now creates it inside the same transaction, for every insurance payment
-    // line rather than only the first one.
+    if (insuranceLine) {
+      await sb.from('insurance_claims').insert({
+        pharmacy_id: STATE.profile.pharmacy_id, sale_id: saleId,
+        scheme: insuranceLine.reference || 'Unspecified', amount: insuranceLine.amount, status: 'pending'
+      });
+    }
     toast('Sale recorded.', 'good');
     STATE.cart = [];
     var invoiceNo = null;
     try { var { data: s } = await sb.from('sales').select('invoice_number').eq('id', saleId).single(); invoiceNo = s ? s.invoice_number : null; } catch (e) {}
-    showReceipt(soldItems, payments, customer, invoiceNo, quotedTotal);
-    lastQuote = null;
+    showReceipt(soldItems, payments, customer, invoiceNo);
     renderSell();
   });
 }
 
 var pendingReceipt = null; // holds the last completed sale for the print button below
 
-function showReceipt(items, payments, customer, invoiceNo, chargedTotal) {
-  // chargedTotal is what record_sale actually billed (see openCheckout). Only
-  // fall back to summing the lines when it isn't available.
-  var total = (chargedTotal == null)
-    ? items.reduce(function (a, c) { return a + c.qty * c.price; }, 0)
-    : chargedTotal;
+function showReceipt(items, payments, customer, invoiceNo) {
+  var total = items.reduce(function (a, c) { return a + c.qty * c.price; }, 0);
   pendingReceipt = { items: items, payments: payments, customer: customer, invoiceNo: invoiceNo, total: total };
   var body = sheet('Sale complete' + (invoiceNo ? ' — ' + invoiceNo : ''), '');
   body.innerHTML =
-    // listRow() escapes its first argument, so patient_name is passed raw here
-    // — it used to be esc()'d first and then escaped again, printing a
-    // customer's apostrophe as "&#39;" on the screen receipt.
     '<div class="card">' + items.map(function (it) {
-      return listRow(it.name + (it.patient_name ? ' (' + it.patient_name + ')' : ''), it.qty + ' × ' + fmt(it.price), fmt(it.qty * it.price));
+      return listRow(it.name + (it.patient_name ? ' (' + esc(it.patient_name) + ')' : ''), it.qty + ' × ' + fmt(it.price), fmt(it.qty * it.price));
     }).join('') + '<div class="list-row"><div class="name">Total</div><div class="name">' + fmt(total) + '</div></div></div>' +
     '<button class="btn primary" onclick="printReceipt()">' + icon('printer',15) + ' Print receipt</button>' +
     '<button class="btn ghost" style="margin-top:8px" onclick="closeSheet()">Done</button>';
@@ -3263,12 +2460,7 @@ function printReceipt() {
   var extra = [];
   if (d.invoiceNo) extra.push('Invoice: ' + esc(d.invoiceNo));
   if (d.customer) extra.push('Customer: ' + esc(d.customer));
-  // extra[] is dropped straight into the print area's HTML, so every piece of
-  // it has to be escaped — the payment reference is free text a seller types
-  // at checkout (M-Pesa code, scheme/member note), and was going in raw.
-  extra.push('Payment: ' + d.payments.map(function (p) {
-    return esc(payLabel(p.method)) + (p.reference ? ' (' + esc(p.reference) + ')' : '') + ' ' + fmt(p.amount);
-  }).join(', '));
+  extra.push('Payment: ' + d.payments.map(function (p) { return p.method + (p.reference ? ' (' + p.reference + ')' : '') + ' ' + fmt(p.amount); }).join(', '));
   printHtml('Receipt', new Date().toLocaleString('en-GB'),
     '<p style="margin:4px 0">' + extra.join(' · ') + '</p>' +
     tableHtml(['Item', 'Qty', 'Unit price', 'Line total'], rows) +
@@ -3303,8 +2495,7 @@ async function renderReports() {
   drawReportsHub();
 }
 
-function openReportView(v) { if (veilBusy) return; reportsView = v; runWithVeil(renderReports); }
-function openReportsHub() { if (veilBusy) return; reportsView = 'hub'; runWithVeil(renderReports); }
+function openReportsHub() { reportsView = 'hub'; renderReports(); }
 
 var REPORT_TILES = [
   { view: 'sales', kind: 't-sales', ico: 'sell', title: 'Sales Report', desc: 'Revenue, payment methods, top sellers and every transaction, by date range.' },
@@ -3319,7 +2510,7 @@ function drawReportsHub() {
   c.innerHTML =
     '<div class="reports-grid">' +
     REPORT_TILES.filter(function (r) { return r.view !== 'claims' || can('claims'); }).map(function (r) {
-      return '<button class="report-tile ' + r.kind + '" onclick="openReportView(\'' + r.view + '\')">' +
+      return '<button class="report-tile ' + r.kind + '" onclick="reportsView=\'' + r.view + '\';renderReports()">' +
         '<div class="r-ico">' + icon(r.ico, 20) + '</div>' +
         '<div><div class="r-title">' + esc(r.title) + '</div><div class="r-desc">' + esc(r.desc) + '</div></div>' +
       '</button>';
@@ -3328,18 +2519,18 @@ function drawReportsHub() {
 }
 
 function reportsBackBtn() {
-  return '<button class="btn ghost small" style="margin-bottom:10px" onclick="openReportsHub()">&larr; All Reports</button>';
+  return '<button class="btn ghost small" style="margin-bottom:10px" onclick="openReportsHub()">&larr; All reports</button>';
 }
 
 function drawReportsShell() {
   var c = $('#content');
   c.innerHTML =
     reportsBackBtn() +
-    '<div class="report-head"><div class="dash-tabs">' +
+    '<div class="row-3" style="margin-bottom:14px">' +
     ['today', 'week', 'month'].map(function (r) {
-      return '<button class="dash-tab' + (reportRange === r ? ' active' : '') + '" onclick="reportRange=\'' + r + '\';loadReport()">' + r[0].toUpperCase() + r.slice(1) + '</button>';
+      return '<button class="btn ' + (reportRange === r ? 'primary' : 'ghost') + ' small" onclick="reportRange=\'' + r + '\';loadReport()">' + r[0].toUpperCase() + r.slice(1) + '</button>';
     }).join('') + '</div>' +
-    '<div class="toolbar-segment">' +
+    '<div class="toolbar-row"><div class="toolbar-segment toolbar-end">' +
     '<button class="btn" onclick="exportReportExcel()">' + icon('download',15) + ' Excel</button>' +
     '<button class="btn" onclick="printReport()">' + icon('printer',15) + ' Print</button>' +
     '</div></div>' +
@@ -3362,8 +2553,8 @@ function drawReportsShell2(title) {
   var h = REPORT_SHELL_HANDLERS[reportsView] || {};
   c.innerHTML =
     reportsBackBtn() +
-    '<div class="report-head"><div class="section-title" style="margin:0">' + esc(title) + '</div>' +
-    '<div class="toolbar-segment">' +
+    '<div class="section-title" style="margin-top:0">' + esc(title) + '</div>' +
+    '<div class="toolbar-row"><div class="toolbar-segment toolbar-end">' +
     (h.excel ? '<button class="btn" onclick="' + h.excel + '()">' + icon('download',15) + ' Excel</button>' : '') +
     (h.print ? '<button class="btn" onclick="' + h.print + '()">' + icon('printer',15) + ' Print</button>' : '') +
     '</div></div>' +
@@ -3420,7 +2611,7 @@ async function loadReport() {
     sales = salesRes.data;
     (sales || []).forEach(function (s) { saleIds.push(s.id); });
     if (saleIds.length) {
-      var itemsRes = await sb.from('sale_items').select('id, sale_id, drug_id, quantity, unit_price, line_total, patient_name, prescriber_name, rx_number, drugs(name)').in('sale_id', saleIds);
+      var itemsRes = await sb.from('sale_items').select('id, sale_id, drug_id, quantity, unit_price, line_total, patient_name, prescriber_name, drugs(name)').in('sale_id', saleIds);
       items = itemsRes.data || [];
       var paysRes = await sb.from('sales_payments').select('*').in('sale_id', saleIds);
       payments = paysRes.data || [];
@@ -3470,7 +2661,7 @@ function drawReportBody() {
     '</div>' +
     '<div class="section-title">By payment method</div>' +
     '<div class="card">' + (Object.keys(byMethod).length ? Object.keys(byMethod).map(function (m) {
-      return listRow(payLabel(m), '', fmt(byMethod[m]));
+      return listRow(m.charAt(0).toUpperCase() + m.slice(1), '', fmt(byMethod[m]));
     }).join('') : '<div class="empty">No sales in this period yet.</div>') + '</div>' +
     '<div class="section-title">Top-selling drugs</div>' +
     '<div class="card">' + (topDrugs.length ? topDrugs.map(function (t) {
@@ -3482,7 +2673,7 @@ function drawReportBody() {
       var methodLabel = pays.length > 1 ? 'split' : (pays[0] ? pays[0].method : s.payment_method);
       return '<div class="list-row" style="cursor:pointer" onclick="openSaleDetail(\'' + s.id + '\')">' +
         '<div><div class="name">' + (s.invoice_number ? esc(s.invoice_number) + ' · ' : '') + fmt(s.total_amount) + (s.voided ? ' <span class="badge bad">Voided</span>' : '') + '</div>' +
-        '<div class="meta">' + new Date(s.sold_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) + ' · ' + esc(payLabel(methodLabel)) + '</div></div>' +
+        '<div class="meta">' + new Date(s.sold_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) + ' · ' + methodLabel + '</div></div>' +
         '<div class="right">' + (s.customer_name ? '<span class="tiny">' + esc(s.customer_name) + '</span>' : '') + '</div></div>';
     }).join('') : '<div class="empty">Nothing recorded yet.</div>') + '</div>' +
     (sales.length > visible.length ? '<button class="btn ghost" onclick="reportTxPage++;drawReportBody()">Load more</button>' : '');
@@ -3500,7 +2691,7 @@ function openSaleDetail(saleId) {
     '<div class="section-title" style="margin-top:0">Items</div>' +
     '<div class="card">' + items.map(function (it) {
       var name = it.drugs ? it.drugs.name : 'Unknown';
-      return '<div class="list-row"><div><div class="name">' + esc(name) + (it.patient_name ? ' (' + esc(it.patient_name) + ')' : '') + (it.rx_number ? ' <span class="badge warn">Rx ' + esc(it.rx_number) + '</span>' : '') + '</div>' +
+      return '<div class="list-row"><div><div class="name">' + esc(name) + (it.patient_name ? ' (' + esc(it.patient_name) + ')' : '') + '</div>' +
         '<div class="meta">' + it.quantity + ' × ' + fmt(it.unit_price) + '</div></div>' +
         '<div class="right">' + fmt(it.line_total) +
         (!s.voided && can('return') ? '<div><button class="btn small ghost" style="margin-top:4px" onclick="openReturnItem(\'' + it.id + '\',' + it.quantity + ',\'' + esc(name).replace(/'/g, "\\'") + '\')">Return</button></div>' : '') +
@@ -3508,9 +2699,7 @@ function openSaleDetail(saleId) {
     }).join('') + '</div>' +
     '<div class="section-title">Payments</div>' +
     '<div class="card">' + pays.map(function (p) {
-      // listRow() escapes its name argument but not meta, and the reference is
-      // free text typed at the till (M-Pesa code, scheme/member note).
-      return listRow(payLabel(p.method), esc(p.reference || ''), fmt(p.amount));
+      return listRow(p.method.charAt(0).toUpperCase() + p.method.slice(1), p.reference || '', fmt(p.amount));
     }).join('') + '<div class="list-row"><div class="name">Total</div><div class="name">' + fmt(s.total_amount) + '</div></div></div>' +
     (!s.voided && can('void') ? '<button class="btn danger" onclick="openVoidSale(\'' + saleId + '\')">Void entire sale</button>' : '');
 }
@@ -3902,7 +3091,7 @@ function drawLowStockReportBody() {
     kpi('Need reordering', rows.length, rows.length ? 't-red' : 't-neutral') +
     '</div>' +
     '<div class="card">' + (rows.length ? rows.map(function (n) {
-      return listRow(n.name, 'Have ' + n.current + ' ' + esc(n.unit) + ' · reorder level ' + n.reorderLevel, '<b>Order ' + n.suggested + '</b>');
+      return listRow(n.name, 'Have ' + n.current + ' ' + n.unit + ' · reorder level ' + n.reorderLevel, '<b>Order ' + n.suggested + '</b>');
     }).join('') : '<div class="empty">Nothing needs reordering right now.</div>') + '</div>';
 }
 
@@ -3948,7 +3137,7 @@ function drawClaims() {
     kpi('Total claims', claimsCache.length, 't-violet') +
     '</div>' +
     '<div class="card">' + (claimsCache.length ? claimsCache.map(function (c) {
-      return '<div class="list-row"><div><div class="name">' + esc(c.scheme) + '</div><div class="meta">' + fmtDate(c.created_at) + (c.claim_number ? ' · ' + esc(c.claim_number) : '') + '</div></div>' +
+      return '<div class="list-row"><div><div class="name">' + esc(c.scheme) + '</div><div class="meta">' + new Date(c.created_at).toLocaleDateString('en-GB') + (c.claim_number ? ' · ' + esc(c.claim_number) : '') + '</div></div>' +
         '<div class="right"><div>' + fmt(c.amount) + '</div><select style="margin-top:4px" onchange="updateClaimStatus(this,\'' + c.id + '\',this.value)">' +
         ['pending', 'submitted', 'paid', 'rejected'].map(function (s) { return '<option value="' + s + '"' + (c.status === s ? ' selected' : '') + '>' + s.charAt(0).toUpperCase() + s.slice(1) + '</option>'; }).join('') +
         '</select></div></div>';
@@ -4574,7 +3763,7 @@ function drawExpensesList() {
       ['today', 'week', 'month', 'year'].map(function (r) {
         return '<button class="dash-tab' + (expRange === r ? ' active' : '') + '" onclick="setExpRange(\'' + r + '\')">' + DASH_RANGE_LABELS[r] + '</button>';
       }).join('') +
-    '</div></div>' +
+    '</div><div class="dash-period-label">' + DASH_PERIOD_LABEL[expRange] + '</div></div>' +
     '<div class="kpi-grid" style="margin-bottom:14px">' +
       kpi('Total spent', fmt(total), 't-red') +
       kpi('Entries', active.length, 't-violet') +
@@ -4778,7 +3967,7 @@ async function saveSettings() {
       vat_rate: parseFloat($('#stVat').value) || 16
     };
     var { error } = await sb.from('pharmacies').update(payload).eq('id', STATE.profile.pharmacy_id);
-    if (error) { toast(friendlyError(error), 'bad'); return; }
+    if (error) { toast(error.message, 'bad'); return; }
     STATE.pharmacy = Object.assign({}, STATE.pharmacy, payload);
     toast('Saved.', 'good');
     render();
@@ -4786,937 +3975,4 @@ async function saveSettings() {
 }
 
 // ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-// CUSTOMERS, CREDIT (KOPA), REFILLS, SMS, CONTROLLED DRUGS, STOCK TAKE
-// (2026-10-29 — see schema.sql section "2026-10-29 modules" and the matching
-// migrations; every write below goes through a database function that checks
-// the caller's role again, so the can() checks here only decide what to show.)
-// ---------------------------------------------------------------------------
-
-function rpcCall(name, args) {
-  return sb.rpc(name, args).then(function (r) { if (r.error) throw r.error; return r.data; });
-}
-function fmtDateTime(iso) {
-  if (!iso) return '—';
-  return new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
-}
-// 254712345678 -> 0712 345 678
-function showPhone(p) {
-  var d = String(p || '').replace(/\D/g, '');
-  if (/^254[17]\d{8}$/.test(d)) d = '0' + d.slice(3);
-  return d.length === 10 ? d.slice(0, 4) + ' ' + d.slice(4, 7) + ' ' + d.slice(7) : String(p || '');
-}
-function firstName(n) { return String(n || '').trim().split(/\s+/)[0] || 'there'; }
-function pharmName() { return (STATE.pharmacy && STATE.pharmacy.name) || 'our pharmacy'; }
-function tabsHtml(items, current, handler) {
-  return '<div class="dash-filter-row"><div class="dash-tabs">' + items.map(function (i) {
-    return '<button class="dash-tab' + (current === i[0] ? ' active' : '') + '" onclick="' + handler + '(\'' + i[0] + '\')">' + i[1] + '</button>';
-  }).join('') + '</div></div>';
-}
-function backBtn(handler, label) {
-  return '<div class="toolbar-row"><button class="btn ghost small" onclick="' + handler + '">&larr; ' + esc(label) + '</button></div>';
-}
-
-// ---------------------------------------------------------------------------
-// SMS — messages are written here, approved and logged by sms_queue() in the
-// database, and sent by the send-sms Edge Function.
-// ---------------------------------------------------------------------------
-
-function refillMessage(r) {
-  return 'Hello ' + firstName(r.customer_name) + ', your ' + r.drug_name + ' is due for refill. Please visit ' +
-    pharmName() + (STATE.pharmacy && STATE.pharmacy.phone ? ' or call ' + STATE.pharmacy.phone : '') + '. Thank you.';
-}
-function creditMessage(name, balance) {
-  return 'Hello ' + firstName(name) + ', you have an outstanding balance of ' + fmt(balance) + ' at ' + pharmName() +
-    '. Kindly clear it at your earliest convenience' + (STATE.pharmacy && STATE.pharmacy.phone ? ' or call ' + STATE.pharmacy.phone : '') + '. Thank you.';
-}
-async function sendSms(messages) {
-  var r = await sb.functions.invoke('send-sms', { body: { pharmacy_id: STATE.profile.pharmacy_id, messages: messages } });
-  if (r.error) throw new Error('Could not reach the SMS service. Check your connection and try again.');
-  var d = r.data || {};
-  if (!d.ok) throw new Error(d.message || 'Could not send the message.');
-  return d;
-}
-function smsOutcomeText(d) {
-  var parts = [];
-  if (d.sent) parts.push(d.sent + (d.sent === 1 ? ' message sent' : ' messages sent'));
-  if (d.failed) parts.push(d.failed + ' failed');
-  var skip = (d.skipped || []).length;
-  if (skip) parts.push(skip + ' skipped (no phone, opted out, or already reminded today)');
-  return parts.length ? parts.join(', ') + '.' : 'Nothing was sent.';
-}
-function whatsappLink(phone, text) {
-  return 'https://wa.me/' + String(phone || '').replace(/\D/g, '') + '?text=' + encodeURIComponent(text);
-}
-
-// One message, shown first so the sender can read (and change) it.
-function openSmsPreview(customerId, kind, refId, text, phone, name) {
-  var body = sheet('Send SMS to ' + name, '');
-  body.innerHTML =
-    '<div class="tiny" style="margin-bottom:8px">To ' + esc(showPhone(phone)) + '</div>' +
-    '<div class="field"><label>Message</label><textarea id="smsText" rows="5" maxlength="459" oninput="smsCount()">' + esc(text) + '</textarea>' +
-    '<div class="tiny" id="smsCounter" style="margin-top:4px"></div></div>' +
-    '<button class="btn primary" id="smsSendBtn" onclick="doSendOneSms(\'' + customerId + '\',\'' + kind + '\',' + (refId ? '\'' + refId + '\'' : 'null') + ')">Send SMS</button>' +
-    '<a class="btn secondary" style="margin-top:8px;display:block;text-align:center;text-decoration:none" id="smsWaBtn" target="_blank" rel="noopener" href="' + esc(whatsappLink(phone, text)) + '">Send on WhatsApp instead (free)</a>';
-  smsCount();
-}
-function smsCount() {
-  var t = $('#smsText');
-  if (!t) return;
-  var n = t.value.length;
-  var segs = n <= 160 ? 1 : Math.ceil(n / 153);
-  var c = $('#smsCounter');
-  if (c) c.textContent = n + ' characters · ' + segs + (segs === 1 ? ' message' : ' messages');
-  var wa = $('#smsWaBtn');
-  if (wa) wa.href = wa.href.split('?text=')[0] + '?text=' + encodeURIComponent(t.value);
-}
-function doSendOneSms(customerId, kind, refId) {
-  var btn = $('#smsSendBtn');
-  act(btn, async function () {
-    var text = $('#smsText').value.trim();
-    if (!text) { toast('Write a message first.', 'bad'); return; }
-    var d = await sendSms([{ customer_id: customerId, body: text, kind: kind, ref_id: refId }]);
-    closeSheet();
-    toast(smsOutcomeText(d), d.sent ? 'good' : 'bad');
-    refreshCustomersScreen();
-  });
-}
-function refreshCustomersScreen() { if (STATE.tab === 'customers') renderCustomers(); }
-
-// ---------------------------------------------------------------------------
-// CUSTOMERS screen: Customers (with what they owe) | Refills | Messages
-// ---------------------------------------------------------------------------
-
-var customersCache = [];
-var custTab = 'customers';
-var custFilter = '';
-var custOnlyOwing = false;
-var custDetailId = null;
-var custDetail = null;      // { row, statement, refills }
-var refillsCache = [];
-var refillFilter = 'due';
-var smsLogCache = [];
-var refillDrugNames = [];   // [{id, name}] for the refill form's suggestions
-
-function canSeeCustomers() { return can('customers') || can('view_customers'); }
-
-async function loadCustomers() {
-  var r = await sb.from('v_customer_balances').select('*').order('name');
-  if (r.error) throw r.error;
-  customersCache = r.data || [];
-}
-async function loadRefills() {
-  var r = await sb.from('v_refills').select('*').order('next_due');
-  if (r.error) throw r.error;
-  refillsCache = r.data || [];
-}
-async function loadSmsLog() {
-  var r = await sb.from('sms_log').select('*, customers(name)').order('created_at', { ascending: false }).limit(60);
-  if (r.error) throw r.error;
-  smsLogCache = r.data || [];
-}
-
-async function renderCustomers() {
-  var c = $('#content');
-  if (!canSeeCustomers()) { c.innerHTML = '<div class="card empty">You do not have access to Customers.</div>'; return; }
-  c.innerHTML = '<div class="empty">Loading customers…</div>';
-  try {
-    await loadCustomers();
-    if (custTab === 'refills' && !custDetailId) await loadRefills();
-    if (custTab === 'messages' && !custDetailId) await loadSmsLog();
-  } catch (e) {
-    errorCard(c, friendlyError(e), 'renderCustomers');
-    return;
-  }
-  if (custDetailId) { openCustomerDetail(custDetailId); return; }
-  drawCustomers();
-}
-
-function setCustTab(t) { custTab = t; custDetailId = null; renderCustomers(); }
-
-function drawCustomers() {
-  var c = $('#content');
-  var dueCount = refillsCache.filter(function (r) { return Number(r.days_overdue) >= 0; }).length;
-  var head = tabsHtml([['customers', 'Customers'], ['refills', 'Refills' + (custTab === 'refills' && dueCount ? ' (' + dueCount + ')' : '')],
-    ['messages', 'Messages']], custTab, 'setCustTab');
-  if (custTab === 'refills') c.innerHTML = head + refillsHtml();
-  else if (custTab === 'messages') c.innerHTML = head + messagesHtml();
-  else c.innerHTML = head + customersListHtml();
-}
-
-function balanceBadge(b) {
-  b = Number(b) || 0;
-  if (b > 0.5) return '<span class="badge bad">Owes ' + fmt(b) + '</span>';
-  if (b < -0.5) return '<span class="badge good">Overpaid ' + fmt(-b) + '</span>';
-  return '<span class="badge good">Settled</span>';
-}
-
-function customersListHtml() {
-  var q = custFilter.toLowerCase();
-  var rows = customersCache.filter(function (r) {
-    if (!r.active && !(Number(r.balance) > 0.5)) return false;
-    if (custOnlyOwing && !(Number(r.balance) > 0.5)) return false;
-    return !q || String(r.name || '').toLowerCase().indexOf(q) !== -1 || String(r.phone || '').indexOf(q.replace(/\D/g, '') || '\u0000') !== -1;
-  });
-  var owed = customersCache.reduce(function (a, r) { return a + Math.max(0, Number(r.balance) || 0); }, 0);
-  var owing = customersCache.filter(function (r) { return Number(r.balance) > 0.5; }).length;
-  return '<div class="kpi-grid" style="margin-bottom:14px">' +
-    kpi('Owed to you', fmt(owed), owed > 0.5 ? 't-red' : 't-green') +
-    kpi('Customers owing', owing, 't-amber') + '</div>' +
-    '<div class="searchbox field"><input id="custSearchInput" placeholder="Search by name or phone…" value="' + esc(custFilter) + '" oninput="custFilter=this.value;drawCustomersList()"></div>' +
-    '<div class="toolbar-row">' +
-    (can('customers') ? '<button class="btn primary" onclick="openCustomerForm()">+ New customer</button>' : '') +
-    '<button class="btn ' + (custOnlyOwing ? 'secondary' : 'ghost') + '" onclick="custOnlyOwing=!custOnlyOwing;drawCustomersList()">' + (custOnlyOwing ? 'Showing owing only' : 'Owing only') + '</button>' +
-    '</div><div id="custList">' + customerRowsHtml(rows) + '</div>';
-}
-function customerRowsHtml(rows) {
-  return '<div class="card">' + (rows.length ? rows.map(function (r) {
-    var meta = [r.phone ? showPhone(r.phone) : 'No phone', Number(r.balance) > 0.5 && r.last_payment_at ? 'last paid ' + fmtDate(String(r.last_payment_at).slice(0, 10)) : null].filter(Boolean).join(' · ');
-    return '<div class="list-row" style="cursor:pointer" onclick="openCustomerDetail(\'' + r.customer_id + '\')">' +
-      '<div style="display:flex;align-items:center;gap:12px"><div class="row-avatar ' + (Number(r.balance) > 0.5 ? 'bad' : '') + '">' + esc((r.name || '?').charAt(0).toUpperCase()) + '</div>' +
-      '<div><div class="name">' + esc(r.name) + (r.active ? '' : ' <span class="badge warn">Closed</span>') + '</div><div class="meta">' + esc(meta) + '</div></div></div>' +
-      '<div class="right">' + balanceBadge(r.balance) + '</div></div>';
-  }).join('') : '<div class="empty">' + (customersCache.length ? 'No customers match.' : 'No customers yet. Add the people who buy on credit (kopa) or come back for regular medicine.') + '</div>') + '</div>';
-}
-function drawCustomersList() {
-  if (custTab !== 'customers') return;
-  var q = custFilter.toLowerCase();
-  var rows = customersCache.filter(function (r) {
-    if (!r.active && !(Number(r.balance) > 0.5)) return false;
-    if (custOnlyOwing && !(Number(r.balance) > 0.5)) return false;
-    return !q || String(r.name || '').toLowerCase().indexOf(q) !== -1 || String(r.phone || '').indexOf(q.replace(/\D/g, '') || '\u0000') !== -1;
-  });
-  var el = $('#custList');
-  if (el) el.innerHTML = customerRowsHtml(rows);
-  // the filter button's label changes, so redraw only that one button
-  var btns = document.querySelectorAll('#content .toolbar-row .btn');
-  btns.forEach(function (b) { if (/owing only/i.test(b.textContent)) { b.className = 'btn ' + (custOnlyOwing ? 'secondary' : 'ghost'); b.textContent = custOnlyOwing ? 'Showing owing only' : 'Owing only'; } });
-}
-
-// ----- add / edit a customer ------------------------------------------------
-
-function openCustomerForm(id) {
-  var cu = id ? customersCache.find(function (x) { return x.customer_id === id; }) : null;
-  var canLimit = can('credit_limit');
-  var body = sheet(cu ? 'Edit customer' : 'New customer', '');
-  body.innerHTML =
-    '<div class="field"><label>Name</label><input id="cuName" value="' + esc(cu ? cu.name : '') + '" placeholder="e.g. Jane Wanjiru"></div>' +
-    '<div class="field"><label>Phone (for reminders)</label><input id="cuPhone" type="tel" value="' + esc(cu && cu.phone ? showPhone(cu.phone) : '') + '" placeholder="07XXXXXXXX"></div>' +
-    (canLimit ? '<div class="field"><label>Credit limit (optional)</label><input id="cuLimit" type="number" min="0" step="1" value="' + (cu && cu.credit_limit != null ? cu.credit_limit : '') + '" placeholder="Most they can owe at once. Empty = no limit"></div>' : '') +
-    '<div class="field"><label>Notes (optional)</label><input id="cuNotes" value="' + esc(cu && cu.notes ? cu.notes : '') + '" placeholder="e.g. neighbour, pays at month end"></div>' +
-    '<div class="field"><label>Reminders by SMS</label><select id="cuSms"><option value="true"' + (!cu || cu.sms_ok ? ' selected' : '') + '>Allowed</option><option value="false"' + (cu && !cu.sms_ok ? ' selected' : '') + '>Never text this person</option></select></div>' +
-    (cu && canLimit ? '<div class="field"><label>Account</label><select id="cuActive"><option value="true"' + (cu.active ? ' selected' : '') + '>Open</option><option value="false"' + (!cu.active ? ' selected' : '') + '>Closed (only when they owe nothing)</option></select></div>' : '') +
-    '<button class="btn primary" id="cuSaveBtn" onclick="saveCustomerForm(' + (id ? '\'' + id + '\'' : 'null') + ')">Save customer</button>';
-}
-function saveCustomerForm(id) {
-  act($('#cuSaveBtn'), async function () {
-    var name = $('#cuName').value.trim();
-    if (!name) { toast('Enter the customer\'s name.', 'bad'); return; }
-    var limitEl = $('#cuLimit');
-    var cu = id ? customersCache.find(function (x) { return x.customer_id === id; }) : null;
-    var limit = limitEl ? (limitEl.value.trim() === '' ? null : Number(limitEl.value)) : (cu ? cu.credit_limit : null);
-    var activeEl = $('#cuActive');
-    await rpcCall('save_customer', {
-      p_pharmacy_id: STATE.profile.pharmacy_id, p_name: name, p_phone: $('#cuPhone').value.trim() || null,
-      p_credit_limit: limit, p_notes: $('#cuNotes').value.trim() || null, p_id: id || null,
-      p_sms_ok: $('#cuSms').value === 'true', p_active: activeEl ? activeEl.value === 'true' : (cu ? cu.active : true)
-    });
-    closeSheet();
-    toast('Customer saved.', 'good');
-    if (custDetailId) openCustomerDetail(custDetailId); else renderCustomers();
-  });
-}
-
-// ----- one customer: balance, payments, statement, refills -------------------
-
-function retryCustomerDetail() { if (custDetailId) openCustomerDetail(custDetailId); }
-
-async function openCustomerDetail(id) {
-  custDetailId = id;
-  STATE.tab = 'customers';
-  var c = $('#content');
-  if (!c) return;
-  c.innerHTML = '<div class="empty">Loading customer…</div>';
-  try {
-    var rowRes = await sb.from('v_customer_balances').select('*').eq('customer_id', id).maybeSingle();
-    if (rowRes.error) throw rowRes.error;
-    if (!rowRes.data) { custDetailId = null; c.innerHTML = '<div class="card empty">Customer not found.</div>'; return; }
-    var res = await Promise.all([
-      rpcCall('customer_statement', { p_pharmacy_id: STATE.profile.pharmacy_id, p_customer_id: id }),
-      sb.from('v_refills').select('*').eq('customer_id', id).order('next_due')
-    ]);
-    if (res[1].error) throw res[1].error;
-    custDetail = { row: rowRes.data, statement: res[0] || [], refills: res[1].data || [] };
-  } catch (e) {
-    errorCard(c, friendlyError(e), 'retryCustomerDetail');
-    return;
-  }
-  drawCustomerDetail();
-}
-function closeCustomerDetail() { custDetailId = null; custDetail = null; renderCustomers(); }
-
-function drawCustomerDetail() {
-  var c = $('#content');
-  var d = custDetail, r = d.row;
-  var bal = Number(r.balance) || 0;
-  var canPay = can('customers');
-  var rowsHtml = d.statement.length ? d.statement.slice().reverse().map(function (s) {
-    var isPay = s.kind === 'payment';
-    var label = s.kind === 'credit' ? 'On credit · ' + s.ref : s.kind === 'credit_note' ? 'Return credited' + (s.note ? ' · ' + s.note : '') : 'Payment' + (s.ref ? ' · ' + s.ref : '');
-    var meta = fmtDateTime(s.entry_at) + (s.voided ? ' · reversed' + (s.note ? ': ' + s.note : '') : (isPay && s.note ? ' · ' + s.note : ''));
-    return '<div class="list-row"' + (s.voided ? ' style="text-decoration:line-through"' : '') + '><div><div class="name">' + esc(label) + '</div><div class="meta">' + esc(meta) + '</div></div>' +
-      '<div class="right"><div class="name" style="color:' + (s.kind === 'credit' ? 'var(--red)' : 'var(--green)') + '">' + (s.kind === 'credit' ? '+' : '−') + fmt(s.amount) + '</div>' +
-      (s.voided ? '' : '<div class="meta">Balance ' + fmt(s.running) + '</div>') +
-      (isPay && !s.voided && can('void') ? '<button class="btn ghost small" style="margin-top:4px" onclick="openVoidCustomerPayment(\'' + s.pay_id + '\')">Reverse</button>' : '') +
-      '</div></div>';
-  }).join('') : '<div class="empty">Nothing on this account yet.</div>';
-  var refillsHtml = d.refills.length ? d.refills.map(function (p) { return refillRowHtml(p, false); }).join('') : '<div class="empty">No refills set up for this customer.</div>';
-
-  c.innerHTML =
-    backBtn('closeCustomerDetail()', 'All customers') +
-    '<div class="card" style="margin-bottom:12px"><div class="name" style="font-size:18px;font-weight:700">' + esc(r.name) + (r.active ? '' : ' <span class="badge warn">Closed</span>') + '</div>' +
-    '<div class="meta">' + esc(r.phone ? showPhone(r.phone) : 'No phone number') + (r.sms_ok ? '' : ' · no SMS') + '</div>' +
-    (r.notes ? '<div class="tiny" style="margin-top:6px">' + esc(r.notes) + '</div>' : '') + '</div>' +
-    '<div class="kpi-grid" style="margin-bottom:12px">' +
-    kpi(bal < -0.5 ? 'Overpaid' : 'Owes now', fmt(Math.abs(bal)), bal > 0.5 ? 't-red' : 't-green') +
-    kpi('Credit limit', r.credit_limit != null ? fmt(r.credit_limit) : 'No limit', 't-violet') + '</div>' +
-    '<div class="toolbar-row">' +
-    (canPay && bal > 0.5 ? '<button class="btn primary" onclick="openCustomerPayment()">Record payment</button>' : '') +
-    (can('sms') && bal > 0.5 && r.phone && r.sms_ok ? '<button class="btn secondary" onclick="remindCustomerBalance()">Remind by SMS</button>' : '') +
-    (r.phone && bal > 0.5 ? '<a class="btn ghost" style="text-decoration:none" target="_blank" rel="noopener" href="' + esc(whatsappLink(r.phone, creditMessage(r.name, bal))) + '">WhatsApp</a>' : '') +
-    (canPay ? '<button class="btn ghost" onclick="openCustomerForm(\'' + r.customer_id + '\')">Edit</button>' : '') +
-    '</div>' +
-    '<div class="section-title">Refills' + (canPay ? ' <button class="btn secondary small" style="margin-left:8px" onclick="openRefillForm(\'' + r.customer_id + '\')">+ Add</button>' : '') + '</div>' +
-    '<div class="card">' + refillsHtml + '</div>' +
-    '<div class="section-title">Statement' + (d.statement.length ? ' <button class="btn ghost small" style="margin-left:8px" onclick="printCustomerStatement()">' + icon('printer', 14) + ' Print</button>' : '') + '</div>' +
-    '<div class="card">' + rowsHtml + '</div>';
-}
-
-function openCustomerPayment() {
-  var r = custDetail.row;
-  var body = sheet('Payment from ' + r.name, '');
-  body.innerHTML =
-    '<div class="tiny" style="margin-bottom:10px">Owes ' + fmt(r.balance) + '. A payment cannot be more than that.</div>' +
-    '<div class="row-2"><div class="field"><label>Amount</label><input id="cpAmount" type="number" min="1" step="0.01" value="' + Math.round(Number(r.balance) * 100) / 100 + '"></div>' +
-    '<div class="field"><label>Paid by</label><select id="cpMethod"><option value="cash">Cash</option><option value="mpesa">M-Pesa</option><option value="bank">Bank</option><option value="other">Other</option></select></div></div>' +
-    '<div class="field"><label>Reference (M-Pesa code, optional)</label><input id="cpRef"></div>' +
-    '<div class="field"><label>Note (optional)</label><input id="cpNote"></div>' +
-    '<button class="btn primary" id="cpSaveBtn" onclick="saveCustomerPayment()">Record payment</button>';
-}
-function saveCustomerPayment() {
-  act($('#cpSaveBtn'), async function () {
-    var amount = parseFloat($('#cpAmount').value);
-    if (!(amount > 0)) { toast('Enter an amount greater than zero.', 'bad'); return; }
-    await rpcCall('record_customer_payment', {
-      p_pharmacy_id: STATE.profile.pharmacy_id, p_customer_id: custDetail.row.customer_id, p_amount: amount,
-      p_method: $('#cpMethod').value, p_reference: $('#cpRef').value.trim() || null, p_note: $('#cpNote').value.trim() || null
-    });
-    closeSheet();
-    toast('Payment recorded.', 'good');
-    openCustomerDetail(custDetailId);
-  });
-}
-function openVoidCustomerPayment(payId) {
-  var body = sheet('Reverse this payment', '');
-  body.innerHTML =
-    '<div class="tiny" style="margin-bottom:10px">Use this only for a payment entered by mistake. The debt comes back and the entry stays on the statement, marked reversed.</div>' +
-    '<div class="field"><label>Reason</label><input id="vpReason" placeholder="e.g. entered twice"></div>' +
-    '<button class="btn danger" id="vpSaveBtn" onclick="doVoidCustomerPayment(\'' + payId + '\')">Reverse payment</button>';
-}
-function doVoidCustomerPayment(payId) {
-  act($('#vpSaveBtn'), async function () {
-    var reason = $('#vpReason').value.trim();
-    if (!reason) { toast('Give a reason.', 'bad'); return; }
-    await rpcCall('void_customer_payment', { p_pharmacy_id: STATE.profile.pharmacy_id, p_payment_id: payId, p_reason: reason });
-    closeSheet();
-    toast('Payment reversed.', 'good');
-    openCustomerDetail(custDetailId);
-  });
-}
-function remindCustomerBalance() {
-  var r = custDetail.row;
-  openSmsPreview(r.customer_id, 'credit', null, creditMessage(r.name, r.balance), r.phone, r.name);
-}
-function printCustomerStatement() {
-  var d = custDetail;
-  var rows = d.statement.map(function (s) {
-    return [fmtDateTime(s.entry_at), s.kind === 'credit' ? 'On credit ' + s.ref : s.kind === 'credit_note' ? 'Return credited' : 'Payment ' + (s.ref || ''),
-      s.kind === 'credit' ? fmt(s.amount) : '', s.kind === 'credit' ? '' : fmt(s.amount), s.voided ? 'Reversed' : fmt(s.running)];
-  });
-  printHtml('Customer statement', d.row.name,
-    '<p style="margin:4px 0">Balance owed: <b>' + esc(fmt(d.row.balance)) + '</b></p>' + tableHtml(['Date', 'Details', 'Credit given', 'Paid', 'Balance'], rows));
-}
-
-// ----- refills ---------------------------------------------------------------
-
-function refillStatus(p) {
-  var n = Number(p.days_overdue);
-  if (n > 0) return '<span class="badge bad">' + n + (n === 1 ? ' day late' : ' days late') + '</span>';
-  if (n === 0) return '<span class="badge warn">Due today</span>';
-  return '<span class="badge ' + (n >= -7 ? 'warn' : 'good') + '">in ' + (-n) + (n === -1 ? ' day' : ' days') + '</span>';
-}
-function refillRowHtml(p, withCustomer) {
-  var reminded = p.last_reminded_on ? ' · reminded ' + fmtDate(p.last_reminded_on) : '';
-  var canAct = can('customers');
-  var msg = refillMessage(p);
-  var buttons =
-    (can('sms') && p.phone && p.sms_ok ? '<button class="btn secondary small" onclick="openRefillReminder(\'' + p.plan_id + '\')">Remind</button>' : '') +
-    (p.phone ? '<a class="btn ghost small" style="text-decoration:none;text-align:center" target="_blank" rel="noopener" href="' + esc(whatsappLink(p.phone, msg)) + '">WhatsApp</a>' : '') +
-    (canAct ? '<button class="btn ghost small" onclick="doMarkRefilled(this,\'' + p.plan_id + '\')">Refilled</button>' +
-      '<button class="btn ghost small" onclick="openRefillForm(\'' + p.customer_id + '\',\'' + p.plan_id + '\')">Edit</button>' : '');
-  return '<div class="list-row" style="flex-direction:column;align-items:stretch;gap:0">' +
-    '<div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start"><div style="min-width:0"><div class="name">' + esc(withCustomer ? p.customer_name : p.drug_name) + '</div>' +
-    '<div class="meta wrap">' + esc((withCustomer ? p.drug_name + (p.qty ? ' × ' + p.qty : '') + ' · ' : 'every ' + p.interval_days + ' days · ') + (p.phone ? showPhone(p.phone) : 'no phone') + reminded) + '</div></div>' +
-    '<div class="right">' + refillStatus(p) + '</div></div>' +
-    (buttons ? '<div class="batch-actions">' + buttons + '</div>' : '') + '</div>';
-}
-function refillsHtml() {
-  var f = refillFilter;
-  var rows = refillsCache.filter(function (p) {
-    var n = Number(p.days_overdue);
-    return f === 'due' ? n >= 0 : f === 'soon' ? n < 0 && n >= -7 : true;
-  });
-  var dueNow = refillsCache.filter(function (p) { return Number(p.days_overdue) >= 0 && p.phone && p.sms_ok && p.last_reminded_on !== todayKe(); });
-  var bulk = can('sms') && f === 'due' && dueNow.length
-    ? '<button class="btn primary" onclick="openBulkRefillReminder()">Remind all due (' + dueNow.length + ')</button>' : '';
-  return '<div class="tiny" style="margin-bottom:10px">People who come back for the same medicine (blood pressure, diabetes, family planning). Add a refill from a customer, or press <b>+ New refill</b>. Selling that medicine to that customer moves the date on by itself.</div>' +
-    '<div class="toolbar-row">' + (can('customers') ? '<button class="btn ' + (bulk ? 'secondary' : 'primary') + '" onclick="openRefillForm()">+ New refill</button>' : '') + bulk + '</div>' +
-    '<div class="dash-filter-row"><div class="dash-tabs">' + [['due', 'Due'], ['soon', 'Next 7 days'], ['all', 'All']].map(function (i) {
-      return '<button class="dash-tab' + (f === i[0] ? ' active' : '') + '" onclick="refillFilter=\'' + i[0] + '\';drawCustomers()">' + i[1] + '</button>';
-    }).join('') + '</div></div>' +
-    '<div class="card">' + (rows.length ? rows.map(function (p) { return refillRowHtml(p, true); }).join('') :
-      '<div class="empty">' + (f === 'due' ? 'Nobody is due for a refill right now.' : f === 'soon' ? 'Nobody is due in the next 7 days.' : 'No refills set up yet.') + '</div>') + '</div>';
-}
-function todayKe() {
-  // Nairobi's date as YYYY-MM-DD, the same "today" the database uses
-  return new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 10);
-}
-
-async function openRefillForm(customerId, planId) {
-  var plan = planId ? refillsCache.concat(custDetail ? custDetail.refills : []).find(function (p) { return p.plan_id === planId; }) : null;
-  var body = sheet(plan ? 'Edit refill' : 'New refill', '<div class="empty">Loading…</div>');
-  try {
-    if (!customersCache.length) await loadCustomers();
-    if (!refillDrugNames.length) {
-      var dr = await sb.from('v_drug_stock').select('drug_id,name').order('name');
-      refillDrugNames = (dr.data || []).map(function (x) { return { id: x.drug_id, name: x.name }; });
-    }
-  } catch (e) { /* the form still works without suggestions */ }
-  var custs = customersCache.filter(function (x) { return x.active; });
-  var cid = plan ? plan.customer_id : customerId;
-  body = $('#sheetBody');
-  body.innerHTML =
-    '<div class="field"><label>Customer</label><select id="rfCustomer"' + (customerId && !plan ? ' disabled' : '') + '>' +
-    (cid ? '' : '<option value="">Choose a customer…</option>') +
-    custs.map(function (x) { return '<option value="' + x.customer_id + '"' + (x.customer_id === cid ? ' selected' : '') + '>' + esc(x.name) + '</option>'; }).join('') + '</select></div>' +
-    '<div class="field"><label>Medicine</label><input id="rfDrug" list="rfDrugList" autocomplete="off" value="' + esc(plan ? plan.drug_name : '') + '" placeholder="e.g. Amlodipine 5mg">' +
-    '<datalist id="rfDrugList">' + refillDrugNames.map(function (d) { return '<option value="' + esc(d.name) + '">'; }).join('') + '</datalist></div>' +
-    '<div class="row-2"><div class="field"><label>Refill every (days)</label><input id="rfDays" type="number" min="1" max="365" value="' + (plan ? plan.interval_days : 30) + '"></div>' +
-    '<div class="field"><label>Quantity each time (optional)</label><input id="rfQty" type="number" min="1" value="' + (plan && plan.qty ? plan.qty : '') + '"></div></div>' +
-    '<div class="field"><label>Last bought on</label><input id="rfLast" type="date" max="' + todayKe() + '" value="' + (plan ? plan.last_filled : todayKe()) + '"></div>' +
-    '<div class="field"><label>Notes (optional)</label><input id="rfNotes" value="' + esc(plan && plan.notes ? plan.notes : '') + '"></div>' +
-    '<button class="btn primary" id="rfSaveBtn" onclick="saveRefillForm(' + (planId ? '\'' + planId + '\'' : 'null') + ')">Save refill</button>' +
-    (plan ? '<button class="btn danger" style="margin-top:8px" onclick="doStopRefill(this,\'' + planId + '\')">Stop this refill</button>' : '');
-}
-function saveRefillForm(planId) {
-  act($('#rfSaveBtn'), async function () {
-    var cid = $('#rfCustomer').value;
-    var name = $('#rfDrug').value.trim();
-    if (!cid) { toast('Choose the customer.', 'bad'); return; }
-    if (!name) { toast('Say which medicine.', 'bad'); return; }
-    var match = refillDrugNames.find(function (d) { return d.name === name; });
-    await rpcCall('save_refill_plan', {
-      p_pharmacy_id: STATE.profile.pharmacy_id, p_customer_id: cid, p_drug_name: name,
-      p_interval_days: parseInt($('#rfDays').value, 10), p_drug_id: match ? match.id : null,
-      p_last_filled: $('#rfLast').value || null, p_qty: parseInt($('#rfQty').value, 10) || null,
-      p_notes: $('#rfNotes').value.trim() || null, p_id: planId || null
-    });
-    closeSheet();
-    toast('Refill saved.', 'good');
-    if (custDetailId) openCustomerDetail(custDetailId); else renderCustomers();
-  });
-}
-function doStopRefill(btn, planId) {
-  act(btn, async function () {
-    await rpcCall('stop_refill_plan', { p_pharmacy_id: STATE.profile.pharmacy_id, p_plan_id: planId });
-    closeSheet();
-    toast('Refill stopped.', 'good');
-    if (custDetailId) openCustomerDetail(custDetailId); else renderCustomers();
-  });
-}
-function doMarkRefilled(btn, planId) {
-  act(btn, async function () {
-    await rpcCall('mark_refilled', { p_pharmacy_id: STATE.profile.pharmacy_id, p_plan_id: planId });
-    toast('Marked as refilled today.', 'good');
-    if (custDetailId) openCustomerDetail(custDetailId); else renderCustomers();
-  });
-}
-function openRefillReminder(planId) {
-  var p = refillsCache.concat(custDetail ? custDetail.refills : []).find(function (x) { return x.plan_id === planId; });
-  if (!p) return;
-  openSmsPreview(p.customer_id, 'refill', p.plan_id, refillMessage(p), p.phone, p.customer_name);
-}
-function openBulkRefillReminder() {
-  var due = refillsCache.filter(function (p) { return Number(p.days_overdue) >= 0 && p.phone && p.sms_ok && p.last_reminded_on !== todayKe(); }).slice(0, 50);
-  var cap = STATE.pharmacy && STATE.pharmacy.sms_daily_cap;
-  var body = sheet('Remind everyone who is due', '');
-  body.innerHTML =
-    '<div class="tiny" style="margin-bottom:10px">' + due.length + (due.length === 1 ? ' person' : ' people') + ' will get a message like this (their own name and medicine go in):</div>' +
-    '<div class="card" style="margin-bottom:12px">' + esc(refillMessage(due[0])) + '</div>' +
-    '<div class="card" style="margin-bottom:12px">' + due.map(function (p) { return listRow(p.customer_name, esc(p.drug_name), refillStatus(p)); }).join('') + '</div>' +
-    (cap ? '<div class="tiny" style="margin-bottom:10px">Your pharmacy can send up to ' + cap + ' messages a day.</div>' : '') +
-    '<button class="btn primary" id="bulkSendBtn" onclick="doBulkRefillReminder()">Send ' + due.length + (due.length === 1 ? ' message' : ' messages') + '</button>';
-}
-function doBulkRefillReminder() {
-  act($('#bulkSendBtn'), async function () {
-    var due = refillsCache.filter(function (p) { return Number(p.days_overdue) >= 0 && p.phone && p.sms_ok && p.last_reminded_on !== todayKe(); }).slice(0, 50);
-    var d = await sendSms(due.map(function (p) { return { customer_id: p.customer_id, body: refillMessage(p), kind: 'refill', ref_id: p.plan_id }; }));
-    closeSheet();
-    toast(smsOutcomeText(d), d.sent ? 'good' : 'bad');
-    refreshCustomersScreen();
-  });
-}
-
-// ----- messages --------------------------------------------------------------
-
-function messagesHtml() {
-  var p = STATE.pharmacy || {};
-  var start = todayKe();
-  var usedToday = smsLogCache.filter(function (m) { return m.status !== 'failed' && String(new Date(new Date(m.created_at).getTime() + 3 * 3600 * 1000).toISOString()).slice(0, 10) === start; }).length;
-  var enabled = p.sms_enabled !== false;
-  var isOwner = STATE.profile.role === 'owner' || STATE.profile.role === 'co_owner';
-  return '<div class="kpi-grid" style="margin-bottom:14px">' +
-    kpi('Sent today', usedToday + (p.sms_daily_cap ? ' of ' + p.sms_daily_cap : ''), 't-sales') +
-    kpi('SMS', enabled ? 'On' : 'Off', enabled ? 't-green' : 't-red') + '</div>' +
-    '<div class="toolbar-row">' +
-    (can('sms') && enabled ? '<button class="btn primary" onclick="openComposeSms()">+ New message</button>' : '') +
-    (isOwner ? '<button class="btn ghost" onclick="toggleSmsEnabled(this)">' + (enabled ? 'Turn SMS off' : 'Turn SMS on') + '</button>' : '') + '</div>' +
-    '<div class="tiny" style="margin-bottom:10px">Messages go out from the Pharma SMS service. Every message is listed here with who sent it. Customers marked "never text" are skipped.</div>' +
-    '<div class="card">' + (smsLogCache.length ? smsLogCache.map(function (m) {
-      var badge = m.status === 'sent' ? '<span class="badge good">Sent</span>' : m.status === 'failed' ? '<span class="badge bad">Failed</span>' : '<span class="badge warn">Waiting</span>';
-      var who = (m.customers && m.customers.name) || showPhone(m.to_phone);
-      return '<div class="list-row" style="align-items:flex-start"><div style="min-width:0"><div class="name">' + esc(who) + '</div>' +
-        '<div class="meta wrap">' + esc(m.body) + '</div>' +
-        '<div class="meta">' + esc(fmtDateTime(m.created_at) + (m.error ? ' · ' + m.error : '')) + '</div></div>' +
-        '<div class="right">' + badge + '</div></div>';
-    }).join('') : '<div class="empty">No messages yet.</div>') + '</div>';
-}
-function toggleSmsEnabled(btn) {
-  act(btn, async function () {
-    var on = !(STATE.pharmacy && STATE.pharmacy.sms_enabled !== false);
-    await rpcCall('set_sms_enabled', { p_pharmacy_id: STATE.profile.pharmacy_id, p_enabled: on });
-    STATE.pharmacy = Object.assign({}, STATE.pharmacy, { sms_enabled: on });
-    saveProfileCache();
-    toast(on ? 'SMS is on.' : 'SMS is off.', 'good');
-    drawCustomers();
-  });
-}
-function openComposeSms() {
-  var withPhone = customersCache.filter(function (x) { return x.active && x.phone && x.sms_ok; });
-  var body = sheet('New message', '');
-  body.innerHTML = withPhone.length
-    ? '<div class="field"><label>To</label><select id="csCustomer">' + withPhone.map(function (x) { return '<option value="' + x.customer_id + '">' + esc(x.name) + ' · ' + esc(showPhone(x.phone)) + '</option>'; }).join('') + '</select></div>' +
-      '<div class="field"><label>Message</label><textarea id="smsText" rows="5" maxlength="459" oninput="smsCount()"></textarea><div class="tiny" id="smsCounter" style="margin-top:4px"></div></div>' +
-      '<button class="btn primary" id="csSendBtn" onclick="doComposeSms()">Send SMS</button>'
-    : '<div class="empty">No customer has a phone number that accepts messages yet.</div>';
-  smsCount();
-}
-function doComposeSms() {
-  act($('#csSendBtn'), async function () {
-    var text = $('#smsText').value.trim();
-    if (!text) { toast('Write a message first.', 'bad'); return; }
-    var d = await sendSms([{ customer_id: $('#csCustomer').value, body: text, kind: 'custom', ref_id: null }]);
-    closeSheet();
-    toast(smsOutcomeText(d), d.sent ? 'good' : 'bad');
-    refreshCustomersScreen();
-  });
-}
-
-// ---------------------------------------------------------------------------
-// CONTROLLED DRUGS — register and ledger
-// ---------------------------------------------------------------------------
-
-var CONTROL_LABEL = { dda: 'DDA', psy: 'Psychotropic', none: 'Not controlled' };
-var CONTROL_LONG = { dda: 'Dangerous drug (DDA)', psy: 'Psychotropic substance', none: 'Not controlled' };
-var LEDGER_KIND = { opening: 'Opening balance', restock: 'Received', sale: 'Sold', 'return': 'Returned', 'void': 'Sale voided',
-  correction: 'Count corrected', write_off: 'Written off', expired_disposal: 'Expired, disposed', stock_take: 'Stock take' };
-var controlledCache = [];
-var controlledDetailId = null;
-var controlledLedger = null;   // { drug, rows }
-var controlledNames = {};
-
-function canSeeControlled() { return can('controlled') || can('view_controlled'); }
-
-async function renderControlled() {
-  var c = $('#content');
-  if (!canSeeControlled()) { c.innerHTML = '<div class="card empty">You do not have access to the controlled drugs register.</div>'; return; }
-  if (controlledDetailId) { openControlledLedger(controlledDetailId); return; }
-  c.innerHTML = '<div class="empty">Loading register…</div>';
-  try {
-    var r = await sb.from('v_controlled_register').select('*').order('name');
-    if (r.error) throw r.error;
-    controlledCache = r.data || [];
-  } catch (e) {
-    errorCard(c, friendlyError(e), 'renderControlled');
-    return;
-  }
-  drawControlled();
-}
-function drawControlled() {
-  var c = $('#content');
-  var bad = controlledCache.filter(function (r) { return Number(r.shelf_qty) !== Number(r.ledger_qty); });
-  c.innerHTML =
-    '<div class="kpi-grid" style="margin-bottom:14px">' + kpi('Controlled drugs', controlledCache.length, 't-violet') +
-    kpi('Not matching ledger', bad.length, bad.length ? 't-red' : 't-green') + '</div>' +
-    '<div class="tiny" style="margin-bottom:10px">Every movement of these drugs (received, sold with patient and prescription, returned, corrected, written off) is recorded automatically and cannot be edited. Selling one asks for the patient, the prescriber and the prescription number.</div>' +
-    (can('controlled') ? '<div class="toolbar-row"><button class="btn primary" onclick="openMarkControlled()">+ Mark a drug as controlled</button></div>' : '') +
-    (bad.length ? '<div class="inline-notice">' + icon('warn', 15) + '<span>' + bad.length + (bad.length === 1 ? ' drug has' : ' drugs have') + ' a shelf figure that differs from its ledger. Open it, then count it in Stock take.</span></div>' : '') +
-    '<div class="card">' + (controlledCache.length ? controlledCache.map(function (r) {
-      var diff = Number(r.shelf_qty) !== Number(r.ledger_qty);
-      return '<div class="list-row" style="cursor:pointer" onclick="openControlledLedger(\'' + r.drug_id + '\')">' +
-        '<div><div class="name">' + esc(r.name) + ' <span class="badge ' + (r.control_class === 'dda' ? 'bad' : 'warn') + '">' + CONTROL_LABEL[r.control_class] + '</span></div>' +
-        '<div class="meta">' + (r.last_movement ? 'last movement ' + fmtDateTime(r.last_movement) : 'no movements yet') + '</div></div>' +
-        '<div class="right"><div class="name">' + esc(qtyUnit(r.shelf_qty, r.unit)) + '</div>' +
-        (diff ? '<span class="badge bad">Ledger says ' + r.ledger_qty + '</span>' : '<span class="badge good">Matches</span>') + '</div></div>';
-    }).join('') : '<div class="empty">No drug is marked as controlled yet. Mark morphine, pethidine, diazepam and similar drugs to start their register.</div>') + '</div>';
-}
-async function openMarkControlled() {
-  var body = sheet('Mark a drug as controlled', '<div class="empty">Loading…</div>');
-  var list = [];
-  try {
-    var r = await sb.from('v_drug_stock').select('drug_id,name,control_class').order('name');
-    if (r.error) throw r.error;
-    list = (r.data || []).filter(function (d) { return d.control_class === 'none'; });
-  } catch (e) { $('#sheetBody').innerHTML = '<div class="empty">' + esc(friendlyError(e)) + '</div>'; return; }
-  $('#sheetBody').innerHTML =
-    '<div class="field"><label>Drug</label><select id="mcDrug">' + list.map(function (d) { return '<option value="' + d.drug_id + '">' + esc(d.name) + '</option>'; }).join('') + '</select></div>' +
-    '<div class="field"><label>Type</label><select id="mcClass"><option value="dda">Dangerous drug (DDA)</option><option value="psy">Psychotropic substance</option></select></div>' +
-    '<div class="tiny" style="margin-bottom:10px">The register starts with what is on the shelf now. From then on every sale needs a patient, prescriber and prescription number.</div>' +
-    '<button class="btn primary" id="mcSaveBtn" onclick="doMarkControlled()">Mark as controlled</button>';
-  if (!list.length) $('#sheetBody').innerHTML = '<div class="empty">Every drug is already marked, or there are no drugs yet.</div>';
-}
-function doMarkControlled() {
-  act($('#mcSaveBtn'), async function () {
-    await rpcCall('set_drug_control', { p_pharmacy_id: STATE.profile.pharmacy_id, p_drug_id: $('#mcDrug').value, p_class: $('#mcClass').value });
-    closeSheet();
-    toast('Marked as controlled.', 'good');
-    renderControlled();
-  });
-}
-function retryControlledLedger() { if (controlledDetailId) openControlledLedger(controlledDetailId); }
-async function openControlledLedger(drugId) {
-  controlledDetailId = drugId;
-  STATE.tab = 'controlled';
-  var c = $('#content');
-  if (!c) return;
-  c.innerHTML = '<div class="empty">Loading ledger…</div>';
-  try {
-    var reg = await sb.from('v_controlled_register').select('*').eq('drug_id', drugId).maybeSingle();
-    if (reg.error) throw reg.error;
-    var led = await sb.from('controlled_ledger').select('*, sales(invoice_number), profiles(full_name)').eq('drug_id', drugId).order('seq', { ascending: false }).limit(300);
-    if (led.error) throw led.error;
-    controlledLedger = { drug: reg.data, rows: led.data || [] };
-  } catch (e) {
-    errorCard(c, friendlyError(e), 'retryControlledLedger');
-    return;
-  }
-  drawControlledLedger();
-}
-function closeControlledLedger() { controlledDetailId = null; controlledLedger = null; renderControlled(); }
-function ledgerDetailText(r) {
-  var bits = [];
-  if (r.patient_name) bits.push('Patient: ' + r.patient_name);
-  if (r.prescriber_name) bits.push('Prescriber: ' + r.prescriber_name);
-  if (r.rx_number) bits.push('Rx ' + r.rx_number);
-  if (r.sales && r.sales.invoice_number) bits.push(r.sales.invoice_number);
-  if (r.note && r.note !== LEDGER_KIND[r.kind]) bits.push(r.note);
-  return bits.join(' · ');
-}
-function drawControlledLedger() {
-  var c = $('#content');
-  var d = controlledLedger.drug;
-  if (!d) { c.innerHTML = backBtn('closeControlledLedger()', 'Register') + '<div class="card empty">This drug is no longer on the register.</div>'; return; }
-  var rows = controlledLedger.rows;
-  var diff = Number(d.shelf_qty) !== Number(d.ledger_qty);
-  c.innerHTML =
-    backBtn('closeControlledLedger()', 'Register') +
-    '<div class="card" style="margin-bottom:12px"><div class="name" style="font-size:18px;font-weight:700">' + esc(d.name) + ' <span class="badge ' + (d.control_class === 'dda' ? 'bad' : 'warn') + '">' + CONTROL_LONG[d.control_class] + '</span></div></div>' +
-    '<div class="kpi-grid" style="margin-bottom:12px">' + kpi('On the shelf', Number(d.shelf_qty).toLocaleString() + ' <span style="font-size:13px;font-weight:600">' + esc(d.unit) + '</span>', 't-sales') +
-    kpi('Ledger balance', Number(d.ledger_qty).toLocaleString() + ' <span style="font-size:13px;font-weight:600">' + esc(d.unit) + '</span>', diff ? 't-red' : 't-green') + '</div>' +
-    (diff ? '<div class="inline-notice">' + icon('warn', 15) + '<span>The shelf figure and the ledger differ. Count it in Stock take so the difference is explained and recorded.</span></div>' : '') +
-    '<div class="toolbar-row"><button class="btn ghost" onclick="exportControlledLedger()">' + icon('download', 15) + ' Excel</button>' +
-    '<button class="btn ghost" onclick="printControlledLedger()">' + icon('printer', 15) + ' Print</button></div>' +
-    '<div class="card">' + (rows.length ? rows.map(function (r) {
-      var q = Number(r.quantity_delta);
-      return '<div class="list-row" style="align-items:flex-start"><div style="min-width:0"><div class="name">' + esc(LEDGER_KIND[r.kind] || r.kind) + '</div>' +
-        '<div class="meta wrap">' + esc(ledgerDetailText(r)) + '</div>' +
-        '<div class="meta">' + esc(fmtDateTime(r.entry_at) + (r.profiles && r.profiles.full_name ? ' · ' + r.profiles.full_name : '')) + '</div></div>' +
-        '<div class="right"><div class="name" style="color:' + (q < 0 ? 'var(--red)' : 'var(--green)') + '">' + (q > 0 ? '+' : '') + q + '</div><div class="meta">Balance ' + r.balance_after + '</div></div></div>';
-    }).join('') : '<div class="empty">No movements yet.</div>') + '</div>' +
-    (rows.length >= 300 ? '<div class="tiny" style="margin-top:8px">Showing the latest 300 movements.</div>' : '');
-}
-function ledgerExportRows() {
-  var d = controlledLedger.drug;
-  return controlledLedger.rows.slice().reverse().map(function (r) {
-    return { 'Date': fmtDateTime(r.entry_at), 'Drug': d.name, 'Movement': LEDGER_KIND[r.kind] || r.kind, 'Quantity': r.quantity_delta,
-      'Balance after': r.balance_after, 'Patient': r.patient_name || '', 'Prescriber': r.prescriber_name || '', 'Rx number': r.rx_number || '',
-      'Invoice': (r.sales && r.sales.invoice_number) || '', 'Note': r.note || '', 'By': (r.profiles && r.profiles.full_name) || '' };
-  });
-}
-function exportControlledLedger() {
-  exportExcel('controlled-drug-register-' + controlledLedger.drug.name.replace(/[^a-z0-9]+/gi, '-') + '.xlsx', 'Register', ledgerExportRows());
-}
-function printControlledLedger() {
-  var d = controlledLedger.drug;
-  var rows = ledgerExportRows().map(function (r) { return [r['Date'], r['Movement'], r['Quantity'], r['Balance after'], [r['Patient'], r['Prescriber'], r['Rx number'] ? 'Rx ' + r['Rx number'] : '', r['Invoice'], r['Note']].filter(Boolean).join(' · '), r['By']]; });
-  printHtml('Controlled drug register', d.name + ' (' + CONTROL_LONG[d.control_class] + ')',
-    '<p style="margin:4px 0">Balance now: <b>' + esc(qtyUnit(d.ledger_qty, d.unit)) + '</b></p>' + tableHtml(['Date', 'Movement', 'Qty', 'Balance', 'Details', 'By'], rows));
-}
-
-// ---------------------------------------------------------------------------
-// STOCK TAKE — count the shelf, see the differences, approve
-// ---------------------------------------------------------------------------
-
-var stockTakes = [];        // recent stock takes, newest first
-var stOpen = null;          // the open one, if any
-var stItems = {};           // drug_id -> { system_qty, counted_qty }
-var stDrugs = [];           // v_drug_stock rows
-var stFilter = '';
-var stPage = 1;
-var stViewing = null;       // a closed stock take being read
-
-function canCountStock() { return can('stock_take'); }
-
-async function renderStockTake() {
-  var c = $('#content');
-  if (!canCountStock() && !can('view_inventory')) { c.innerHTML = '<div class="card empty">You do not have access to Stock take.</div>'; return; }
-  c.innerHTML = '<div class="empty">Loading stock take…</div>';
-  try {
-    var r = await sb.from('stock_takes').select('*').order('created_at', { ascending: false }).limit(20);
-    if (r.error) throw r.error;
-    stockTakes = r.data || [];
-    stOpen = stockTakes.find(function (t) { return t.status === 'open'; }) || null;
-    stItems = {};
-    if (stOpen) {
-      var res = await Promise.all([
-        sb.from('stock_take_items').select('drug_id,system_qty,counted_qty').eq('take_id', stOpen.id),
-        sb.from('v_drug_stock').select('drug_id,name,unit,qty_in_stock,qty_expired,stock_value_cost').order('name')
-      ]);
-      if (res[0].error) throw res[0].error;
-      if (res[1].error) throw res[1].error;
-      (res[0].data || []).forEach(function (i) { stItems[i.drug_id] = i; });
-      stDrugs = res[1].data || [];
-    }
-  } catch (e) {
-    errorCard(c, friendlyError(e), 'renderStockTake');
-    return;
-  }
-  stViewing = null;
-  drawStockTake();
-}
-function stCountedN() { return Object.keys(stItems).length; }
-function stDiffN() { return Object.keys(stItems).filter(function (k) { return stItems[k].counted_qty !== stItems[k].system_qty; }).length; }
-
-function drawStockTake() {
-  var c = $('#content');
-  if (stViewing) { drawStockTakeView(); return; }
-  if (!stOpen) {
-    c.innerHTML =
-      '<div class="tiny" style="margin-bottom:10px">Count what is really on the shelves. Pharma shows the difference from what the system says, you give a reason for each, and one approval makes the system match the shelf. Sales can carry on while you count.</div>' +
-      (canCountStock() ? '<div class="toolbar-row"><button class="btn primary" onclick="openStartStockTake()">Start a stock take</button></div>' : '') +
-      '<div class="section-title">Past stock takes</div>' +
-      '<div class="card">' + (stockTakes.length ? stockTakes.map(function (t) {
-        var badge = t.status === 'approved' ? '<span class="badge good">Done</span>' : '<span class="badge warn">Cancelled</span>';
-        var v = t.total_cost_variance != null ? Number(t.total_cost_variance) : null;
-        return '<div class="list-row" style="cursor:pointer" onclick="openStockTakeView(\'' + t.id + '\')"><div><div class="name">' + esc(t.label) + '</div>' +
-          '<div class="meta">' + esc(fmtDateTime(t.created_at)) + (v != null ? ' · ' + (v < 0 ? 'lost ' + fmt(-v) : v > 0 ? 'gained ' + fmt(v) : 'no change in value') + ' at cost' : '') + '</div></div>' +
-          '<div class="right">' + badge + '</div></div>';
-      }).join('') : '<div class="empty">No stock takes yet.</div>') + '</div>';
-    return;
-  }
-  var q = stFilter.toLowerCase();
-  var rows = stDrugs.filter(function (d) { return !q || d.name.toLowerCase().indexOf(q) !== -1; });
-  // counted ones first, then the rest by name
-  rows.sort(function (a, b) { var ca = stItems[a.drug_id] ? 0 : 1, cb = stItems[b.drug_id] ? 0 : 1; return ca - cb || a.name.localeCompare(b.name); });
-  var shown = rows.slice(0, stPage * 40);
-  c.innerHTML =
-    '<div class="card" style="margin-bottom:12px"><div class="name" style="font-weight:700">' + esc(stOpen.label) + '</div>' +
-    '<div class="meta" id="stProgress">' + stProgressText() + '</div></div>' +
-    '<div class="searchbox field"><input id="stSearchInput" placeholder="Search a drug to count…" value="' + esc(stFilter) + '" oninput="stFilter=this.value;stPage=1;drawStockTake()"></div>' +
-    '<div class="toolbar-row">' +
-    (can('approve_stock_take') ? '<button class="btn primary" onclick="openStockTakeReview()">Review &amp; approve</button>' : '<div class="tiny">When you have finished counting, a pharmacist or the owner approves the differences.</div>') +
-    (can('approve_stock_take') ? '<button class="btn ghost" onclick="openCancelStockTake()">Cancel stock take</button>' : '') + '</div>' +
-    '<div class="card">' + (shown.length ? shown.map(stRowHtml).join('') : '<div class="empty">No drug matches that search.</div>') + '</div>' +
-    (rows.length > shown.length ? '<button class="btn ghost" style="margin-top:10px" onclick="stPage++;drawStockTake()">Show more (' + (rows.length - shown.length) + ')</button>' : '');
-}
-function stProgressText() {
-  var n = stCountedN(), diff = stDiffN();
-  return n + (n === 1 ? ' drug counted' : ' drugs counted') + ' · ' + diff + (diff === 1 ? ' difference' : ' differences');
-}
-function stDiffBadge(drugId) {
-  var it = stItems[drugId];
-  if (!it) return '';
-  var d = it.counted_qty - it.system_qty;
-  return d === 0 ? '<span class="badge good">Matches</span>' : '<span class="badge ' + (d < 0 ? 'bad' : 'warn') + '">' + (d > 0 ? '+' : '') + d + '</span>';
-}
-function stRowHtml(d) {
-  var it = stItems[d.drug_id];
-  var sys = Number(d.qty_in_stock) + Number(d.qty_expired);
-  return '<div class="list-row" id="strow-' + d.drug_id + '"><div style="min-width:0"><div class="name">' + esc(d.name) + '</div>' +
-    '<div class="meta">System says ' + esc(qtyUnit(sys, d.unit)) + (it && it.system_qty !== sys ? ' (was ' + it.system_qty + ' when counted)' : '') + '</div></div>' +
-    '<div class="right" style="display:flex;align-items:center;gap:8px"><span id="stbadge-' + d.drug_id + '">' + stDiffBadge(d.drug_id) + '</span>' +
-    (canCountStock() ? '<input type="number" min="0" inputmode="numeric" class="stcount" style="width:84px" placeholder="Count" value="' + (it ? it.counted_qty : '') + '" onchange="stCount(\'' + d.drug_id + '\',this)">' : '') + '</div></div>';
-}
-async function stCount(drugId, el) {
-  var raw = el.value.trim();
-  try {
-    if (raw === '') {
-      if (stItems[drugId]) await rpcCall('stock_take_remove_count', { p_pharmacy_id: STATE.profile.pharmacy_id, p_take_id: stOpen.id, p_drug_id: drugId });
-      delete stItems[drugId];
-    } else {
-      var n = Number(raw);
-      if (!isFinite(n) || n < 0 || Math.floor(n) !== n) { toast('Enter a whole number, 0 or more.', 'bad'); el.value = stItems[drugId] ? stItems[drugId].counted_qty : ''; return; }
-      var r = await rpcCall('stock_take_count', { p_pharmacy_id: STATE.profile.pharmacy_id, p_take_id: stOpen.id, p_drug_id: drugId, p_counted: n });
-      stItems[drugId] = { drug_id: drugId, system_qty: r.system_qty, counted_qty: r.counted_qty };
-    }
-  } catch (e) {
-    toast(friendlyError(e), 'bad');
-    el.value = stItems[drugId] ? stItems[drugId].counted_qty : '';
-    return;
-  }
-  var b = document.getElementById('stbadge-' + drugId);
-  if (b) b.innerHTML = stDiffBadge(drugId);
-  var p = document.getElementById('stProgress');
-  if (p) p.textContent = stProgressText();
-}
-function openStartStockTake() {
-  var body = sheet('Start a stock take', '');
-  body.innerHTML =
-    '<div class="field"><label>Name (optional)</label><input id="stLabel" placeholder="e.g. Shelf A, or Month end"></div>' +
-    '<button class="btn primary" id="stStartBtn" onclick="doStartStockTake()">Start counting</button>';
-}
-function doStartStockTake() {
-  act($('#stStartBtn'), async function () {
-    await rpcCall('start_stock_take', { p_pharmacy_id: STATE.profile.pharmacy_id, p_label: $('#stLabel').value.trim() || null });
-    closeSheet();
-    stFilter = ''; stPage = 1;
-    renderStockTake();
-  });
-}
-function openCancelStockTake() {
-  var body = sheet('Cancel this stock take?', '');
-  body.innerHTML = '<div class="tiny" style="margin-bottom:10px">The counts are thrown away. Stock does not change.</div>' +
-    '<button class="btn danger" id="stCancelBtn" onclick="doCancelStockTake()">Cancel stock take</button>';
-}
-function doCancelStockTake() {
-  act($('#stCancelBtn'), async function () {
-    await rpcCall('cancel_stock_take', { p_pharmacy_id: STATE.profile.pharmacy_id, p_take_id: stOpen.id });
-    closeSheet();
-    toast('Stock take cancelled.', 'good');
-    renderStockTake();
-  });
-}
-function stAvgCost(d) {
-  var q = Number(d.qty_in_stock);
-  return q > 0 ? Number(d.stock_value_cost) / q : 0;
-}
-function openStockTakeReview() {
-  var diffs = stDrugs.filter(function (d) { var it = stItems[d.drug_id]; return it && it.counted_qty !== it.system_qty; });
-  var body = sheet('Review differences', '');
-  if (!stCountedN()) { body.innerHTML = '<div class="empty">Nothing has been counted yet.</div>'; return; }
-  var est = diffs.reduce(function (a, d) { var it = stItems[d.drug_id]; return a + (it.counted_qty - it.system_qty) * stAvgCost(d); }, 0);
-  body.innerHTML =
-    (diffs.length ? '<div class="tiny" style="margin-bottom:10px">Pick a reason for each difference. Approving changes the stock to match what you counted and cannot be undone.</div>' +
-      diffs.map(function (d) {
-        var it = stItems[d.drug_id], diff = it.counted_qty - it.system_qty;
-        var opts = diff < 0 ? [['missing', 'Missing'], ['damaged', 'Damaged'], ['expired', 'Expired'], ['other', 'Other']] : [['found', 'Found'], ['other', 'Other']];
-        return '<div class="card" style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;gap:8px"><div class="name" style="font-weight:700">' + esc(d.name) + '</div>' +
-          '<span class="badge ' + (diff < 0 ? 'bad' : 'warn') + '">' + (diff > 0 ? '+' : '') + diff + '</span></div>' +
-          '<div class="meta">System ' + it.system_qty + ' · counted ' + it.counted_qty + '</div>' +
-          '<div class="field" style="margin:8px 0 0"><select data-drug="' + d.drug_id + '" class="stReason">' + opts.map(function (o) { return '<option value="' + o[0] + '">' + o[1] + '</option>'; }).join('') + '</select></div></div>';
-      }).join('') +
-      '<div class="kpi-grid" style="margin:12px 0"><div class="kpi ' + (est < 0 ? 't-red' : 't-green') + '"><div class="label">About ' + (est < 0 ? 'lost' : 'gained') + ' at cost</div><div class="value">' + fmt(Math.abs(est)) + '</div></div>' +
-      kpi('Drugs to adjust', diffs.length, 't-violet') + '</div>'
-      : '<div class="card empty">Everything counted matches the system.</div>') +
-    '<button class="btn primary" id="stApproveBtn" onclick="doApproveStockTake()">' + (diffs.length ? 'Approve &amp; adjust stock' : 'Finish stock take') + '</button>';
-}
-function doApproveStockTake() {
-  act($('#stApproveBtn'), async function () {
-    var reasons = {};
-    document.querySelectorAll('.stReason').forEach(function (s) { reasons[s.getAttribute('data-drug')] = s.value; });
-    var r = await rpcCall('approve_stock_take', { p_pharmacy_id: STATE.profile.pharmacy_id, p_take_id: stOpen.id, p_reasons: reasons });
-    closeSheet();
-    toast(r.adjusted ? 'Stock updated for ' + r.adjusted + (r.adjusted === 1 ? ' drug.' : ' drugs.') : 'Stock take finished. Everything matched.', 'good');
-    renderStockTake();
-  });
-}
-async function openStockTakeView(id) {
-  var t = stockTakes.find(function (x) { return x.id === id; });
-  var c = $('#content');
-  c.innerHTML = '<div class="empty">Loading…</div>';
-  try {
-    var r = await sb.from('stock_take_items').select('*, drugs(name,unit)').eq('take_id', id);
-    if (r.error) throw r.error;
-    stViewing = { take: t, items: r.data || [] };
-  } catch (e) { errorCard(c, friendlyError(e), 'renderStockTake'); return; }
-  drawStockTakeView();
-}
-function drawStockTakeView() {
-  var c = $('#content');
-  var t = stViewing.take, items = stViewing.items;
-  var diffs = items.filter(function (i) { return i.counted_qty !== i.system_qty; });
-  c.innerHTML =
-    backBtn('stViewing=null;drawStockTake()', 'Stock takes') +
-    '<div class="card" style="margin-bottom:12px"><div class="name" style="font-weight:700">' + esc(t.label) + '</div><div class="meta">' + esc(fmtDateTime(t.created_at)) + ' · ' + (t.status === 'approved' ? 'approved' : 'cancelled') + '</div></div>' +
-    '<div class="kpi-grid" style="margin-bottom:12px">' + kpi('Drugs counted', items.length, 't-violet') +
-    (t.total_cost_variance != null ? kpi('Change at cost', fmt(t.total_cost_variance), Number(t.total_cost_variance) < 0 ? 't-red' : 't-green') : kpi('Differences', diffs.length, 't-amber')) + '</div>' +
-    '<div class="card">' + (diffs.length ? diffs.map(function (i) {
-      var d = i.counted_qty - i.system_qty;
-      return listRow((i.drugs && i.drugs.name) || 'Drug', 'System ' + i.system_qty + ' · counted ' + i.counted_qty + (i.reason ? ' · ' + esc(i.reason) : ''),
-        '<span class="badge ' + (d < 0 ? 'bad' : 'warn') + '">' + (d > 0 ? '+' : '') + d + '</span>');
-    }).join('') : '<div class="empty">No differences.</div>') + '</div>';
-}
-
-// ---------------------------------------------------------------------------
-// Drug detail: controlled status
-// ---------------------------------------------------------------------------
-
-function drugControlHtml(drugRow) {
-  var cls = (drugRow && drugRow.control_class) || 'none';
-  if (!can('controlled')) {
-    return cls === 'none' ? '' : '<div style="margin-bottom:12px"><span class="badge ' + (cls === 'dda' ? 'bad' : 'warn') + '">' + CONTROL_LONG[cls] + '</span></div>';
-  }
-  return '<div class="field" style="margin-bottom:12px"><label>Controlled drug?</label><div style="display:flex;gap:8px"><select id="ddControl" style="flex:1">' +
-    ['none', 'dda', 'psy'].map(function (k) { return '<option value="' + k + '"' + (k === cls ? ' selected' : '') + '>' + CONTROL_LONG[k] + '</option>'; }).join('') +
-    '</select><button class="btn secondary small" onclick="saveDrugControl(this,\'' + drugRow.id + '\')">Save</button></div></div>';
-}
-function saveDrugControl(btn, drugId) {
-  act(btn, async function () {
-    await rpcCall('set_drug_control', { p_pharmacy_id: STATE.profile.pharmacy_id, p_drug_id: drugId, p_class: $('#ddControl').value });
-    toast('Saved.', 'good');
-    closeSheet();
-    renderInventory();
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Dashboard: small strip for the new modules
-// ---------------------------------------------------------------------------
-
-function dashExtrasHtml(snap) {
-  var x = (snap && snap.extras) || {};
-  var rows = [];
-  if (Number(x.credit_owed) > 0.5 && canSeeCustomers()) rows.push(["custTab='customers';custOnlyOwing=true;setTab('customers')", 'amber', 'wallet',
-    '<b>' + fmt(x.credit_owed) + '</b> owed by ' + x.credit_customers + (Number(x.credit_customers) === 1 ? ' customer' : ' customers')]);
-  if (Number(x.refills_due) > 0 && canSeeCustomers()) rows.push(["custTab='refills';refillFilter='due';setTab('customers')", 'amber', 'calendar',
-    '<b>' + x.refills_due + (Number(x.refills_due) === 1 ? ' refill' : ' refills') + ' due</b> — remind the customers']);
-  if (Number(x.controlled_mismatch) > 0 && canSeeControlled()) rows.push(["setTab('controlled')", '', 'warn',
-    '<b>' + x.controlled_mismatch + ' controlled ' + (Number(x.controlled_mismatch) === 1 ? 'drug does' : 'drugs do') + ' not match the ledger</b>']);
-  if (x.open_stock_take && canCountStock()) rows.push(["setTab('stocktake')", 'green', 'clipboard',
-    '<b>Stock take in progress</b> — tap to continue counting']);
-  return rows.map(function (r) {
-    return '<div class="dash-alert ' + r[1] + '" onclick="' + r[0] + '">' + icon(r[2], 16) + '<div>' + r[3] + '</div></div>';
-  }).join('');
-}
-
 init();

@@ -40,10 +40,28 @@ html,body{margin:0}
      now load exactly like every other file in this folder. -->
 <script src="vendor-supabase.js"></script>
 <!-- vendor-xlsx.js (880 KB) is not loaded here any more: only Excel export and
-     import need it, so app.js loads it in the background after the first screen
-     is up (see loadXlsx in app.js). -->
+     import need it, so the app loads it in the background after the first screen
+     is up (see loadXlsx in js/core.js). -->
 <script src="config.js"></script>
-<script src="app.js"></script>
+<!-- The app code, in this order. It used to be one 5,700-line app.js; it is now split by screen into js/.
+     They all share one global scope (no build step), so keep main.js LAST. tests/js-split.test.js checks this list. -->
+<script src="js/core.js"></script>
+<script src="js/shell.js"></script>
+<script src="js/export.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/dashboard.js"></script>
+<script src="js/inventory.js"></script>
+<script src="js/import.js"></script>
+<script src="js/stock-actions.js"></script>
+<script src="js/sell.js"></script>
+<script src="js/reports.js"></script>
+<script src="js/reports-stock.js"></script>
+<script src="js/claims-settings.js"></script>
+<script src="js/suppliers.js"></script>
+<script src="js/expenses.js"></script>
+<script src="js/customers.js"></script>
+<script src="js/controlled-stocktake.js"></script>
+<script src="js/main.js"></script>
 <script>
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', function () {

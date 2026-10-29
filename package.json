@@ -2,11 +2,11 @@
   "name": "pharma",
   "version": "1.0.0",
   "private": true,
-  "description": "Pharma \u2014 pharmacy stock and sales. Android app shell (Capacitor) around https://pharmacymngt.netlify.app.",
+  "description": "Pharma — pharmacy stock and sales. Android app shell (Capacitor) around https://pharmacymngt.netlify.app.",
   "scripts": {
     "android:sync": "cap sync android",
     "android:open": "cap open android",
-    "test": "node tests/banned-colours.test.js && node tests/android-shell.test.js && node tests/native-shell.test.js && node tests/critical-css.test.js && node --experimental-strip-types --no-warnings tests/send-sms.test.js"
+    "test": "node tests/banned-colours.test.js && node tests/android-shell.test.js && node tests/native-shell.test.js && node tests/critical-css.test.js && node tests/js-split.test.js && node --experimental-strip-types --no-warnings tests/send-sms.test.js"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.2",

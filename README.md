@@ -8,13 +8,14 @@ Live site: https://pharmacymngt.netlify.app
 
 | File | What it is |
 |---|---|
-| `index.html`, `style.css`, `app.js` | The app: one HTML page, one stylesheet, one script |
+| `index.html`, `style.css` | The app's one HTML page and one stylesheet |
+| `js/` | The app's code, split by area (`core`, `shell`, `auth`, `dashboard`, `inventory`, `import`, `stock-actions`, `sell`, `reports`, `reports-stock`, `claims-settings`, `suppliers`, `expenses`, `customers`, `controlled-stocktake`, `main`). Plain scripts that share one global scope, loaded in the order listed in `index.html`; `main.js` (starts the app) must stay last |
 | `config.js` | Supabase URL and public (anon) key |
 | `sw.js`, `manifest.json` | Offline app shell and install settings |
 | `nativeShell.js`, `capacitor.config.json`, `www/`, `android/` | The Android app: a Capacitor shell around the live site (see `android/ANDROID_APP.md`) |
 | `admin.html`, `admin.js`, `admin.css` | Platform admin portal at `/admin` |
 | `schema.sql` | Full database: tables, views, functions, security |
-| `migrations/` | SQL changes (28 Oct review; 29 Oct nightly cleanup, faster dashboard, and the credit / refills / SMS / controlled drugs / stock take batch), already applied live |
+| `migrations/` | SQL changes (28 Oct review; 29 Oct nightly cleanup, faster dashboard, the credit / refills / SMS / controlled drugs / stock take batch, and `2026-10-29_d_scalability.sql`: indexes plus the server-side sales report and supplier balances; run that one in Supabase before deploying the matching code) |
 | `supabase/functions/` | Edge Functions: `send-otp`, `verify-otp`, `reset-password-by-phone` (password reset codes) and `send-sms` (customer reminders) |
 | `netlify.toml`, `netlify/functions/` | Netlify settings and the daily keep-alive ping that stops the free-tier database pausing |
 | `tests/` | SQL tests, the no-gray-text test, the loading-screen test and the Android shell tests |
@@ -35,6 +36,7 @@ node tests/banned-colours.test.js        # no gray text
 node tests/android-shell.test.js         # Android settings agree with each other
 node tests/native-shell.test.js          # print and back button inside the app
 node tests/critical-css.test.js          # loading screen styles match in index.html and style.css
+node tests/js-split.test.js              # js/ files: load order, offline cache list, one init()
 node --experimental-strip-types tests/send-sms.test.js   # SMS sending logic (no network)
 cd tests && npm install && node run_tests.js   # SQL tests, local throwaway Postgres
 ```
