@@ -15,7 +15,7 @@ Live site: https://pharmacymngt.netlify.app
 | `nativeShell.js`, `capacitor.config.json`, `www/`, `android/` | The Android app: a Capacitor shell around the live site (see `android/ANDROID_APP.md`) |
 | `admin.html`, `admin.js`, `admin.css` | Platform admin portal at `/admin` |
 | `schema.sql` | Full database: tables, views, functions, security |
-| `migrations/` | SQL changes (28 Oct review; 29 Oct nightly cleanup, faster dashboard, the credit / refills / SMS / controlled drugs / stock take batch, and `2026-10-29_d_scalability.sql`: indexes plus the server-side sales report and supplier balances; and `2026-10-29_e_import_cleanup_admin.sql`: fast bulk import, old-log cleanup, admin portal indexes; and `2026-10-29_f_lock_down_table_access.sql`: row-level security audit and least-privilege table access; run each new migration in Supabase before deploying the matching code) |
+| `migrations/` | SQL changes (28 Oct fixes; 29 Oct nightly cleanup, faster dashboard, the credit / refills / SMS / controlled drugs / stock take batch, and `2026-10-29_d_scalability.sql`: indexes plus the server-side sales report and supplier balances; and `2026-10-29_e_import_cleanup_admin.sql`: fast bulk import, old-log cleanup, admin portal indexes; and `2026-10-29_f_lock_down_table_access.sql`: row-level security audit and least-privilege table access; run each new migration in Supabase before deploying the matching code) |
 | `supabase/functions/` | Edge Functions: `send-otp`, `verify-otp`, `reset-password-by-phone` (password reset codes) and `send-sms` (customer reminders) |
 | `netlify.toml`, `netlify/functions/` | Netlify settings and the daily keep-alive ping that stops the free-tier database pausing |
 | `tests/` | SQL tests, the no-gray-text test, the loading-screen test and the Android shell tests |
@@ -43,4 +43,4 @@ cd tests && npm install && node run_tests.js   # SQL tests, local throwaway Post
 
 ## Where to read more
 
-`CLAUDE.md` (working rules), `PHARMA_PROJECT_STATUS.md` (full history and roadmap), `CHANGELOG.md`, `REVIEW.md` (the code review), `SETUP.md` (deployment), `PRODUCT_SPEC.md`.
+`CLAUDE.md` (working rules), `PHARMA_PROJECT_STATUS.md` (full history and roadmap), `CHANGELOG.md`, `SETUP.md` (deployment), `PRODUCT_SPEC.md`.
