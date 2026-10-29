@@ -156,8 +156,18 @@ function encodeDrugForRestock(drug) { return btoa(encodeURIComponent(JSON.string
 async function openDrugDetail(drugId) {
   var d = STATE.drugsCache.find(function (x) { return x.drug_id === drugId; });
   if (!d) return;
-  var { data: drugRow } = await sb.from('drugs').select('*').eq('id', drugId).single();
-  var { data: batches } = await sb.from('batches').select('*').eq('drug_id', drugId).order('expiry_date');
+  // Batches with stock are all shown; of the used-up ones only the latest few,
+  // so a drug restocked hundreds of times still opens quickly. The three
+  // requests run together.
+  var DONE_BATCHES_SHOWN = 5;
+  var detail = await Promise.all([
+    sb.from('drugs').select('*').eq('id', drugId).single(),
+    sb.from('batches').select('*').eq('drug_id', drugId).gt('quantity_remaining', 0).order('expiry_date').limit(300),
+    sb.from('batches').select('*').eq('drug_id', drugId).eq('quantity_remaining', 0).order('received_at', { ascending: false }).order('created_at', { ascending: false }).limit(DONE_BATCHES_SHOWN)
+  ]);
+  var drugRow = detail[0].data;
+  var batches = (detail[1].data || []).concat(detail[2].data || []).sort(function (a, b) { return String(a.expiry_date) < String(b.expiry_date) ? -1 : 1; });
+  var usedUpNote = (detail[2].data || []).length >= DONE_BATCHES_SHOWN ? '<div class="tiny" style="margin-top:8px">Showing the latest ' + DONE_BATCHES_SHOWN + ' used-up batches.</div>' : '';
   var body = sheet(d.name, '');
   body.innerHTML =
     '<div class="kpi-grid" style="margin-bottom:14px">' +
@@ -194,7 +204,7 @@ async function openDrugDetail(drugId) {
           (can('edit_expiry') ? '<button class="btn ghost small" onclick="openEditExpiry(\'' + b.id + '\',\'' + esc(d.name).replace(/'/g, "\\'") + '\',\'' + (b.expiry_unknown ? '' : b.expiry_date) + '\')">Edit expiry</button>' : '') +
           '</div>' : '') +
         '</div>';
-    }).join('') : '<div class="empty">No batches yet.</div>');
+    }).join('') + usedUpNote : '<div class="empty">No batches yet.</div>');
 }
 
 function openRestock(encodedDrug) {

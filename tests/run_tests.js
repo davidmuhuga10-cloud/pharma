@@ -791,6 +791,94 @@ async function main() {
     assert(hugeRep.length === 5, 'a huge page size is capped but still works');
 
     // --------------------------------------------------------------
+    console.log('\n== Bulk import: a block of rows in one request, bad rows skipped, same rules as restock ==');
+    await asUser(c, ownerId);
+    const impExisting = await addDrug('Import Existing', 5, 10, 20);
+    const impRows = [
+      { name: 'Import New A', form: 'tablet', unit: 'tablet', qty: 10, cost_price: 5, sell_price: 9, expiry: '2031-01-31', batch_no: 'IB1', supplier: 'Sup' },
+      { name: 'import existing', unit: 'tablet', qty: 7, cost_price: 11, sell_price: 22, expiry: null },          // same drug, other letter case
+      { name: 'Import New A', unit: 'tablet', qty: 3, cost_price: 5, sell_price: 9, expiry: '2031-06-30' },       // second batch of a drug created earlier in this same block
+      { name: 'Import Bad Qty', unit: 'tablet', qty: 0, cost_price: 5, sell_price: 9, expiry: '2031-01-31' },     // refused by record_restock
+      { name: '   ', unit: 'tablet', qty: 1, cost_price: 1, sell_price: 1, expiry: '2031-01-31' },                // empty name
+      { name: 'Import Bad Price', unit: 'tablet', qty: 4, cost_price: 5, sell_price: null, expiry: '2031-01-31' },
+      { name: 'Import Weird Form', form: 'hoverboard', unit: 'unit', qty: 2, cost_price: 1, sell_price: 2, expiry: '2031-01-31' }
+    ];
+    const impRes = (await c.query('select import_stock_rows($1,$2::jsonb) as r', [pharmacyId, J(impRows)])).rows[0].r;
+    assert(impRes.imported === 4 && impRes.failed === 3, 'import reports 4 imported, 3 failed (got ' + impRes.imported + '/' + impRes.failed + ')');
+    assert(impRes.errors.length === 3 && impRes.errors[0].row === 4, 'each problem names its row number');
+    const impNewA = await c.query("select count(*)::int n, sum(quantity_remaining)::int q from batches b join drugs d on d.id = b.drug_id where d.pharmacy_id = $1 and d.name = 'Import New A'", [pharmacyId]);
+    assert(impNewA.rows[0].n === 2 && impNewA.rows[0].q === 13, 'a new drug gets one batch per row (2 batches, 13 units)');
+    const impDup = await c.query("select count(*)::int n from drugs where pharmacy_id = $1 and lower(name) = 'import existing'", [pharmacyId]);
+    assert(impDup.rows[0].n === 1, 'a name that differs only by letter case reuses the drug instead of duplicating it');
+    const impExQty = await c.query("select sum(quantity_remaining)::int q from batches where drug_id = $1", [impExisting.id]);
+    assert(impExQty.rows[0].q === 12, 'the existing drug received the extra 7 units (5 + 7)');
+    const impForm = await c.query("select form from drugs where pharmacy_id = $1 and name = 'Import Weird Form'", [pharmacyId]);
+    assert(impForm.rows[0].form === 'other', 'an unknown form becomes "other"');
+    const impBadDrug = await c.query("select count(*)::int n from drugs where pharmacy_id = $1 and name in ('Import Bad Qty','Import Bad Price')", [pharmacyId]);
+    assert(impBadDrug.rows[0].n === 0, 'a failed row leaves nothing behind (no half-created drug)');
+    const impAdj = await c.query("select count(*)::int n from stock_adjustments a join drugs d on d.id = a.drug_id where d.pharmacy_id = $1 and d.name like 'Import New A' and a.type = 'restock'", [pharmacyId]);
+    assert(impAdj.rows[0].n === 2, 'every imported batch writes its stock-movement record');
+    await asUser(c, staffId); // attendant
+    await assertThrows(c.query('select import_stock_rows($1,$2::jsonb)', [pharmacyId, J([impRows[0]])]), 'an attendant cannot import stock', 'an attendant must not be able to import stock');
+    await asUser(c, ownerId);
+    await assertThrows(c.query('select import_stock_rows($1,$2::jsonb)', [pharmacyId, J(Array.from({ length: 501 }, () => impRows[0]))]), 'more than 500 rows in one go is refused', 'a block of 501 rows must be refused');
+    await assertThrows(c.query('select import_stock_rows(gen_random_uuid(),$1::jsonb)', [J([impRows[0]])]), 'another pharmacy id is refused', 'importing into another pharmacy must be refused');
+
+    // --------------------------------------------------------------
+    console.log('\n== Nightly cleanup: old sign-in and SMS logs go, audit records stay ==');
+    const oldUser = (await c.query('select id from auth.users limit 1')).rows[0].id;
+    await c.query("insert into sign_in_log (user_id, signed_in_at) values ($1, now() - interval '14 months'), ($1, now() - interval '2 months') returning 1", [oldUser]);
+    await c.query("insert into sms_log (pharmacy_id, to_phone, body, kind, created_at) values ($1,'0700000009','old','custom', now() - interval '3 years'), ($1,'0700000009','recent','custom', now() - interval '1 month') returning 1", [pharmacyId]);
+    const adjBefore = Number((await c.query('select count(*) n from stock_adjustments')).rows[0].n);
+    const ledgerBefore = Number((await c.query('select count(*) n from controlled_ledger')).rows[0].n);
+    const hk2 = (await c.query('select housekeeping_daily() as r')).rows[0].r;
+    assert(hk2.sign_ins_deleted >= 1 && Number((await c.query("select count(*) n from sign_in_log where signed_in_at < now() - interval '13 months'")).rows[0].n) === 0, 'sign-in records older than 13 months are removed');
+    assert(Number((await c.query("select count(*) n from sign_in_log where signed_in_at > now() - interval '3 months'")).rows[0].n) >= 1, 'recent sign-in records are kept');
+    assert(hk2.sms_deleted === 1 && Number((await c.query("select count(*) n from sms_log where body = 'recent'")).rows[0].n) === 1, 'SMS rows older than 2 years are removed, recent ones kept');
+    assert(Number((await c.query('select count(*) n from stock_adjustments')).rows[0].n) === adjBefore, 'stock adjustments (audit trail) are never deleted');
+    assert(Number((await c.query('select count(*) n from controlled_ledger')).rows[0].n) === ledgerBefore, 'the controlled-drugs ledger is never deleted');
+
+    // --------------------------------------------------------------
+    console.log('\n== Row-level security on every table, and least privilege for the API roles ==');
+    const noRls = await c.query("select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relkind in ('r','p') and not c.relrowsecurity");
+    assert(noRls.rows.length === 0, 'every table in the public schema has row-level security ON' + (noRls.rows.length ? ' (missing: ' + noRls.rows.map((r) => r.relname).join(', ') + ')' : ''));
+    const anonAny = await c.query("select distinct table_name from information_schema.role_table_grants where table_schema = 'public' and grantee = 'anon'");
+    assert(anonAny.rows.length === 0, 'signed-out visitors (anon) hold no privilege on any table' + (anonAny.rows.length ? ' (found: ' + anonAny.rows.map((r) => r.table_name).join(', ') + ')' : ''));
+    const badPriv = await c.query("select distinct table_name, privilege_type from information_schema.role_table_grants where table_schema = 'public' and grantee = 'authenticated' and privilege_type in ('TRUNCATE','REFERENCES','TRIGGER')");
+    assert(badPriv.rows.length === 0, 'signed-in users hold no TRUNCATE / REFERENCES / TRIGGER (RLS does not cover TRUNCATE)');
+    const serverOnly = await c.query("select distinct table_name from information_schema.role_table_grants where table_schema = 'public' and grantee = 'authenticated' and table_name in ('phone_otps','password_reset_attempts','sms_platform_config','platform_admins','sign_in_log')");
+    assert(serverOnly.rows.length === 0, 'server-only tables are closed to signed-in users');
+    const readOnlyTables = ['sales', 'sale_items', 'sales_payments', 'stock_adjustments', 'returns', 'supplier_lpos', 'supplier_lpo_items', 'supplier_payments', 'expenses', 'master_drugs', 'drug_categories', 'staff_invites'];
+    const writable = await c.query("select distinct table_name from information_schema.role_table_grants where table_schema = 'public' and grantee = 'authenticated' and privilege_type in ('INSERT','UPDATE','DELETE') and table_name = any($1)", [readOnlyTables]);
+    assert(writable.rows.length === 0, 'tables changed only through checked functions are read-only for signed-in users' + (writable.rows.length ? ' (writable: ' + writable.rows.map((r) => r.table_name).join(', ') + ')' : ''));
+
+    // What an attendant can still do, and what they can no longer do by calling the table API directly
+    await asUser(c, staffId); // attendant
+    const lockSale = await c.query("select s.id from sales s limit 1");
+    const lockBatch = (await c.query("select id from batches limit 1")).rows[0].id;
+    await asRole('authenticated', async () => {
+      assert(Number((await c.query('select count(*) n from sales')).rows[0].n) > 0, 'an attendant can still read the pharmacy\'s sales');
+      await assertThrows(c.query("update sales set total_amount = 1 where id = $1", [lockSale.rows[0].id]), 'an attendant cannot rewrite a sale directly', 'an attendant must not be able to edit a sale through the table');
+      await assertThrows(c.query("delete from stock_adjustments"), 'an attendant cannot delete the stock-movement audit trail', 'an attendant must not be able to delete stock adjustments');
+      await assertThrows(c.query("update batches set quantity_remaining = 9999 where id = $1", [lockBatch]), 'an attendant cannot edit a batch quantity directly', 'an attendant must not be able to change batch quantities');
+      await assertThrows(c.query("insert into sales_payments (sale_id, pharmacy_id, method, amount) values ($1, $2, 'cash', 5)", [lockSale.rows[0].id, pharmacyId]), 'an attendant cannot add a payment line directly', 'an attendant must not be able to insert payments');
+      await assertThrows(c.query("update insurance_claims set amount = 1"), 'an insurance claim amount cannot be edited directly', 'claim amounts must not be editable');
+      await assertThrows(c.query("truncate sales cascade"), 'TRUNCATE is refused', 'TRUNCATE must be refused');
+      await assertThrows(c.query("select * from phone_otps"), 'one-time codes are unreadable from the app', 'phone_otps must be unreadable');
+      const disc = await c.query("update batches set discount_percent = 5 where id = $1 returning id", [lockBatch]);
+      assert(disc.rowCount === 1, 'the mark-down % of a batch can still be changed (the one thing the app edits directly)');
+      await c.query("update batches set discount_percent = 0 where id = $1", [lockBatch]);
+      const lockDrug = await c.query("select id from drugs where pharmacy_id = $1 limit 1", [pharmacyId]);
+      await assertThrows(c.query("delete from drugs where id = $1", [lockDrug.rows[0].id]), 'drugs cannot be deleted directly', 'drugs must not be deletable through the table');
+    });
+    await asUser(c, ownerId);
+    const lockSellDrug = await addDrug('Lock Down Drug', 5, 1, 2);
+    await asRole('authenticated', async () => {
+      const okSale = await c.query("select record_sale($1,$2::jsonb,$3::jsonb) as id", [pharmacyId, J([{ drug_id: lockSellDrug.id, quantity: 1 }]), J([{ method: 'cash', amount: 2 }])]);
+      assert(!!okSale.rows[0].id, 'selling through the checked function still works for a signed-in user');
+    });
+
+    // --------------------------------------------------------------
     console.log('\n== Privilege escalation: a staff member cannot promote themselves ==');
     await asUser(c, staffId);
     await assertThrows(

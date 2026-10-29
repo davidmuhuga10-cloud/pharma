@@ -276,18 +276,33 @@ speed and staying fast as the data grows. Findings, and what was done.
 
 ## Not changed - worth a decision
 
-- **Old rows grow forever** in `stock_adjustments`, `sign_in_log` and
-  `sms_log`. Fine for years at one pharmacy, but decide a retention window
-  (e.g. keep 2 years, archive the rest) before there are many pharmacies.
-  The nightly cleanup (`daily_housekeeping`) is the place to add it.
-- **Platform admin portal** (`admin_overview`, `admin_pharmacy_stats`) scans
-  every pharmacy's rows on each open. Fine at tens of pharmacies; rewrite as
-  per-pharmacy rollups before hundreds.
-- **Bulk import** (`runImport`) makes one request per row. A batched database
-  function would make a 2,000-row sheet take seconds instead of minutes. Not
-  changed because it touches stock and needs its own tests.
-- **Drug detail** lists every batch including empty ones; harmless until a
-  drug has hundreds of restocks.
+- **Done later the same day (migration `2026-10-29_e_import_cleanup_admin.sql`):**
+  bulk import now goes through `import_stock_rows()` in blocks of 200 rows;
+  the nightly cleanup removes sign-in records over 13 months and SMS log rows
+  over 2 years (`stock_adjustments` and the controlled-drugs ledger are audit
+  records and are kept forever); the admin portal has the time indexes it
+  needed; drug detail shows the latest 5 used-up batches instead of all.
+- **Platform admin portal** (`admin_overview`, `admin_pharmacy_stats`) still
+  counts every pharmacy's all-time sales on each open. Fine at tens of
+  pharmacies; if it ever feels slow, keep a small per-pharmacy summary table
+  that is updated nightly instead.
 - **`my_pharmacy_id()` / `my_role()` must stay `stable`** (they run inside
   every row-level-security check); do not inline them or mark them volatile.
+
+## Row-level security audit - 29 Oct 2026 (same day, later)
+
+RLS is ON for all 31 tables (the 5 with no policy are server-only on purpose). The
+real gap was table privileges, not RLS: older tables let any signed-in staff
+member write money, stock and audit tables directly through the API, skipping the
+role checks in the checked functions, and `TRUNCATE` (which RLS does not cover) was
+granted to the API roles. Fixed in `migrations/2026-10-29_f_lock_down_table_access.sql`
+and guarded by SQL tests that fail if a table loses RLS or the API roles regain
+privileges they should not hold. Still true and deliberate: RLS is not FORCEd
+(definer functions run as the owner), the shared drug catalogue is readable by
+everyone signed in, and `profiles`/`pharmacies` stay updatable by the owner under
+their policies and the privilege-escalation trigger. The daily Netlify keep-alive ping was switched from reading `pharmacies` to
+the new `keep_alive()` function, since the signed-out key holds no table
+access any more. Possible follow-up: the
+batch mark-down % is checked only in the screen (`can('discount')`); turn it into a
+small role-checked function if you want the database to enforce it too.
 

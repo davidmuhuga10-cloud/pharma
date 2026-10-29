@@ -13,6 +13,7 @@ Read this before changing anything. These rules came from Kodi and apply here fr
 9. **Don't change what wasn't asked.** If a root cause is unclear, ask.
 10. **Code layout:** the app's code is in `js/`, one file per area (see `README.md`). New code goes in the file of the screen it belongs to. A new file must be added to `index.html` (before `main.js`, which stays last) and to `SHELL_FILES` in `sw.js`; `tests/js-split.test.js` fails if either is forgotten. Everything shares one global scope, so a function in one file can be called from another, but code that *runs* while the files load must only use things from files above it.
 11. **Keep screens fast as data grows:** a screen must never download a whole history to add it up in the browser. Totals go in a database function (see `sales_report`, `supplier_balances`, `dashboard_data`); lists come a page at a time; never put a long list of ids in a request (`.in('id', [...])` fails past a few hundred). A new table that is filtered by pharmacy needs an index that starts with `pharmacy_id`.
+12. **New table = RLS on + least privilege.** Every table gets `enable row level security` and a policy scoped by `pharmacy_id`, and the app's role gets only the privileges it needs (read-only unless the app really writes it directly; money, stock and audit tables are written only by `security definer` functions that check the role). `run_tests.js` fails if a table has RLS off or the API roles hold TRUNCATE/TRIGGER/REFERENCES, or if signed-out users hold anything.
 
 ## Commands
 

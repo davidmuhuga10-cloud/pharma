@@ -187,6 +187,7 @@ function previewImport(dataRows, colMap) {
     '<button class="btn ghost" style="margin-top:8px" onclick="downloadImportTemplate()">Download a blank template instead</button>';
 }
 
+var IMPORT_BLOCK = 200;   // rows sent to the database per request (it accepts up to 500)
 async function runImport(encoded) {
   var rows = JSON.parse(decodeURIComponent(atob(encoded)));
   var btn = $('#impBtn');
@@ -198,48 +199,35 @@ async function runImport(encoded) {
     var normCat = function (s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, ''); };
     var catByName = {};
     STATE.categoriesCache.forEach(function (c) { catByName[normCat(c.name)] = c.id; });
-    var drugByName = {};
-    STATE.drugsCache.forEach(function (d) { drugByName[d.name.toLowerCase()] = d.drug_id; });
-    // also pick up drugs already in the DB that might not be in the (stock>0) cache
-    var { data: allDrugs } = await sb.from('drugs').select('id, name').eq('pharmacy_id', STATE.profile.pharmacy_id);
-    (allDrugs || []).forEach(function (d) { drugByName[d.name.toLowerCase()] = d.id; });
 
-    var imported = 0, failed = 0;
-    for (var i = 0; i < rows.length; i++) {
-      var r = rows[i];
-      try {
-        var drugId = drugByName[r.name.toLowerCase()];
-        if (!drugId) {
-          var validForms = ['tablet', 'capsule', 'syrup', 'injection', 'cream_ointment', 'drops', 'suppository', 'inhaler', 'iv_fluid', 'other'];
-          var { data: newDrug, error: dErr } = await sb.from('drugs').insert({
-            pharmacy_id: STATE.profile.pharmacy_id,
-            name: r.name,
-            form: validForms.indexOf(r.form) !== -1 ? r.form : 'other',
-            unit: r.unit,
-            category_id: r.category ? (catByName[normCat(r.category)] || null) : null
-          }).select().single();
-          if (dErr) throw dErr;
-          drugId = newDrug.id;
-          drugByName[r.name.toLowerCase()] = drugId;
-        }
-        var { error: rErr } = await sb.rpc('record_restock', {
-          p_pharmacy_id: STATE.profile.pharmacy_id,
-          p_drug_id: drugId,
-          p_quantity: r.qty,
-          p_cost_price: r.costPrice,
-          p_sell_price: r.sellPrice,
-          p_expiry_date: r.expiry,
-          p_batch_no: r.batchNo,
-          p_supplier: r.supplier,
-          p_expiry_unknown: !r.expiry
-        });
-        if (rErr) throw rErr;
-        imported++;
-      } catch (e) {
-        failed++;
+    // The database imports a block of rows per request (import_stock_rows):
+    // it finds or creates each drug and restocks it by the same rules as a
+    // normal restock. A bad row is skipped and reported, never stops the rest.
+    // This used to be two requests per row, so a 2,000-row sheet took minutes.
+    var imported = 0, failed = 0, firstProblem = '';
+    for (var i = 0; i < rows.length; i += IMPORT_BLOCK) {
+      var block = rows.slice(i, i + IMPORT_BLOCK).map(function (r) {
+        return {
+          name: r.name, form: r.form, unit: r.unit,
+          category_id: r.category ? (catByName[normCat(r.category)] || null) : null,
+          qty: r.qty, cost_price: r.costPrice, sell_price: r.sellPrice,
+          expiry: r.expiry || null, batch_no: r.batchNo, supplier: r.supplier
+        };
+      });
+      var res = await sb.rpc('import_stock_rows', { p_pharmacy_id: STATE.profile.pharmacy_id, p_rows: block });
+      if (res.error) {
+        failed += block.length;
+        if (!firstProblem) firstProblem = friendlyError(res.error);
+        continue;
+      }
+      imported += res.data.imported;
+      failed += res.data.failed;
+      if (!firstProblem && res.data.errors && res.data.errors.length) {
+        var e0 = res.data.errors[0];
+        firstProblem = (e0.name ? e0.name + ': ' : '') + friendlyError({ message: e0.message });
       }
     }
-    toast('Imported ' + imported + ' rows' + (failed ? ', ' + failed + ' failed' : '') + '.', failed ? 'warn' : 'good');
+    toast('Imported ' + imported + ' rows' + (failed ? ', ' + failed + ' failed' + (firstProblem ? ' (first problem - ' + firstProblem + ')' : '') : '') + '.', failed ? 'warn' : 'good');
     closeSheet();
     renderInventory();
   });

@@ -2,6 +2,21 @@
 
 Newest first. The detailed story for each item is in `PHARMA_PROJECT_STATUS.md`.
 
+## 2026-10-29 (fifth batch): row-level security and table access locked down
+
+- **Audit result:** row-level security was already ON for all 31 tables, and no pharmacy could see another's rows. But the older tables still let any signed-in person (an attendant included) insert, edit or delete rows directly through the public API, skipping the checked functions: rewrite a sale's total, change a batch quantity, or delete the stock-movement audit trail. Signed-out visitors and signed-in users also held privileges (TRUNCATE, TRIGGER, REFERENCES) that row-level security does not cover, and the server-only tables (one-time codes, reset attempts, SMS settings) were open to signed-in users at the table-privilege level (row-level security still blocked every row).
+- **Fixed** (migration `2026-10-29_f_lock_down_table_access.sql`): signed-out visitors hold nothing; nobody holds TRUNCATE / TRIGGER / REFERENCES; server-only tables are closed to signed-in users; sales, sale items, sale payments, stock adjustments, returns, supplier deliveries and payments, expenses, the drug catalogue, categories and staff invites are read-only from the app (changed only by the checked functions, which are unaffected). The few things the app writes directly are narrowed: a batch can only have its mark-down % changed, an insurance claim only its status; drugs, suppliers, profiles and pharmacies cannot be deleted directly and profiles and pharmacies cannot be added directly. New tables start with the same least-privilege defaults.
+- **Daily keep-alive ping:** it used to read one row from the pharmacies table with the public signed-out key, which the lock-down now refuses. It calls a new `keep_alive()` instead, which returns the time and no pharmacy data, so the free-tier project still never pauses from a quiet week.
+- **New rule with a test:** SQL tests now fail if any table has row-level security off, if signed-out users or signed-in users hold privileges they should not, or if an attendant can edit a sale, a batch quantity or the audit trail directly (proven red once by running the tests without the migration). SQL tests: 215.
+
+## 2026-10-29 (fourth batch): fast bulk import, log cleanup, admin portal indexes, drug detail
+
+- **Bulk import is fast.** The Excel stock import sent two requests per row (a 2,000-row sheet meant 4,000 requests and several minutes, and a dropped connection left it half done). The database now takes 200 rows per request (`import_stock_rows()`, up to 500 allowed) and runs every row through the normal restock, so every rule is unchanged (who may restock, price and expiry checks, the stock record, the controlled-drug ledger). A bad row is skipped and the message tells you the first problem ("Imported 1,998 rows, 2 failed (first problem - Panadol: ...)"). A drug already in the pharmacy is matched whatever the letter case. Only the owner, co-owner, a pharmacist or a stock taker can import.
+- **Nightly cleanup also removes old logs:** sign-in records older than 13 months and SMS log rows older than 2 years. Stock adjustments and the controlled-drugs ledger are the audit trail and are never deleted.
+- **Admin portal:** three indexes so "the last 30 days across all pharmacies" no longer reads every sale ever made (`sales(sold_at) where not voided`, `sales(pharmacy_id, created_at)`, `stock_adjustments(created_at)`). The portal's numbers are unchanged.
+- **Drug detail** shows every batch that still has stock plus the latest 5 used-up batches (with a note), and its requests run together, so a drug restocked hundreds of times opens quickly.
+- Migration `2026-10-29_e_import_cleanup_admin.sql`. SQL tests: 199 (was 183). Service worker cache is now `hodhi-shell-v2p`.
+
 ## 2026-10-29 (third batch): scalability review - speed, database, code layout
 
 A full review of how the app behaves as a pharmacy grows (more sales, more drugs, more staff). Correctness and security were covered in the 28 Oct review; this one is about speed and staying fast.
