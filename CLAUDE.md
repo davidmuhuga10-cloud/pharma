@@ -18,6 +18,7 @@ Read this before changing anything. These rules came from Kodi and apply here fr
 node tests/banned-colours.test.js     # no-gray-text rule
 node tests/android-shell.test.js      # Android settings agree
 node tests/native-shell.test.js       # print and back button inside the app
+node tests/critical-css.test.js       # loading screen styles match everywhere
 cd tests && npm install && node run_tests.js   # SQL tests; needs a local throwaway Postgres (see tests/README.md)
 node --check app.js                    # syntax check
 ```

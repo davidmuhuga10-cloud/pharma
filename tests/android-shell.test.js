@@ -46,7 +46,7 @@ for (const d of ['ldpi', 'mdpi', 'hdpi', 'xhdpi', 'xxhdpi', 'xxxhdpi'])
     check(fs.existsSync(path.join(ROOT, main + 'res/mipmap-' + d + '/' + n + '.png')), 'missing mipmap-' + d + '/' + n + '.png');
 check(fs.existsSync(path.join(ROOT, main + 'res/drawable/splash.png')), 'missing drawable/splash.png');
 check(read('www/error.html') === read(main + 'assets/public/error.html'), 'www/error.html differs from the copy in android assets');
-check(read('index.html').includes('<script src="nativeShell.js"></script>'), 'index.html must load nativeShell.js');
+check(/<script src="nativeShell\.js"( defer)?><\/script>/.test(read('index.html')), 'index.html must load nativeShell.js');
 check(/'\.\/nativeShell\.js'/.test(read('sw.js')), 'sw.js SHELL_FILES must list ./nativeShell.js');
 
 if (bad) process.exit(1);

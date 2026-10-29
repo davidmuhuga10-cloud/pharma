@@ -1004,3 +1004,67 @@ body.nav-open .navdrawer { transform: none; }
   .auth-pre { display: inline; }
   .auth-sep { display: none; }
 }
+
+/* critical:start - the few rules the loading screen needs. index.html carries an identical copy inline so the screen draws before this file arrives; tests/critical-css.test.js fails if the two drift apart. */
+html,body{margin:0}
+.loadscreen{box-sizing:border-box;min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;text-align:center;color:#fff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:radial-gradient(circle at 18% 0%,#1C7A52 0%,transparent 55%),linear-gradient(180deg,#0F5132 0%,#09291B 100%)}
+.loadscreen-mark{width:76px;height:76px;border-radius:22px;background:#B3261E;display:grid;place-items:center;box-shadow:0 0 0 4px #fff,0 12px 26px rgba(0,0,0,.35)}
+.loadscreen-mark svg{width:46px;height:46px}
+.loadscreen-word{margin:0;font-size:30px;font-weight:900;letter-spacing:-.04em;line-height:1}
+.loadscreen-ecg{width:200px;height:34px;overflow:visible}
+.loadscreen-ecg path{stroke-dasharray:260;stroke-dashoffset:260;animation:lsBeat 1.6s ease-in-out infinite}
+.loadscreen-tag{margin:0;font-size:11px;font-weight:600;letter-spacing:.2em;text-transform:uppercase;color:#E7C76A}
+@keyframes lsBeat{0%{stroke-dashoffset:260;opacity:1}60%{stroke-dashoffset:0;opacity:1}100%{stroke-dashoffset:0;opacity:0}}
+@media (prefers-reduced-motion:reduce){.loadscreen-ecg path{animation:none;stroke-dashoffset:0}}
+/* critical:end */
+
+/* ---------------------------------------------------------------------- */
+/* PHONE BOTTOM BAR — glass 3D chips, the same look as the menu drawer's  */
+/* (.nd-chip). The flat line icon (.ic) stays for the desktop sidebar;    */
+/* the chip (.ic3d) is for phones only. The active tab's chip turns gold  */
+/* and lifts a little.                                                    */
+/* ---------------------------------------------------------------------- */
+.navbar button .ic3d { display: none; }
+@media (max-width: 859px) {
+  .navbar button { padding: 8px 4px 7px; gap: 3px; color: #DCEBE8; }
+  .navbar button.active { color: #fff; }
+  .navbar button .ic { display: none; }
+  .navbar button .ic3d {
+    display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px;
+    font-size: 16px; line-height: 1;
+    background: linear-gradient(160deg, rgba(255,255,255,0.34), rgba(255,255,255,0.04));
+    box-shadow: 0 3px 6px rgba(0,0,0,0.4), inset 0 1px rgba(255,255,255,0.5), inset 0 -2px 3px rgba(0,0,0,0.3);
+    transition: transform 0.15s, background 0.15s;
+  }
+  .navbar button.active .ic3d {
+    background: linear-gradient(160deg, #F0CF78, #B8860B);
+    box-shadow: 0 4px 9px rgba(0,0,0,0.45), inset 0 1px rgba(255,255,255,0.7), inset 0 -2px 3px rgba(80,50,0,0.45);
+    transform: translateY(-2px);
+  }
+}
+
+/* ---------------------------------------------------------------------- */
+/* LOADING PLACEHOLDERS — shapes (no text) that shimmer while the         */
+/* dashboard numbers arrive, instead of a "Loading…" line.                */
+/* ---------------------------------------------------------------------- */
+.skel {
+  display: block; border-radius: 8px; background: #E4DCC8;
+  background-image: linear-gradient(90deg, #E4DCC8 0%, #F4EEDF 50%, #E4DCC8 100%);
+  background-size: 200% 100%; animation: skelShimmer 1.4s linear infinite;
+}
+@keyframes skelShimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.skel-card { background: var(--card); border-radius: var(--radius); padding: 14px; box-shadow: var(--shadow-sm); margin-bottom: 12px; }
+.skel-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+.skel-grid .skel-card { margin-bottom: 0; }
+@media (min-width: 860px) { .skel-grid { grid-template-columns: repeat(4, 1fr); } }
+@media (prefers-reduced-motion: reduce) { .skel { animation: none; } }
+
+/* Thin bar across the top of the dashboard while older numbers are on screen
+   and fresh ones are loading. */
+.updating-bar { height: 3px; border-radius: 3px; background: var(--green-light); overflow: hidden; margin: -4px 0 10px; position: relative; }
+.updating-bar::after {
+  content: ''; position: absolute; top: 0; bottom: 0; width: 35%; border-radius: 3px; background: var(--green);
+  animation: updSlide 1.1s ease-in-out infinite;
+}
+@keyframes updSlide { 0% { left: -35%; } 100% { left: 100%; } }
+@media (prefers-reduced-motion: reduce) { .updating-bar::after { animation: none; width: 100%; opacity: .5; } }

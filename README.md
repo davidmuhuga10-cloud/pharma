@@ -14,8 +14,9 @@ Live site: https://pharmacymngt.netlify.app
 | `nativeShell.js`, `capacitor.config.json`, `www/`, `android/` | The Android app: a Capacitor shell around the live site (see `android/ANDROID_APP.md`) |
 | `admin.html`, `admin.js`, `admin.css` | Platform admin portal at `/admin` |
 | `schema.sql` | Full database: tables, views, functions, security |
-| `migrations/` | The SQL changes of the 28 Oct 2026 review, already applied live |
-| `tests/` | SQL tests, the no-gray-text test, and the Android shell tests |
+| `migrations/` | SQL changes (28 Oct review; 29 Oct nightly cleanup and faster dashboard), already applied live |
+| `netlify.toml`, `netlify/functions/` | Netlify settings and the daily keep-alive ping that stops the free-tier database pausing |
+| `tests/` | SQL tests, the no-gray-text test, the loading-screen test and the Android shell tests |
 
 ## Screens
 
@@ -31,6 +32,7 @@ Open `index.html` through any static server. The Android app is built on your co
 node tests/banned-colours.test.js        # no gray text
 node tests/android-shell.test.js         # Android settings agree with each other
 node tests/native-shell.test.js          # print and back button inside the app
+node tests/critical-css.test.js          # loading screen styles match in index.html and style.css
 cd tests && npm install && node run_tests.js   # SQL tests, local throwaway Postgres
 ```
 

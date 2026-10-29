@@ -259,15 +259,98 @@ function errorCard(container, message, retryFn) {
 }
 
 // ---------------------------------------------------------------------------
+// LOADING SCREEN & LAZY EXCEL LIBRARY
+// ---------------------------------------------------------------------------
+
+// The branded loading screen. index.html carries this exact markup, drawn
+// before any script has downloaded; this copy is for the moments after
+// (e.g. straight after pressing Log in). Keep the two identical — their
+// styles are the "critical" block at the end of style.css.
+function loadScreenHtml() {
+  return '<div class="loadscreen" role="status" aria-label="Opening Pharma"><div class="loadscreen-mark"><svg viewBox="0 0 48 48" aria-hidden="true"><polygon points="18,6 30,6 30,18 42,18 42,30 30,30 30,42 18,42 18,30 6,30 6,18 18,18" fill="#fff" stroke="#fff" stroke-width="6" stroke-linejoin="round"/></svg></div><p class="loadscreen-word">Pharma</p><svg class="loadscreen-ecg" viewBox="0 0 200 34" fill="none" stroke="#E7C76A" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M0 18h54l8-14 10 28 10-20 6 6h112"/></svg><p class="loadscreen-tag">Know your stock</p></div>';
+}
+
+// vendor-xlsx.js is 880 KB and only Excel export/import need it, so it is
+// not loaded with the page. warmXlsx() fetches it quietly a few seconds after
+// the first screen is up (so it is normally ready before anyone taps Export);
+// withXlsx() runs a callback once it is there, loading it first if needed.
+var xlsxLoading = null;
+function loadXlsx() {
+  if (window.XLSX) return Promise.resolve();
+  if (!xlsxLoading) {
+    xlsxLoading = new Promise(function (resolve, reject) {
+      var s = document.createElement('script');
+      s.src = 'vendor-xlsx.js';
+      s.onload = function () { resolve(); };
+      s.onerror = function () { xlsxLoading = null; reject(new Error('Could not load the Excel tools — check your internet connection and try again.')); };
+      document.head.appendChild(s);
+    });
+  }
+  return xlsxLoading;
+}
+function warmXlsx() {
+  var go = function () { loadXlsx().catch(function () {}); };
+  if (window.requestIdleCallback) window.requestIdleCallback(go, { timeout: 8000 });
+  else setTimeout(go, 4000);
+}
+
+// ---------------------------------------------------------------------------
 // BOOTSTRAP
 // ---------------------------------------------------------------------------
+
+// What the app needs to draw its frame (who you are, which pharmacy, the
+// category and supplier lists) is remembered on this device after every
+// successful load. On the next start the frame appears at once from that copy
+// and the real data is re-checked in the background (refreshProfileInBackground)
+// — instead of the person waiting through four round trips to the database
+// first. This copy only decides what is DRAWN; the database still enforces
+// every permission, and a changed or switched-off account is picked up by the
+// background check within a second or two.
+var PROFILE_CACHE_KEY = 'hodhi_profile_cache_v1';
+function saveProfileCache() {
+  try {
+    localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify({
+      uid: STATE.session.user.id, profile: STATE.profile, pharmacy: STATE.pharmacy,
+      cats: STATE.categoriesCache, sups: STATE.suppliersCache
+    }));
+  } catch (e) {}
+}
+function readProfileCache(uid) {
+  try {
+    var c = JSON.parse(localStorage.getItem(PROFILE_CACHE_KEY) || 'null');
+    return (c && c.uid === uid && c.profile && c.pharmacy) ? c : null;
+  } catch (e) { return null; }
+}
+function clearProfileCache() { try { localStorage.removeItem(PROFILE_CACHE_KEY); } catch (e) {} }
+function profileSig() { return JSON.stringify([STATE.profile, STATE.pharmacy]); }
+
+async function refreshProfileInBackground(sigBefore) {
+  try {
+    await loadProfileAndPharmacy();
+    // Account switched off, expired or removed: show the sign-in screen with its message.
+    if (!STATE.profile) { render(); return; }
+    // Only redraw if something the frame shows actually changed.
+    if (profileSig() !== sigBefore) render();
+  } catch (e) { /* offline or a hiccup: keep working from the saved copy */ }
+}
 
 async function init() {
   try {
     var { data } = await sb.auth.getSession();
     STATE.session = data.session;
+    var cached = STATE.session ? readProfileCache(STATE.session.user.id) : null;
+    if (cached) {
+      STATE.profile = cached.profile; STATE.pharmacy = cached.pharmacy;
+      STATE.categoriesCache = cached.cats || []; STATE.suppliersCache = cached.sups || [];
+      var sig = profileSig();
+      render();
+      warmXlsx();
+      refreshProfileInBackground(sig);
+      return finishInit();
+    }
     if (STATE.session) await loadProfileAndPharmacy();
     render();
+    if (STATE.profile) warmXlsx();
   } catch (e) {
     $('#app').innerHTML =
       '<div class="auth-wrap-simple"><div class="auth-card">' + logoMarkHtml(44) + '<div class="mark">Pharma</div>' +
@@ -275,10 +358,14 @@ async function init() {
       '<button class="btn primary" onclick="location.reload()">Reload</button></div></div></div></div>';
     return;
   }
+  finishInit();
+}
+
+function finishInit() {
   sb.auth.onAuthStateChange(async function (evt, session) {
     STATE.session = session;
     if (evt === 'PASSWORD_RECOVERY') { STATE.recoveryMode = true; render(); return; }
-    if (!session) { STATE.profile = null; STATE.pharmacy = null; render(); return; }
+    if (!session) { STATE.profile = null; STATE.pharmacy = null; clearProfileCache(); clearDashCache(); render(); return; }
     // A session arriving that this tab didn't create — signed in on another
     // tab, or a session restored after this one was opened — used to update
     // STATE.session and nothing else, leaving the tab on the login screen with
@@ -347,7 +434,10 @@ async function finishPendingSignupIfAny() {
 async function loadProfileAndPharmacy() {
   var uid = STATE.session.user.id;
   var { data: profile, error } = await sb.from('profiles').select('*').eq('id', uid).maybeSingle();
-  if (error || !profile) {
+  // A failed request (offline, server hiccup) is not "no profile": throwing lets
+  // callers keep what they have instead of treating the account as unlinked.
+  if (error) throw error;
+  if (!profile) {
     // No profile yet — if this is a returning-after-email-confirmation
     // session with a pending signup queued on this device, finish it now.
     if (await finishPendingSignupIfAny()) {
@@ -358,9 +448,11 @@ async function loadProfileAndPharmacy() {
   if (!profile) {
     STATE.profile = null;
     STATE.noPharmacyYet = true;
+    clearProfileCache();
     return;
   }
   if (profile.active === false) {
+    clearProfileCache();
     STATE.profile = null;
     STATE.disabledMessage = 'Your access to this pharmacy has been switched off by the owner. Ask them to reactivate your account.';
     return;
@@ -372,17 +464,24 @@ async function loadProfileAndPharmacy() {
   // pharmacy" policy) precisely so this specific message can be shown
   // instead of a generic/blank one.
   if (profile.account_expires_at && new Date(profile.account_expires_at) <= new Date()) {
+    clearProfileCache();
     STATE.profile = null;
     STATE.disabledMessage = 'Your temporary access has expired. Ask the pharmacy owner for a new code.';
     return;
   }
+  // The pharmacy, categories and suppliers don't depend on each other, so ask
+  // for all three at once (one round trip instead of three in a row).
+  var rest = await Promise.all([
+    sb.from('pharmacies').select('*').eq('id', profile.pharmacy_id).maybeSingle(),
+    sb.from('drug_categories').select('*').eq('pharmacy_id', profile.pharmacy_id).order('name'),
+    sb.from('suppliers').select('*').eq('pharmacy_id', profile.pharmacy_id).order('name')
+  ]);
+  if (rest[0].error) throw rest[0].error;
   STATE.profile = profile;
-  var { data: pharmacy } = await sb.from('pharmacies').select('*').eq('id', profile.pharmacy_id).maybeSingle();
-  STATE.pharmacy = pharmacy;
-  var { data: cats } = await sb.from('drug_categories').select('*').eq('pharmacy_id', profile.pharmacy_id).order('name');
-  STATE.categoriesCache = cats || [];
-  var { data: sups } = await sb.from('suppliers').select('*').eq('pharmacy_id', profile.pharmacy_id).order('name');
-  STATE.suppliersCache = sups || [];
+  STATE.pharmacy = rest[0].data;
+  STATE.categoriesCache = rest[1].data || [];
+  STATE.suppliersCache = rest[2].data || [];
+  saveProfileCache();
 }
 
 function render() {
@@ -591,6 +690,11 @@ function navBar() {
   // drawer on a phone (navMenuItems above) and stay on the sidebar at 860px+,
   // where there is a full column and no size pressure at all. The bar itself
   // is unchanged on desktop — see .nav-desktop-extra in style.css.
+  // The glass 3D chip shown on phones (the desktop sidebar keeps the line
+  // icon). Same emoji as the menu drawer's rows (navMenuItems) so the two
+  // always match.
+  var CHIP = { dashboard: '&#127968;', inventory: '&#128138;', sell: '&#129534;', suppliers: '&#128666;',
+               expenses: '&#128181;', reports: '&#128202;', settings: '&#9881;' };
   var items = [['dashboard', 'home', t('home')]];
   if (can('view_inventory')) items.push(['inventory', 'stock', 'Inventory']);
   if (can('sell')) items.push(['sell', 'sell', t('sell')]);
@@ -607,7 +711,8 @@ function navBar() {
     items.map(function (i) {
       var cls = (STATE.tab === i[0] ? 'active' : '') + (i[3] ? ' nav-desktop-extra' : '');
       return '<button class="' + cls.trim() + '" onclick="setTab(\'' + i[0] + '\')">' +
-        '<span class="ic">' + icon(i[1], 20) + '</span>' + i[2] + '</button>';
+        '<span class="ic">' + icon(i[1], 20) + '</span>' +
+        '<span class="ic3d" aria-hidden="true">' + (CHIP[i[0]] || '') + '</span>' + i[2] + '</button>';
     }).join('') +
     '<div class="navbar-spacer"></div>' +
     '<div class="navbar-foot"><div class="who">' + esc(pharmacy.name || '') + '</div>' +
@@ -639,7 +744,7 @@ function syncCartBar() {
 
 function setTab(t) { STATE.tab = t; render(); }
 
-async function logout() { await sb.auth.signOut(); STATE.tab = 'dashboard'; STATE.cart = []; render(); }
+async function logout() { clearProfileCache(); clearDashCache(); await sb.auth.signOut(); STATE.tab = 'dashboard'; STATE.cart = []; render(); }
 
 function renderTab() {
   if (STATE.tab === 'dashboard') renderDashboard();
@@ -682,10 +787,15 @@ function tableHtml(headers, rows) {
 
 function exportExcel(filename, sheetName, rows) {
   if (!rows.length) { toast('Nothing to export.', 'bad'); return; }
-  var ws = XLSX.utils.json_to_sheet(rows);
-  var wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, sheetName || 'Sheet1');
-  XLSX.writeFile(wb, filename);
+  var write = function () {
+    var ws = XLSX.utils.json_to_sheet(rows);
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, sheetName || 'Sheet1');
+    XLSX.writeFile(wb, filename);
+  };
+  if (window.XLSX) { write(); return; }
+  toast('Preparing Excel file…');
+  loadXlsx().then(write).catch(function (e) { toast(friendlyError(e), 'bad'); });
 }
 
 // ---------------------------------------------------------------------------
@@ -1010,12 +1120,18 @@ async function doLogin() {
       return;
     }
     STATE.session = (await sb.auth.getSession()).data.session;
-    await loadProfileAndPharmacy();
+    // Signed in: show the branded loading screen straight away rather than
+    // leaving the button on "Please wait…" while the pharmacy loads.
+    $('#app').innerHTML = loadScreenHtml();
+    try { await loadProfileAndPharmacy(); }
+    catch (loadErr) { render(); toast(friendlyError(loadErr), 'bad'); return; }
     if (!STATE.profile && STATE.noPharmacyYet) {
+      render(); err = $('#loErr') || err;
       err.textContent = "You're logged in, but this account isn't linked to a pharmacy yet. If you just signed up, try logging in again in a moment — if that doesn't work, sign up again.";
       return;
     }
     render();
+    warmXlsx();
   });
 }
 
@@ -1067,6 +1183,46 @@ async function doSignup() {
 
 var dashRange = 'week';
 var dashLoading = false;
+var dashStale = false;   // true while older numbers are on screen and fresh ones are on their way
+
+// The last dashboard is also kept on this device so the next visit opens with
+// numbers on screen instead of placeholders. Cleared on log out. Skipped for
+// custom date ranges and for very large stock lists (localStorage is small).
+var DASH_CACHE_KEY = 'hodhi_dash_cache_v1';
+function saveDashCache() {
+  try {
+    if (dashRange === 'custom') return;
+    var s = JSON.stringify({ pid: STATE.profile.pharmacy_id, range: dashRange, snap: dashSnap, data: dashData, at: Date.now() });
+    if (s.length < 800000) localStorage.setItem(DASH_CACHE_KEY, s);
+  } catch (e) {}
+}
+function readDashCache() {
+  try {
+    var c = JSON.parse(localStorage.getItem(DASH_CACHE_KEY) || 'null');
+    if (!c || c.pid !== STATE.profile.pharmacy_id || c.range !== dashRange || dashRange === 'custom') return null;
+    if (Date.now() - c.at > 36 * 3600 * 1000) return null;
+    return (c.snap && c.data) ? c : null;
+  } catch (e) { return null; }
+}
+function clearDashCache() {
+  dashSnap = null; dashData = null;
+  try { localStorage.removeItem(DASH_CACHE_KEY); } catch (e) {}
+}
+
+// Placeholder shapes (no text) shown while the dashboard's numbers load: four
+// small stat cards, a chart-sized card and a list card, in the same places the
+// real ones will appear, so nothing jumps when the data arrives.
+function dashSkeletonHtml() {
+  var stat = '<div class="skel-card"><span class="skel" style="height:10px;width:55%"></span>' +
+    '<span class="skel" style="height:24px;width:75%;margin-top:12px"></span></div>';
+  return '<div class="skel-grid" aria-hidden="true">' + stat + stat + stat + stat + '</div>' +
+    '<div class="skel-card" aria-hidden="true"><span class="skel" style="height:10px;width:35%"></span>' +
+    '<span class="skel" style="height:120px;margin-top:12px"></span></div>' +
+    '<div class="skel-card" aria-hidden="true"><span class="skel" style="height:10px;width:45%"></span>' +
+    '<span class="skel" style="height:14px;margin-top:14px"></span>' +
+    '<span class="skel" style="height:14px;margin-top:10px;width:85%"></span>' +
+    '<span class="skel" style="height:14px;margin-top:10px;width:70%"></span></div>';
+}
 var dashData = null;   // last dashboard_data() RPC result for the current dashRange
 var dashSnap = null;   // point-in-time snapshot: stock value/health, expiring, supplier debt
 
@@ -1110,37 +1266,49 @@ function fetchDashboardData() {
 
 async function renderDashboard() {
   var c = $('#content');
-  c.innerHTML = '<div class="empty">Loading dashboard…</div>';
+  // Show the last dashboard we had (kept in memory while the app is open, and
+  // on this device between visits) the instant the tab opens, with a thin
+  // "updating" bar, and swap in fresh numbers when they land. Only if there is
+  // nothing to show yet do we draw the shimmering placeholders.
+  if (!dashSnap || !dashData) {
+    var saved = readDashCache();
+    if (saved) { dashSnap = saved.snap; dashData = saved.data; }
+  }
+  var hadStale = !!(dashSnap && dashData);
+  if (hadStale) { dashStale = true; drawDashboard(); }
+  else c.innerHTML = dashSkeletonHtml();
   try {
+    // Four requests, all at once. (It used to be eight: out-of-stock and
+    // low-stock came from two more views that each re-ran the same stock
+    // calculation v_drug_stock already did, and supplier debt downloaded every
+    // supplier, delivery and payment to add them up here. Both are now worked
+    // out from what is already in hand or inside the database.)
     var results = await Promise.all([
       sb.from('v_drug_stock').select('drug_id,name,unit,qty_in_stock,reorder_level,stock_value_retail'),
-      sb.from('v_out_of_stock').select('drug_id,name,unit'),
-      sb.from('v_low_stock').select('drug_id,name,unit,qty_in_stock,reorder_level'),
       sb.from('v_expiring_batches').select('*').order('expiry_date'),
-      sb.from('suppliers').select('id,opening_balance').eq('pharmacy_id', STATE.profile.pharmacy_id),
-      sb.from('supplier_lpos').select('supplier_id,total_amount').eq('pharmacy_id', STATE.profile.pharmacy_id),
-      sb.from('supplier_payments').select('supplier_id,amount').eq('pharmacy_id', STATE.profile.pharmacy_id),
+      sb.rpc('supplier_owed_summary', { p_pharmacy_id: STATE.profile.pharmacy_id }),
       fetchDashboardData()
     ]);
-    var stockRes = results[0], outRes = results[1], lowRes = results[2], expRes = results[3],
-        supsRes = results[4], lposRes = results[5], paysRes = results[6], dashRes = results[7];
+    var stockRes = results[0], expRes = results[1], oweRes = results[2], dashRes = results[3];
     if (dashRes.error) throw dashRes.error;
+    if (stockRes.error) throw stockRes.error;
 
-    var stockValue = (stockRes.data || []).reduce(function (a, r) { return a + Number(r.stock_value_retail || 0); }, 0);
-    var sups = supsRes.data || [], lpos = lposRes.data || [], pays = paysRes.data || [];
-    var supplierOwed = 0, suppliersOwedCount = 0;
-    sups.forEach(function (s) {
-      var delivered = lpos.filter(function (l) { return l.supplier_id === s.id; }).reduce(function (a, l) { return a + Number(l.total_amount || 0); }, 0);
-      var paid = pays.filter(function (p) { return p.supplier_id === s.id; }).reduce(function (a, p) { return a + Number(p.amount || 0); }, 0);
-      var bal = Number(s.opening_balance || 0) + delivered - paid;
-      if (bal > 0.5) { supplierOwed += bal; suppliersOwedCount++; }
-    });
+    var drugs = stockRes.data || [];
+    var stockValue = drugs.reduce(function (a, r) { return a + Number(r.stock_value_retail || 0); }, 0);
+    // Same rules as the v_out_of_stock and v_low_stock views in schema.sql:
+    // out = no live stock; low = some stock, at or below the reorder level.
+    var outList = drugs.filter(function (r) { return Number(r.qty_in_stock) === 0; })
+      .map(function (r) { return { drug_id: r.drug_id, name: r.name, unit: r.unit }; });
+    var lowList = drugs.filter(function (r) { var q = Number(r.qty_in_stock); return q > 0 && q <= Number(r.reorder_level); })
+      .map(function (r) { return { drug_id: r.drug_id, name: r.name, unit: r.unit, qty_in_stock: r.qty_in_stock, reorder_level: r.reorder_level }; });
+    var oweRow = (oweRes.data && oweRes.data[0]) || {};
+    var supplierOwed = Number(oweRow.owed || 0), suppliersOwedCount = Number(oweRow.owed_count || 0);
 
     dashSnap = {
       stockValue: stockValue,
-      drugCount: (stockRes.data || []).length,
-      outOfStock: outRes.data || [],
-      lowStock: lowRes.data || [],
+      drugCount: drugs.length,
+      outOfStock: outList,
+      lowStock: lowList,
       expiring: expRes.data || [],
       supplierOwed: supplierOwed,
       suppliersOwedCount: suppliersOwedCount,
@@ -1150,11 +1318,18 @@ async function renderDashboard() {
       drugList: stockRes.data || []
     };
     dashData = dashRes.data;
+    saveDashCache();
   } catch (e) {
-    errorCard(c, friendlyError(e), 'renderDashboard');
+    dashStale = false;
+    // Keep showing the last numbers if we have them; only a first-ever load shows the retry card.
+    if (STATE.tab !== 'dashboard') return;
+    if (hadStale) { toast(friendlyError(e), 'bad'); drawDashboard(); }
+    else errorCard(c, friendlyError(e), 'renderDashboard');
     return;
   }
-  drawDashboard();
+  dashStale = false;
+  // The person may have moved to another tab while this was loading; don't paint over it.
+  if (STATE.tab === 'dashboard') drawDashboard();
 }
 
 async function setDashRange(r) {
@@ -1236,6 +1411,7 @@ function drawDashboard() {
   var c = $('#content');
   var refetching = dashLoading ? ' dash-refetching' : '';
   c.innerHTML =
+    (dashStale ? '<div class="updating-bar" aria-hidden="true"></div>' : '') +
     dashAlertHtml(dashSnap) +
     dashQuickAccessHtml() +
     dashFilterRowHtml() +
@@ -1850,21 +2026,25 @@ function openImportExcel() {
     if (!input.files.length) return;
     var reader = new FileReader();
     reader.onload = function (e) {
-      try {
-        var wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array', cellDates: true });
-        var ws = wb.Sheets[wb.SheetNames[0]];
-        var allRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-        var headerIdx = findImportHeaderRow(allRows);
-        var colMap = buildImportColumnMap(allRows[headerIdx] || []);
-        var dataRows = allRows.slice(headerIdx + 1);
-        previewImport(dataRows, colMap);
-      } catch (err) {
-        toast('Could not read that file — is it a valid Excel/CSV file?', 'bad');
-      }
+      loadXlsx().then(function () { readImportBuffer(e.target.result); })
+        .catch(function (err) { toast(friendlyError(err), 'bad'); });
     };
     reader.readAsArrayBuffer(input.files[0]);
   };
   input.click();
+}
+function readImportBuffer(buffer) {
+  try {
+    var wb = XLSX.read(new Uint8Array(buffer), { type: 'array', cellDates: true });
+    var ws = wb.Sheets[wb.SheetNames[0]];
+    var allRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    var headerIdx = findImportHeaderRow(allRows);
+    var colMap = buildImportColumnMap(allRows[headerIdx] || []);
+    var dataRows = allRows.slice(headerIdx + 1);
+    previewImport(dataRows, colMap);
+  } catch (err) {
+    toast('Could not read that file — is it a valid Excel/CSV file?', 'bad');
+  }
 }
 
 function previewImport(dataRows, colMap) {

@@ -6,15 +6,31 @@
 <title>Pharma — Pharmacy Stock &amp; Sales</title>
 <meta name="theme-color" content="#0F5132">
 <link rel="manifest" href="manifest.json">
-<!-- Does nothing in a browser; inside the Android app it fixes the layout, printing and the back button. -->
-<script src="nativeShell.js"></script>
+<!-- Start the connection to the database now, so the first request does not wait for it. -->
+<link rel="preconnect" href="https://ovegzdlrhlcpjfcsoumu.supabase.co" crossorigin>
+<!-- Does nothing in a browser; inside the Android app it fixes the layout, printing and the back button. deferred so it never holds up the first screen. -->
+<script src="nativeShell.js" defer></script>
+<!-- The loading screen's own styles, inline, so it draws before style.css arrives.
+     Identical to the critical block in style.css (tests/critical-css.test.js checks). -->
+<style id="critical">
+/* critical:start - the few rules the loading screen needs. index.html carries an identical copy inline so the screen draws before this file arrives; tests/critical-css.test.js fails if the two drift apart. */
+html,body{margin:0}
+.loadscreen{box-sizing:border-box;min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;text-align:center;color:#fff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:radial-gradient(circle at 18% 0%,#1C7A52 0%,transparent 55%),linear-gradient(180deg,#0F5132 0%,#09291B 100%)}
+.loadscreen-mark{width:76px;height:76px;border-radius:22px;background:#B3261E;display:grid;place-items:center;box-shadow:0 0 0 4px #fff,0 12px 26px rgba(0,0,0,.35)}
+.loadscreen-mark svg{width:46px;height:46px}
+.loadscreen-word{margin:0;font-size:30px;font-weight:900;letter-spacing:-.04em;line-height:1}
+.loadscreen-ecg{width:200px;height:34px;overflow:visible}
+.loadscreen-ecg path{stroke-dasharray:260;stroke-dashoffset:260;animation:lsBeat 1.6s ease-in-out infinite}
+.loadscreen-tag{margin:0;font-size:11px;font-weight:600;letter-spacing:.2em;text-transform:uppercase;color:#E7C76A}
+@keyframes lsBeat{0%{stroke-dashoffset:260;opacity:1}60%{stroke-dashoffset:0;opacity:1}100%{stroke-dashoffset:0;opacity:0}}
+@media (prefers-reduced-motion:reduce){.loadscreen-ecg path{animation:none;stroke-dashoffset:0}}
+/* critical:end */
+</style>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div id="app"><div class="auth-wrap-simple"><div class="auth-card">
-  <div class="brand-badge" style="width:44px;height:44px;font-size:22px">H</div>
-  <div class="mark">Loading your dashboard…</div>
-</div></div></div>
+<!-- The same markup as loadScreenHtml() in app.js, so nothing visibly changes when app.js takes over. -->
+<div id="app"><div class="loadscreen" role="status" aria-label="Opening Pharma"><div class="loadscreen-mark"><svg viewBox="0 0 48 48" aria-hidden="true"><polygon points="18,6 30,6 30,18 42,18 42,30 30,30 30,42 18,42 18,30 6,30 6,18 18,18" fill="#fff" stroke="#fff" stroke-width="6" stroke-linejoin="round"/></svg></div><p class="loadscreen-word">Pharma</p><svg class="loadscreen-ecg" viewBox="0 0 200 34" fill="none" stroke="#E7C76A" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M0 18h54l8-14 10 28 10-20 6 6h112"/></svg><p class="loadscreen-tag">Know your stock</p></div></div>
 <div id="printArea" class="print-only"></div>
 
 <!-- Self-hosted instead of loaded from a CDN: a CDN outage, a blocked domain
@@ -23,7 +39,9 @@
      these two files removes that single point of failure entirely — they
      now load exactly like every other file in this folder. -->
 <script src="vendor-supabase.js"></script>
-<script src="vendor-xlsx.js"></script>
+<!-- vendor-xlsx.js (880 KB) is not loaded here any more: only Excel export and
+     import need it, so app.js loads it in the background after the first screen
+     is up (see loadXlsx in app.js). -->
 <script src="config.js"></script>
 <script src="app.js"></script>
 <script>
@@ -35,7 +53,7 @@
   // If app.js itself fails to load/execute for any reason, don't leave the
   // user staring at "Loading Pharma…" forever with no way to recover.
   window.addEventListener('error', function (e) {
-    if (!document.getElementById('app') || document.getElementById('app').textContent.indexOf('Loading') === -1) return;
+    if (!document.querySelector('#app .loadscreen')) return;
     document.getElementById('app').innerHTML =
       '<div class="auth-wrap"><div class="auth-card"><div class="card empty">' +
       '⚠️ Pharma could not start. Please reload the page — if this keeps happening, check your internet connection.' +

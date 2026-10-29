@@ -1,0 +1,16 @@
+## Netlify configuration for Pharma.
+## The site is plain static files in the repository root; nothing is compiled.
+
+[build]
+  publish = "."
+  functions = "netlify/functions"
+  ## package.json exists only for the Android app (Capacitor). Netlify installs
+  ## its packages before this command runs; removing them here keeps
+  ## node_modules from being published as part of the website.
+  command = "rm -rf node_modules"
+
+## keep-alive: reads one row from Supabase every day at 03:00 UTC (06:00 in
+## Nairobi) so the free-tier project never pauses from a quiet week. See
+## netlify/functions/keep-alive.js.
+[functions."keep-alive"]
+  schedule = "0 3 * * *"

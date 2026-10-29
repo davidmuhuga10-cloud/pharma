@@ -343,6 +343,39 @@ async function main() {
     assert(!!pharmacistSyncRes.rows[0].result, 'a pharmacist can sync drugs');
 
     // --------------------------------------------------------------
+    console.log('\n== Dashboard: supplier_owed_summary matches the old browser-side sum ==');
+    await asUser(c, ownerId);
+    // Own supplier rows so the numbers are known: A owes 1000+500-200=1300, B is settled,
+    // C is under the 0.5 threshold, D is overpaid. Only A counts.
+    const sA = (await c.query("insert into suppliers (pharmacy_id, name, opening_balance) values ($1,'Sum A',1000) returning id", [pharmacyId])).rows[0].id;
+    const sB = (await c.query("insert into suppliers (pharmacy_id, name, opening_balance) values ($1,'Sum B',0) returning id", [pharmacyId])).rows[0].id;
+    const sC = (await c.query("insert into suppliers (pharmacy_id, name, opening_balance) values ($1,'Sum C',0) returning id", [pharmacyId])).rows[0].id;
+    const sD = (await c.query("insert into suppliers (pharmacy_id, name, opening_balance) values ($1,'Sum D',0) returning id", [pharmacyId])).rows[0].id;
+    await c.query("insert into supplier_lpos (pharmacy_id, supplier_id, lpo_number, total_amount) values ($1,$2,'T-A',500),($1,$3,'T-B',300),($1,$4,'T-C',0.4) returning 1", [pharmacyId, sA, sB, sC]);
+    await c.query("insert into supplier_payments (pharmacy_id, supplier_id, amount) values ($1,$2,200),($1,$3,300),($1,$4,50) returning 1", [pharmacyId, sA, sB, sD]);
+    // what the old dashboard computed, supplier by supplier, in plain SQL
+    const oldWay = await c.query(`select coalesce(sum(b) filter (where b > 0.5),0) as owed, count(*) filter (where b > 0.5) as n from (
+        select s.opening_balance + coalesce((select sum(total_amount) from supplier_lpos where supplier_id = s.id),0)
+               - coalesce((select sum(amount) from supplier_payments where supplier_id = s.id),0) as b
+        from suppliers s where s.pharmacy_id = $1) x`, [pharmacyId]);
+    const newWay = await c.query('select owed, owed_count from supplier_owed_summary($1)', [pharmacyId]);
+    assert(Number(newWay.rows[0].owed) === Number(oldWay.rows[0].owed) && Number(newWay.rows[0].owed_count) === Number(oldWay.rows[0].n),
+      'supplier_owed_summary equals the old sum (owed ' + newWay.rows[0].owed + ', suppliers ' + newWay.rows[0].owed_count + ')');
+    const none = await c.query('select owed, owed_count from supplier_owed_summary(gen_random_uuid())');
+    assert(Number(none.rows[0].owed) === 0 && Number(none.rows[0].owed_count) === 0, 'an unknown pharmacy id returns zeros');
+
+    // --------------------------------------------------------------
+    console.log('\n== Nightly housekeeping removes only old short-lived rows ==');
+    await c.query("insert into phone_otps (phone, purpose, code_hash, expires_at, created_at) values ('0700000001','password_reset','h',now(),now() - interval '3 days'),('0700000002','password_reset','h',now(),now() - interval '1 hour') returning 1");
+    const hk = await c.query('select housekeeping_daily() as r');
+    assert(hk.rows[0].r.otps_deleted === 1, 'housekeeping deleted exactly the 3-day-old one-time code');
+    const left = await c.query("select phone from phone_otps where phone in ('0700000001','0700000002')");
+    assert(left.rows.length === 1 && left.rows[0].phone === '0700000002', 'the 1-hour-old code is kept');
+    const salesN = Number((await c.query('select count(*) n from sales')).rows[0].n);
+    await c.query('select housekeeping_daily()');
+    assert(Number((await c.query('select count(*) n from sales')).rows[0].n) === salesN, 'housekeeping does not touch sales');
+
+    // --------------------------------------------------------------
     console.log('\n== Privilege escalation: a staff member cannot promote themselves ==');
     await asUser(c, staffId);
     await assertThrows(

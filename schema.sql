@@ -3494,3 +3494,112 @@ $$;
 grant execute on function record_sale(uuid, jsonb, jsonb, text, text) to authenticated;
 grant execute on function record_correction(uuid, uuid, integer, text) to authenticated;
 grant execute on function record_write_off(uuid, uuid, integer, text, adjustment_type) to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- 2026-10-29 additions (also in migrations/): nightly housekeeping and the
+-- dashboard's supplier-debt summary.
+-- ---------------------------------------------------------------------------
+
+-- 2026-10-29: nightly housekeeping, kept deliberately tiny.
+--
+-- Two short-lived tables only ever need their last day or two of rows:
+--   phone_otps              one-time codes (expire in minutes)
+--   password_reset_attempts rate-limit hits (the app only looks back about an hour)
+-- Left alone they just grow. This function deletes rows older than two days.
+-- It does NOT touch sign_in_log (the admin portal reports on it) or any
+-- pharmacy data.
+--
+-- Cost: both deletes are range deletes on small tables; on a quiet project the
+-- whole run is a few milliseconds. It runs once a day at 00:30 UTC (03:30 in
+-- Nairobi), when nobody is selling.
+--
+-- Also counts as real database activity every night, which helps keep a
+-- free-tier project from being paused for inactivity (the daily web ping from
+-- netlify/functions/keep-alive.js is the main safeguard; this is a second one
+-- that does not depend on Netlify).
+
+create or replace function public.housekeeping_daily()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  n_otps int;
+  n_attempts int;
+begin
+  delete from public.phone_otps
+   where created_at < now() - interval '2 days';
+  get diagnostics n_otps = row_count;
+
+  -- password_reset_attempts exists on the live project but is not created by
+  -- schema.sql, so check for it instead of assuming (a fresh test database
+  -- would otherwise fail here).
+  n_attempts := 0;
+  if to_regclass('public.password_reset_attempts') is not null then
+    execute 'delete from public.password_reset_attempts where attempted_at < now() - interval ''2 days''';
+    get diagnostics n_attempts = row_count;
+  end if;
+
+  return jsonb_build_object('otps_deleted', n_otps, 'reset_attempts_deleted', n_attempts, 'ran_at', now());
+end;
+$$;
+
+-- Nobody signed in to the app (or the public API) may run it; only the
+-- database's own scheduler and the owner of the project (SQL editor).
+revoke all on function public.housekeeping_daily() from public, anon, authenticated;
+
+-- Schedule it with pg_cron when that extension is available. Wrapped so the
+-- same file also loads on a plain local Postgres (used by the tests), where
+-- pg_cron does not exist.
+do $$
+begin
+  if exists (select 1 from pg_available_extensions where name = 'pg_cron') then
+    create extension if not exists pg_cron;
+    perform cron.unschedule(jobid) from cron.job where jobname = 'pharma-housekeeping';
+    perform cron.schedule('pharma-housekeeping', '30 0 * * *', 'select public.housekeeping_daily()');
+  end if;
+end
+$$;
+
+-- 2026-10-29: faster dashboard.
+--
+-- The dashboard used to download every supplier, every supplier delivery (LPO)
+-- and every supplier payment, then add them up in the browser to find "Debt
+-- owed". That is three requests whose size grows with every delivery and
+-- payment ever recorded. This function does the same sum inside the database
+-- and returns one small row: the total owed and how many suppliers are owed.
+--
+-- Same rule as before, supplier by supplier:
+--   balance = opening_balance + all deliveries - all payments
+-- and only balances above 0.5 count as owed.
+--
+-- security invoker: row level security still decides what the caller can see,
+-- exactly as when the browser read the tables directly.
+
+create or replace function public.supplier_owed_summary(p_pharmacy_id uuid)
+returns table (owed numeric, owed_count integer)
+language sql
+stable
+security invoker
+set search_path = public
+as $$
+  with bal as (
+    select s.opening_balance
+           + coalesce((select sum(l.total_amount) from supplier_lpos l
+                        where l.supplier_id = s.id and l.pharmacy_id = p_pharmacy_id), 0)
+           - coalesce((select sum(p.amount) from supplier_payments p
+                        where p.supplier_id = s.id and p.pharmacy_id = p_pharmacy_id), 0) as b
+      from suppliers s
+     where s.pharmacy_id = p_pharmacy_id
+  )
+  select coalesce(sum(b) filter (where b > 0.5), 0)::numeric,
+         (count(*) filter (where b > 0.5))::integer
+    from bal
+$$;
+
+revoke all on function public.supplier_owed_summary(uuid) from public, anon;
+grant execute on function public.supplier_owed_summary(uuid) to authenticated;
+
+create index if not exists supplier_payments_pharmacy_supplier_idx
+  on supplier_payments (pharmacy_id, supplier_id);

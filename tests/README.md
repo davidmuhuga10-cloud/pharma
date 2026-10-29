@@ -114,6 +114,10 @@ where the money/stock risk actually lives), or anything in the browser.
 `#6B6560`) or any text `color:` that is a mid-gray hex/rgb value. Backgrounds and borders are not checked.
 To prove it works, add `.x { color: #777; }` to `style.css` and run it: it must print FAIL and exit 1.
 
+## Loading-screen test
+
+`node tests/critical-css.test.js` (from the project folder) fails if the loading screen's styles in `index.html` differ from the `critical` block in `style.css`, or its markup differs from `loadScreenHtml()` in `app.js`. To prove it works, change one number in the inline `<style id="critical">` and run it: it must print FAIL.
+
 ## Android app tests
 
 Neither needs a database or a phone. From the project folder run `node tests/android-shell.test.js` and
