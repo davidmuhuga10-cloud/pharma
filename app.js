@@ -154,6 +154,34 @@ function $(sel, ctx) { return (ctx || document).querySelector(sel); }
 function redrawKeepingFocus(container, html) {
   var active = document.activeElement;
   var activeId = (active && container.contains(active) && active.id) ? active.id : null;
+  // A text box that is being typed in is KEPT as the very same element while
+  // everything around it is replaced. Rebuilding it on every key press makes
+  // phone keyboards (Gboard and others) lose the word being typed, and
+  // sometimes the keyboard itself; keeping the element avoids all of that.
+  if (activeId && active.tagName === 'INPUT' && /^(text|search|tel|email|url)$/i.test(active.type || 'text')) {
+    var tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    var twin = null, all = tmp.getElementsByTagName('input');
+    for (var k = 0; k < all.length; k++) { if (all[k].id === activeId) { twin = all[k]; break; } }
+    if (twin) {
+      var oldNode = active, newNode = twin;
+      while (oldNode !== container && newNode !== tmp) {
+        var oldParent = oldNode.parentNode, newParent = newNode.parentNode;
+        while (oldNode.previousSibling) oldParent.removeChild(oldNode.previousSibling);
+        while (oldNode.nextSibling) oldParent.removeChild(oldNode.nextSibling);
+        var seenSelf = false, before = [], after = [];
+        for (var c = newParent.firstChild; c; c = c.nextSibling) {
+          if (c === newNode) { seenSelf = true; continue; }
+          (seenSelf ? after : before).push(c);
+        }
+        before.forEach(function (n) { oldParent.insertBefore(n, oldNode); });
+        after.forEach(function (n) { oldParent.appendChild(n); });
+        if (oldParent !== container) syncAttributes(oldParent, newParent);
+        oldNode = oldParent; newNode = newParent;
+      }
+      return;
+    }
+  }
   var selStart = null, selEnd = null;
   if (activeId && typeof active.selectionStart === 'number') { selStart = active.selectionStart; selEnd = active.selectionEnd; }
   container.innerHTML = html;
@@ -172,6 +200,10 @@ function redrawKeepingFocus(container, html) {
       }
     }
   }
+}
+function syncAttributes(to, from) {
+  Array.prototype.slice.call(to.attributes).forEach(function (a) { if (!from.hasAttribute(a.name)) to.removeAttribute(a.name); });
+  Array.prototype.slice.call(from.attributes).forEach(function (a) { if (to.getAttribute(a.name) !== a.value) to.setAttribute(a.name, a.value); });
 }
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
   return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -2822,19 +2854,40 @@ async function renderSell() {
   drawSell();
 }
 
+// The search box is drawn once and never rebuilt while typing: typing only
+// refreshes the result lists beneath it (rebuilding the box on every key press
+// confuses phone keyboards and can drop letters). While a search is active the
+// matches sit directly under the box, above the cart, so they are always in
+// view; with an empty box the full stock list sits below the cart as before.
+function sellRowHtml(d) {
+  return '<div class="list-row" onclick="addToCart(\'' + d.drug_id + '\')" style="cursor:pointer">' +
+    '<div><div class="name">' + esc(d.name) + (isControlledDrug(d) ? ' <span class="badge bad">' + CONTROL_LABEL[d.control_class] + '</span>' : d.is_prescription ? ' <span class="badge warn">Rx</span>' : '') + '</div><div class="meta">' + esc(qtyUnit(d.qty_in_stock, d.unit)) + ' available' + (d.default_price ? ' · ' + fmt(d.default_price) : '') + '</div></div>' +
+    '<div class="right btn small secondary">Add</div></div>';
+}
+function sellListsHtml() {
+  var raw = sellFilter.trim(), q = raw.toLowerCase();
+  var rows = STATE.drugsCache.filter(function (d) { return d.name.toLowerCase().indexOf(q) !== -1; });
+  var inner = rows.length ? rows.map(sellRowHtml).join('')
+    : '<div class="empty">Nothing in stock matches &ldquo;' + esc(raw) + '&rdquo;. If you expected it, check Inventory: it may be out of stock or not added yet.</div>';
+  var head = q ? '<div class="section-title" style="margin-top:0">' + rows.length + (rows.length === 1 ? ' match' : ' matches') + ' in stock</div>' : '';
+  return { searching: !!q, html: '<div class="card">' + head + inner + '</div>' };
+}
+function refreshSellLists() {
+  var top = $('#sellMatches'), all = $('#sellAll');
+  if (!top || !all) { drawSell(); return; }
+  var r = sellListsHtml();
+  top.innerHTML = r.searching ? r.html : '';
+  all.innerHTML = r.searching ? '' : r.html;
+}
 function drawSell() {
   var c = $('#content');
-  var q = sellFilter.toLowerCase();
-  var rows = STATE.drugsCache.filter(function (d) { return d.name.toLowerCase().indexOf(q) !== -1; });
+  var r = sellListsHtml();
   redrawKeepingFocus(c,
     (heldSalesCache.length ? heldSalesCard() : '') +
-    '<div class="searchbox field"><input id="sellSearchInput" placeholder="Search a drug to sell…" value="' + esc(sellFilter) + '" oninput="sellFilter=this.value;drawSell()"></div>' +
+    '<div class="searchbox field"><input id="sellSearchInput" type="search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" placeholder="Search a drug to sell…" value="' + esc(sellFilter) + '" oninput="sellFilter=this.value;refreshSellLists()"></div>' +
+    '<div id="sellMatches">' + (r.searching ? r.html : '') + '</div>' +
     (STATE.cart.length ? cartSummaryCard() : '') +
-    '<div class="card">' + (rows.length ? rows.map(function (d) {
-      return '<div class="list-row" onclick="addToCart(\'' + d.drug_id + '\')" style="cursor:pointer">' +
-        '<div><div class="name">' + esc(d.name) + (isControlledDrug(d) ? ' <span class="badge bad">' + CONTROL_LABEL[d.control_class] + '</span>' : d.is_prescription ? ' <span class="badge warn">Rx</span>' : '') + '</div><div class="meta">' + esc(qtyUnit(d.qty_in_stock, d.unit)) + ' available' + (d.default_price ? ' · ' + fmt(d.default_price) : '') + '</div></div>' +
-        '<div class="right btn small secondary">Add</div></div>';
-    }).join('') : '<div class="empty">Nothing in stock matches that search.</div>') + '</div>');
+    '<div id="sellAll">' + (r.searching ? '' : r.html) + '</div>');
   syncCartBar();
 }
 
