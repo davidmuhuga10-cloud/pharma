@@ -74,6 +74,12 @@ input, select, textarea { font: inherit; }
   display: flex; align-items: center; justify-content: space-between;
   padding: 12px 16px; background: var(--green); color: #fff;
   position: sticky; top: 0; z-index: 10; box-shadow: var(--shadow-sm);
+  /* In the Android app the page runs edge-to-edge, so the phone's clock and
+     battery sit on top of the page. This padding keeps the green bar's
+     content below them (and the green behind them). 0 in a normal browser. */
+  padding-top: calc(12px + env(safe-area-inset-top, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
 }
 .topbar-id { display: flex; align-items: center; gap: 10px; }
 .topbar-id .brand-badge { background: rgba(255,255,255,0.14); box-shadow: none; }
@@ -279,7 +285,7 @@ h2 { font-size: 16px; }
 .qty-ctrl button { width: 28px; height: 28px; border-radius: 8px; border: 1px solid var(--line); background: #fff; }
 
 .empty { text-align: center; padding: 40px 16px; color: var(--ink-soft); }
-.toast { position: fixed; left: 50%; top: 18px; transform: translateX(-50%); background: var(--ink); color: #fff; padding: 10px 16px; border-radius: 10px; font-size: 14px; z-index: 100; opacity: 0.97; box-shadow: var(--shadow-md); }
+.toast { position: fixed; left: 50%; top: calc(18px + env(safe-area-inset-top, 0px)); transform: translateX(-50%); background: var(--ink); color: #fff; padding: 10px 16px; border-radius: 10px; font-size: 14px; z-index: 100; opacity: 0.97; box-shadow: var(--shadow-md); }
 .toast.bad { background: var(--red); }
 .toast.good { background: var(--green); }
 
@@ -313,7 +319,7 @@ h2 { font-size: 16px; }
   position: absolute; inset: 0; z-index: -1;
   background: linear-gradient(160deg, #17945C 0%, var(--green) 55%, var(--green-dark) 100%);
 }
-.auth-brand { position: relative; padding: 40px 24px 8px; text-align: center; color: #fff; }
+.auth-brand { position: relative; padding: calc(40px + env(safe-area-inset-top, 0px)) 24px 8px; text-align: center; color: #fff; }
 .auth-brand-top { position: relative; z-index: 1; }
 .auth-brand .brand-badge { margin: 0 auto 16px; background: #fff; color: var(--green); box-shadow: none; }
 /* Headline and tag share the same fixed max-width, centered as a block with
@@ -759,7 +765,7 @@ h2 { font-size: 16px; }
 /* --ph-topbar-h/--ph-tabbar-h are the two measurements the insets are     */
 /* built from — change those, not the calc()s.                             */
 /* ---------------------------------------------------------------------- */
-:root { --ph-topbar-h: 60px; --ph-tabbar-h: 62px; }
+:root { --ph-topbar-h: 60px; --ph-tabbar-h: 62px; --ph-safe-top: env(safe-area-inset-top, 0px); }
 
 /* Below .mask (z-index 50) on purpose: opening a sheet from a drawer row  */
 /* must cover the drawer, not slide under it.                              */
@@ -771,7 +777,7 @@ body.nav-open .navscrim { opacity: 1; visibility: visible; }
 
 .navdrawer {
   position: fixed; left: 0; z-index: 45;
-  top: calc(var(--ph-topbar-h) + 5px);
+  top: calc(var(--ph-topbar-h) + 5px + var(--ph-safe-top));
   bottom: calc(var(--ph-tabbar-h) + 6px + env(safe-area-inset-bottom));
   width: 172px; max-width: 70%; overflow: hidden;
   background: linear-gradient(180deg, var(--green) 0%, var(--green-dark) 100%);

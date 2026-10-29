@@ -9,10 +9,9 @@
  * fix in step 1 happens before anything is drawn.
  *
  * What it does:
- *  1. Layout: the page asks for viewport-fit=cover (edge-to-edge). In the app
- *     the page instead sits between the status bar and the navigation bar
- *     (viewport-fit=auto), so the green top bar is never hidden under the
- *     clock and battery.
+ *  1. Layout: the page runs edge-to-edge (viewport-fit=cover) and style.css
+ *     pads the top bar by the status-bar height (safe-area-inset-top), so the
+ *     green bar is never hidden under the clock and battery.
  *  2. Status bar: light icons on Pharma green.
  *  3. Printing: receipts and reports call window.print(), which does nothing
  *     in an Android WebView. Here it sends the page to Android's print
@@ -34,8 +33,12 @@
   document.documentElement.classList.add('native-app');
 
   /* ------------------------------------------------------- 1. layout --- */
-  var vp = document.querySelector('meta[name="viewport"]');
-  if (vp) vp.setAttribute('content', (vp.getAttribute('content') || '').replace('viewport-fit=cover', 'viewport-fit=auto'));
+  // Nothing to do here on purpose. The app runs edge-to-edge (viewport-fit=cover
+  // stays as the page asks) and style.css pads the green top bar, the menu and
+  // the sign-in screen by env(safe-area-inset-top), so nothing sits under the
+  // clock and battery. Older WebViews pad the page natively and report 0 for
+  // the inset, so there is never a double gap. (Switching the viewport to
+  // viewport-fit=auto at run time is not honoured by newer WebViews.)
 
   /* --------------------------------------------------- 2. status bar --- */
   if (P.StatusBar) {

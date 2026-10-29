@@ -36,7 +36,11 @@ function app(state, extra, docOpts) {
   return { win, calls, back: () => backHandler(), d };
 }
 { const a = app({ profile: {}, tab: 'dashboard' });
-  check(a.d.vp.c.includes('viewport-fit=auto') && !a.d.vp.c.includes('viewport-fit=cover'), 'app must switch the viewport to viewport-fit=auto');
+  check(a.d.vp.c.includes('viewport-fit=cover'), 'app keeps viewport-fit=cover; the CSS pads for the status bar');
+  const css = fs.readFileSync(path.join(__dirname, '..', 'style.css'), 'utf8');
+  check(/\.topbar \{[^}]*padding-top: calc\(12px \+ env\(safe-area-inset-top/.test(css), 'top bar must be padded by safe-area-inset-top');
+  check(/\.navdrawer \{[^}]*var\(--ph-safe-top\)/.test(css), 'menu drawer must start below the status bar');
+  check(/\.auth-brand \{[^}]*safe-area-inset-top/.test(css), 'sign-in screen must clear the status bar');
   a.win.print(); check(a.calls.includes('print:Pharma'), 'window.print must call the Printer plugin');
   check(a.calls.includes('bar:#0F5132'), 'status bar must be Pharma green');
   check(a.calls.includes('splash'), 'splash must be hidden once the page has loaded');

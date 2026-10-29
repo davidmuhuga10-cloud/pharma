@@ -29,7 +29,7 @@
     },
     "SystemBars": {
       "insetsHandling": "native",
-      "initialViewportFitValueHint": "auto",
+      "initialViewportFitValueHint": "cover",
       "style": "DARK"
     }
   }

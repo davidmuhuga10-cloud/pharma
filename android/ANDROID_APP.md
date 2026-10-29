@@ -8,7 +8,7 @@ A new app build is only needed when something in `android/`, `nativeShell.js` or
 
 - **Printing:** receipts and reports go to Android's print service ("Save as PDF" is one of the choices).
 - **Back button:** closes an open sheet first, then the menu drawer, then goes to Home, then sends the app to the background.
-- **Layout:** the page sits below the status bar, with Pharma green behind the clock and battery.
+- **Layout:** the app runs edge-to-edge and the page pads its green top bar, the menu and the sign-in screen by the status-bar height, so Pharma green sits behind the clock and battery and nothing is hidden under them (`style.css`, `safe-area-inset-top`).
 - **Splash:** one green splash with the red hospital cross and "Pharma".
 - **Offline:** if there's no internet on launch, a "No internet connection" screen with Try again (`www/error.html`).
 - **Security:** Android backups are switched off, so a pharmacy's sign-in is never copied to Google Drive or a new phone.
