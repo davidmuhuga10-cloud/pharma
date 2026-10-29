@@ -13,7 +13,7 @@ function makeDoc(opts) {
   const mask = opts.mask ? { remove() { opts.removed = true; } } : null;
   return { vp, classes, doc: {
     readyState: 'complete', documentElement: { classList: { add() {} } },
-    querySelector: s => s === 'meta[name="viewport"]' ? vp : s === '.mask' ? mask : null,
+    querySelector: s => s === 'meta[name="viewport"]' ? vp : s === '.mask' ? mask : s === '.dlg-mask' ? (opts.dlg ? {} : null) : null,
     body: { classList: { contains: c => classes.has(c), remove: c => classes.delete(c) } } } };
 }
 
@@ -51,6 +51,8 @@ function app(state, extra, docOpts) {
   a.back(); check(closed === 1 && !went, 'back with a sheet open must close the sheet only'); }
 { let closed = 0, went; const a = app({ profile: {}, tab: 'inventory' }, { closeNavDrawer: () => { closed++; }, setTab: t => { went = t; } }, { nav: true });
   a.back(); check(closed === 1 && !went, 'back with the menu drawer open must close the drawer only'); }
+{ let dclosed = 0, sclosed = 0; const a = app({ profile: {}, tab: 'sell' }, { closeDialog: () => { dclosed++; }, closeSheet: () => { sclosed++; } }, { dlg: true, mask: true });
+  a.back(); check(dclosed === 1 && sclosed === 0 && !a.calls.includes('minimize'), 'back with a pop-up open must close the pop-up only'); }
 { const a = app({ profile: null, tab: 'dashboard' }); a.back(); check(a.calls.includes('minimize'), 'back on the sign-in screen must minimise the app'); }
 
 if (bad) process.exit(1);

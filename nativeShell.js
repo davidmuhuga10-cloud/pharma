@@ -18,7 +18,7 @@
  *     service (Printer plugin), which applies the same print styles as a
  *     browser — only the document (#printArea) is printed, and "Save as PDF"
  *     is one of the printer choices.
- *  4. Back button: closes an open sheet first, then the menu drawer; on any
+ *  4. Back button: closes an open pop-up first, then an open sheet, then the menu drawer; on any
  *     screen other than Home it goes to Home; otherwise the app goes to the
  *     background like any Android app.
  *  5. Splash: hidden as soon as the page has loaded (and after 8s at most).
@@ -59,6 +59,7 @@
   if (P.App && P.App.addListener) {
     try {
       P.App.addListener('backButton', function () {
+        if (document.querySelector('.dlg-mask')) { if (typeof window.closeDialog === 'function') window.closeDialog(); return; }
         var mask = document.querySelector('.mask');
         if (mask) { if (typeof window.closeSheet === 'function') window.closeSheet(); else mask.remove(); return; }
         if (document.body.classList.contains('nav-open')) {

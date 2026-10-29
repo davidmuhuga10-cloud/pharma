@@ -65,6 +65,10 @@ function friendlyError(e) {
   var msg = (e && e.message) || String(e || '');
   if (/failed to fetch|network|load failed/i.test(msg)) return 'No internet connection — check your connection and try again.';
   if (/Not authorized/i.test(msg)) return 'This account does not have admin access.';
+  if (/jwt|refresh token|session (has )?expired|not authenticated/i.test(msg)) return 'Your session has ended. Please log in again.';
+  if (/row-level security|permission denied/i.test(msg)) return 'You do not have permission to do that.';
+  if (/timeout|timed out/i.test(msg)) return 'That took too long. Please try again.';
+  if (/supabase|netlify|postgres|postgrest|pgrst|sqlstate|schema cache|edge function|functionshttp|non-2xx|does not exist|syntax error|typeerror|referenceerror|is not a function|is not defined|cannot read|undefined|unexpected token|<html/i.test(msg)) return 'Something went wrong on our side. Please try again in a moment.';
   return msg || 'Something went wrong.';
 }
 
@@ -524,7 +528,7 @@ function drawDetail(d) {
         '<div class="when" title="' + esc(exactTime(x.signed_in_at)) + '">' + esc(fmtWhen(x.signed_in_at)) + '</div></div>';
     }).join('') : '<div class="empty-note">No sign-ins recorded yet.</div>') +
     (history.length > 8 ? '<button class="btn ghost small" style="margin-top:8px" onclick="A.histAll=!A.histAll;drawDetail(A.detail[\'' + p.id + '\'])">' + (A.histAll ? 'Show fewer' : 'Show all ' + history.length) + '</button>' : '') +
-    (anyBackfill ? '<div class="foot-note">Sign-ins before the admin portal went live come from the sessions Supabase still had saved, so older history may be incomplete. Every sign-in from now on is recorded.</div>' : '') +
+    (anyBackfill ? '<div class="foot-note">Sign-ins before the admin portal went live come from the sessions the system still had saved, so older history may be incomplete. Every sign-in from now on is recorded.</div>' : '') +
     '</div>';
 
   var staff = d.staff || [];

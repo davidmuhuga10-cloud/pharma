@@ -1090,3 +1090,87 @@ html,body{margin:0}
 .stcount:focus { outline: none; border-color: var(--green); box-shadow: 0 0 0 3px var(--green-light); }
 .list-row .meta.wrap { white-space: normal; }
 .kpi-grid > .kpi { min-width: 0; overflow-wrap: anywhere; }
+
+/* ---------------------------------------------------------------------- */
+/* Phone sign-in is one fixed screen: it never scrolls up and down. The   */
+/* log-in page is locked to the visible screen height and its spacing     */
+/* shrinks in steps on shorter phones (and under the Android status bar)  */
+/* so the form and both links always fit. Sign-up and the other steps     */
+/* have more fields, so they may still scroll when they must.             */
+/* ---------------------------------------------------------------------- */
+@media (max-width: 859px) {
+  html:has(.auth-wrap[data-mode="login"]),
+  html:has(.auth-wrap[data-mode="login"]) body { overflow: hidden; overscroll-behavior: none; }
+  html:has(.auth-wrap[data-mode="login"]) body { padding-bottom: 0; }
+  .auth-wrap[data-mode="login"] { height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; }
+  .auth-wrap[data-mode="login"] .auth-brand { padding-top: calc(clamp(24px, 7vh, 80px) + env(safe-area-inset-top, 0px)); }
+}
+@media (max-width: 859px) and (max-height: 820px) {
+  .auth-wrap[data-mode="login"] { padding-bottom: 40px; }
+  .auth-wrap[data-mode="login"] .auth-brand { padding-bottom: 24px; }
+  .auth-wrap[data-mode="login"] .auth-hero-mark { width: 64px; height: 64px; margin-bottom: 8px; border-radius: 19px; }
+  .auth-wrap[data-mode="login"] .auth-hero-mark svg { width: 44px; height: 44px; }
+  .auth-wrap[data-mode="login"] .auth-feats { margin-top: 10px; }
+  .auth-wrap[data-mode="login"] .auth-feat i { width: 38px; height: 38px; font-size: 18px; margin-bottom: 3px; }
+  .auth-wrap[data-mode="login"] .auth-title { margin-bottom: 9px; }
+  .auth-wrap[data-mode="login"] #authBody .field { margin-bottom: 8px; }
+  .auth-wrap[data-mode="login"] .auth-toggle { margin-top: 10px; gap: 6px; }
+  .auth-wrap[data-mode="login"] .auth-toggle a { padding: 8px; }
+}
+@media (max-width: 859px) and (max-height: 720px) {
+  .auth-wrap[data-mode="login"] .auth-feats { display: none; }
+  .auth-wrap[data-mode="login"] .auth-brand { padding-bottom: 22px; }
+}
+@media (max-width: 859px) and (max-height: 620px) {
+  .auth-wrap[data-mode="login"] { padding-bottom: 10px; }
+  .auth-wrap[data-mode="login"] .auth-wrap::after, .auth-wrap[data-mode="login"]::after { display: none; }
+  .auth-wrap[data-mode="login"] .auth-brand { padding-top: calc(14px + env(safe-area-inset-top, 0px)); padding-bottom: 20px; }
+  .auth-wrap[data-mode="login"] .auth-hero-mark { width: 50px; height: 50px; margin-bottom: 6px; border-radius: 15px; }
+  .auth-wrap[data-mode="login"] .auth-hero-mark svg { width: 34px; height: 34px; }
+  .auth-wrap[data-mode="login"] .auth-hero-word { font-size: 26px; }
+  .auth-wrap[data-mode="login"] .auth-lfoot { margin-top: 8px; }
+}
+/* Landscape or very short screens: let the page scroll rather than cut the form. */
+@media (max-width: 859px) and (max-height: 520px) {
+  html:has(.auth-wrap[data-mode="login"]), html:has(.auth-wrap[data-mode="login"]) body { overflow: auto; }
+  .auth-wrap[data-mode="login"] { height: auto; min-height: 100vh; overflow: visible; }
+}
+
+/* ---------------------------------------------------------------------- */
+/* In-app pop-ups (replace the browser's own "<site> says" boxes) and the */
+/* "Please wait, loading…" cover shown while a screen opens.               */
+/* ---------------------------------------------------------------------- */
+.dlg-mask {
+  position: fixed; inset: 0; z-index: 70; display: flex; align-items: center; justify-content: center;
+  padding: 20px; background: rgba(20,18,16,0.55);
+  padding-top: calc(20px + env(safe-area-inset-top, 0px)); padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+}
+.dlg {
+  width: 100%; max-width: 380px; background: #FBF7EC; border: 2px solid var(--green); border-radius: 16px;
+  padding: 20px 18px 16px; box-shadow: var(--shadow-lg); animation: dlgIn 0.14s ease-out;
+}
+@keyframes dlgIn { from { transform: scale(0.96); opacity: 0; } to { transform: none; opacity: 1; } }
+.dlg-title { margin: 0 0 8px; font-size: 18px; font-weight: 800; color: var(--ink); letter-spacing: -0.01em; }
+.dlg-msg { margin: 0 0 14px; font-size: 14.5px; line-height: 1.45; color: var(--ink); }
+.dlg-input {
+  width: 100%; margin: 0 0 14px; padding: 11px 12px; font: inherit; font-size: 15px; color: var(--ink);
+  background: #fff; border: 1.5px solid var(--green); border-radius: 10px;
+}
+.dlg-input:focus { outline: none; box-shadow: 0 0 0 3px var(--green-light); }
+.dlg-actions { display: flex; gap: 10px; }
+.dlg-actions .btn { flex: 1 1 0; min-width: 0; }
+.dlg-actions .btn.danger { background: var(--red); color: #fff; }
+
+.loadveil { position: fixed; inset: 0; z-index: 90; background: transparent; cursor: progress; }
+.loadveil-pill {
+  position: absolute; left: 50%; top: calc(76px + env(safe-area-inset-top, 0px)); transform: translateX(-50%);
+  display: none; align-items: center; gap: 10px; padding: 10px 18px; border-radius: 999px; white-space: nowrap;
+  background: var(--green); color: #fff; font-size: 14px; font-weight: 700; box-shadow: var(--shadow-lg);
+}
+.loadveil.show .loadveil-pill { display: flex; }
+.loadveil-spin {
+  width: 16px; height: 16px; border-radius: 50%; border: 2.5px solid rgba(255,255,255,0.35); border-top-color: #fff;
+  animation: loadSpin 0.8s linear infinite;
+}
+@keyframes loadSpin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .loadveil-spin { animation-duration: 2.4s; } .dlg { animation: none; } }

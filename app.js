@@ -229,6 +229,42 @@ function sheet(title, bodyHtml) {
   document.body.appendChild(mask);
   return $('#sheetBody');
 }
+// ---------------------------------------------------------------------------
+// In-app pop-ups. These replace the browser's own confirm()/prompt() boxes,
+// which print the website's address ("<site> says…") and cannot be styled.
+// askConfirm resolves true/false, askText resolves the text (or null when
+// cancelled). The phone's Back button cancels them (nativeShell.js).
+// ---------------------------------------------------------------------------
+function closeDialog() { var d = document.querySelector('.dlg-mask'); if (d && d._cancel) d._cancel(); else if (d) d.remove(); }
+function askDialog(o) {
+  return new Promise(function (resolve) {
+    var old = document.querySelector('.dlg-mask'); if (old) old.remove();
+    var m = document.createElement('div');
+    m.className = 'dlg-mask';
+    m.innerHTML =
+      '<div class="dlg" role="dialog" aria-modal="true">' +
+      '<h3 class="dlg-title">' + esc(o.title || 'Please confirm') + '</h3>' +
+      (o.message ? '<p class="dlg-msg">' + esc(o.message) + '</p>' : '') +
+      (o.input ? '<input class="dlg-input" id="dlgInput" maxlength="' + (o.maxlength || 60) + '" placeholder="' + esc(o.placeholder || '') + '" autocomplete="off">' : '') +
+      '<div class="dlg-actions">' +
+      '<button class="btn secondary" id="dlgNo">' + esc(o.cancelLabel || 'Cancel') + '</button>' +
+      '<button class="btn ' + (o.danger ? 'danger' : 'primary') + '" id="dlgYes">' + esc(o.okLabel || 'OK') + '</button>' +
+      '</div></div>';
+    var done = false;
+    function finish(v) { if (done) return; done = true; m.remove(); resolve(v); }
+    m._cancel = function () { finish(o.input ? null : false); };
+    m.addEventListener('click', function (e) { if (e.target === m) m._cancel(); });
+    document.body.appendChild(m);
+    var inp = m.querySelector('#dlgInput');
+    m.querySelector('#dlgNo').onclick = m._cancel;
+    m.querySelector('#dlgYes').onclick = function () { finish(o.input ? inp.value.trim() : true); };
+    if (inp) { inp.onkeydown = function (e) { if (e.key === 'Enter') m.querySelector('#dlgYes').click(); }; setTimeout(function () { inp.focus(); }, 30); }
+    else setTimeout(function () { var y = m.querySelector('#dlgYes'); if (y) y.focus(); }, 30);
+  });
+}
+function askConfirm(title, message, okLabel, danger) { return askDialog({ title: title, message: message, okLabel: okLabel, danger: danger }); }
+function askText(title, message, placeholder, okLabel) { return askDialog({ title: title, message: message, input: true, placeholder: placeholder, okLabel: okLabel }); }
+
 // Bug fix (system-wide): this already disabled the button on click, but
 // never changed what it SHOWED — a busy button looked identical to a live
 // one (same label, same near-full opacity), so an impatient tap while a
@@ -250,9 +286,22 @@ function act(btn, fn) {
 
 // Turns a raw network/Supabase error into something a pharmacist can act on,
 // instead of a stack trace or "Failed to fetch".
+// Anything a person sees goes through here. Our own messages (written in plain
+// words inside the database functions) pass through unchanged; anything that
+// looks technical, or names the services behind the app, becomes a plain
+// sentence. Nobody should ever see a provider's name or a code.
 function friendlyError(e) {
   var msg = (e && e.message) || String(e || '');
-  if (/failed to fetch|network|load failed/i.test(msg)) return 'No internet connection — check your connection and try again.';
+  if (/failed to fetch|network|load failed|networkerror|err_internet|offline/i.test(msg)) return 'No internet connection — check your connection and try again.';
+  if (/jwt|refresh token|session (has )?expired|not authenticated|auth session missing|invalid token/i.test(msg)) return 'Your session has ended. Please log in again.';
+  if (/user already registered|already been registered|already exists.*user/i.test(msg)) return 'That phone number already has an account. Please log in instead.';
+  if (/password should be|weak password|at least \d+ characters/i.test(msg)) return 'Use a stronger password (at least 8 characters).';
+  if (/rate limit|too many requests|over_.*_rate/i.test(msg)) return 'Too many tries. Please wait a minute and try again.';
+  if (/row-level security|permission denied|not allowed|violates row/i.test(msg)) return 'You do not have permission to do that.';
+  if (/duplicate key|unique constraint|already exists/i.test(msg)) return 'That already exists. Check the name or number and try again.';
+  if (/foreign key|violates|is still referenced/i.test(msg)) return 'This is linked to other records, so it cannot be changed this way.';
+  if (/timeout|timed out|statement timeout|aborted/i.test(msg)) return 'That took too long. Please try again.';
+  if (/supabase|netlify|postgres|postgrest|pgrst|sqlstate|schema cache|edge function|functionshttp|functionsrelay|non-2xx|relation .* does not exist|column .* does not exist|function .* does not exist|syntax error|typeerror|referenceerror|is not a function|is not defined|cannot read|undefined|unexpected token|<html|\bhttp \d{3}|\b50\d\b/i.test(msg)) return 'Something went wrong on our side. Please try again in a moment.';
   return msg || 'Something went wrong.';
 }
 
@@ -520,7 +569,7 @@ function render() {
     navBar() +
     navDrawerHtml();
   wireNavDrawer();
-  renderTab();
+  return renderTab();
 }
 
 // ---------------------------------------------------------------------------
@@ -544,11 +593,11 @@ function navMenuItems() {
     if (seeStock) out.push({ tab: 'inventory', label: 'Inventory', ic: '&#128138;' });
     if (can('sell')) out.push({ tab: 'sell', label: 'Sell', ic: '&#129534;' });
     if (canSeeCustomers()) out.push({ tab: 'customers', label: 'Customers', ic: '&#128101;' });
-    if (can('stock_take')) out.push({ tab: 'stocktake', label: 'Stock take', ic: '&#128203;' });
-    if (canSeeControlled()) out.push({ tab: 'controlled', label: 'Controlled <br>drugs', ic: '&#128274;' });
+    if (can('stock_take')) out.push({ tab: 'stocktake', label: 'Stock Take', ic: '&#128203;' });
+    if (canSeeControlled()) out.push({ tab: 'controlled', label: 'Controlled <br>Drugs', ic: '&#128274;' });
     if (seeReports) {
-      out.push({ report: 'lowstock', label: 'Reorder <br>list', ic: '&#128230;' });
-      out.push({ report: 'expiry', label: 'Expiry <br>dates', ic: '&#9200;' });
+      out.push({ report: 'lowstock', label: 'Reorder <br>List', ic: '&#128230;' });
+      out.push({ report: 'expiry', label: 'Expiry <br>Dates', ic: '&#9200;' });
     }
   }
   var seeSuppliers = can('suppliers') || can('view_suppliers');
@@ -557,11 +606,11 @@ function navMenuItems() {
     out.push({ grp: 'Money' });
     if (seeSuppliers) out.push({ tab: 'suppliers', label: 'Suppliers', ic: '&#128666;' });
     if (seeExpenses) out.push({ tab: 'expenses', label: 'Expenses', ic: '&#128181;' });
-    if (seeReports) out.push({ report: 'valuation', label: 'Stock <br>valuation', ic: '&#128176;' });
-    if (can('claims')) out.push({ report: 'claims', label: 'Insurance <br>claims', ic: '&#127973;' });
+    if (seeReports) out.push({ report: 'valuation', label: 'Stock <br>Valuation', ic: '&#128176;' });
+    if (can('claims')) out.push({ report: 'claims', label: 'Insurance <br>Claims', ic: '&#127973;' });
   }
   out.push({ grp: 'More' });
-  if (seeReports) out.push({ tab: 'reports', label: 'All reports', ic: '&#128202;' });
+  if (seeReports) out.push({ tab: 'reports', label: 'All Reports', ic: '&#128202;' });
   out.push({ tab: 'settings', label: 'Settings', ic: '&#9881;' });
   return out;
 }
@@ -575,7 +624,7 @@ function navDrawerHtml() {
         if (m.grp) return '<div class="nd-grp">' + esc(m.grp) + '</div>';
         var attr = m.report ? 'data-report="' + m.report + '"' : 'data-nav="' + m.tab + '"';
         // A Reports sub-view counts as current only while that exact view is
-        // open, so "All reports" and e.g. "Expiry dates" never both highlight.
+        // open, so "All Reports" and e.g. "Expiry Dates" never both highlight.
         var on = m.report
           ? (STATE.tab === 'reports' && reportsView === m.report)
           : (STATE.tab === m.tab && !(m.tab === 'reports' && reportsView !== 'hub'));
@@ -759,24 +808,45 @@ function syncCartBar() {
 function navTabOn(tab) {
   return STATE.tab === tab || (tab === 'inventory' && (STATE.tab === 'stocktake' || STATE.tab === 'controlled'));
 }
+// While a screen is loading, a clear "Please wait, loading…" shows and every
+// tap is ignored, so nobody can press tab after tab and pile up requests. The
+// pill itself waits ~120 ms so a screen that opens instantly does not flicker.
+var veilBusy = false;
+function runWithVeil(fn) {
+  if (veilBusy) return Promise.resolve();
+  veilBusy = true;
+  var v = document.createElement('div');
+  v.className = 'loadveil'; v.id = 'loadVeil';
+  v.innerHTML = '<div class="loadveil-pill" role="status"><span class="loadveil-spin"></span>Please wait, loading…</div>';
+  document.body.appendChild(v);
+  var showT = setTimeout(function () { v.classList.add('show'); }, 120);
+  var failSafe = setTimeout(function () { end(); }, 20000);
+  var ended = false;
+  function end() { if (ended) return; ended = true; clearTimeout(showT); clearTimeout(failSafe); v.remove(); veilBusy = false; }
+  var p;
+  try { p = Promise.resolve(fn()); } catch (e) { end(); throw e; }
+  return p.catch(function (e) { toast(friendlyError(e), 'bad'); }).then(end);
+}
 function setTab(t) {
+  if (veilBusy) return;
   if (t !== STATE.tab) { custDetailId = null; controlledDetailId = null; stViewing = null; }
-  STATE.tab = t; render();
+  STATE.tab = t;
+  runWithVeil(function () { return render(); });
 }
 
 async function logout() { clearProfileCache(); clearDashCache(); await sb.auth.signOut(); STATE.tab = 'dashboard'; STATE.cart = []; render(); }
 
 function renderTab() {
-  if (STATE.tab === 'dashboard') renderDashboard();
-  else if (STATE.tab === 'inventory') renderInventory();
-  else if (STATE.tab === 'sell') renderSell();
-  else if (STATE.tab === 'reports') renderReports();
-  else if (STATE.tab === 'settings') renderSettings();
-  else if (STATE.tab === 'suppliers') renderSuppliers();
-  else if (STATE.tab === 'expenses') renderExpenses();
-  else if (STATE.tab === 'customers') renderCustomers();
-  else if (STATE.tab === 'stocktake') renderStockTake();
-  else if (STATE.tab === 'controlled') renderControlled();
+  if (STATE.tab === 'dashboard') return renderDashboard();
+  else if (STATE.tab === 'inventory') return renderInventory();
+  else if (STATE.tab === 'sell') return renderSell();
+  else if (STATE.tab === 'reports') return renderReports();
+  else if (STATE.tab === 'settings') return renderSettings();
+  else if (STATE.tab === 'suppliers') return renderSuppliers();
+  else if (STATE.tab === 'expenses') return renderExpenses();
+  else if (STATE.tab === 'customers') return renderCustomers();
+  else if (STATE.tab === 'stocktake') return renderStockTake();
+  else if (STATE.tab === 'controlled') return renderControlled();
 }
 
 // ---------------------------------------------------------------------------
@@ -1033,7 +1103,7 @@ async function doSendResetCode() {
       return;
     }
     if (data.sent === false) {
-      err.textContent = data.message || 'Could not send a code right now. Try again shortly.';
+      err.textContent = friendlyError({ message: data.message }) === 'Something went wrong.' ? 'Could not send a code right now. Try again shortly.' : friendlyError({ message: data.message });
       return;
     }
     fpPhoneVal = phone;
@@ -1095,7 +1165,7 @@ async function doSetNewPassword() {
     var pw = $('#rcPw').value;
     if (pw.length < 8) { err.textContent = 'Use at least 8 characters.'; return; }
     var { error } = await sb.auth.updateUser({ password: pw });
-    if (error) { err.textContent = error.message; return; }
+    if (error) { err.textContent = friendlyError(error); return; }
     STATE.recoveryMode = false;
     toast('Password updated — you are now logged in.', 'good');
     STATE.session = (await sb.auth.getSession()).data.session;
@@ -1113,7 +1183,7 @@ async function doJoin() {
     var pw = $('#jnPw').value;
     if (!code || !phone || pw.length < 8) { err.textContent = 'Fill in the staff code, phone number, and an 8+ character password.'; return; }
     var { data: signUpData, error: suErr } = await sb.auth.signUp({ email: phoneToAuthEmail(phone), password: pw });
-    if (suErr) { err.textContent = suErr.message; return; }
+    if (suErr) { err.textContent = friendlyError(suErr); return; }
     stashPendingSignup({ kind: 'staff', code: code, fullName: fullName, phone: phone });
     if (!signUpData.session) {
       toast('Account created — log in with your phone number and password and it will pick up your staff code automatically.', 'good');
@@ -1138,7 +1208,7 @@ async function doLogin() {
       if (/invalid login credentials/i.test(error.message)) {
         err.textContent = 'Incorrect phone number or password.';
       } else {
-        err.textContent = error.message;
+        err.textContent = friendlyError(error);
       }
       return;
     }
@@ -1167,7 +1237,7 @@ async function doSignup() {
     var pw = $('#suPw').value;
     if (!pharmacyName || !phone || pw.length < 8) { err.textContent = 'Fill in the pharmacy name, phone number, and an 8+ character password.'; return; }
     var { data: signUpData, error: suErr } = await sb.auth.signUp({ email: phoneToAuthEmail(phone), password: pw });
-    if (suErr) { err.textContent = suErr.message; return; }
+    if (suErr) { err.textContent = friendlyError(suErr); return; }
     // Stash what they typed BEFORE checking for a session — if this Supabase
     // project requires email confirmation, signUp() returns no session at
     // all, so there's no authenticated user yet to attach a pharmacy to.
@@ -1915,7 +1985,7 @@ function drawInventory() {
       '<button class="btn" onclick="openImportExcel()">' + icon('upload',15) + ' Import</button>' +
       '</div>' : '') +
     (can('stock_take') || canSeeControlled() ? '<div class="toolbar-segment">' +
-      (can('stock_take') ? '<button class="btn" onclick="setTab(\'stocktake\')">' + icon('clipboard',15) + ' Stock take</button>' : '') +
+      (can('stock_take') ? '<button class="btn" onclick="setTab(\'stocktake\')">' + icon('clipboard',15) + ' Stock Take</button>' : '') +
       (canSeeControlled() ? '<button class="btn" onclick="setTab(\'controlled\')">' + icon('warn',15) + ' Controlled</button>' : '') +
       '</div>' : '') +
     '<div class="toolbar-segment toolbar-end">' +
@@ -2349,7 +2419,7 @@ async function submitMasterDrugsSync() {
       });
     }
     var { error } = await sb.rpc('sync_master_drugs', { p_pharmacy_id: STATE.profile.pharmacy_id, p_items: items });
-    if (error) { toast(error.message, 'bad'); return; }
+    if (error) { toast(friendlyError(error), 'bad'); return; }
     toast('Added ' + items.length + ' drug' + (items.length === 1 ? '' : 's') + ' to inventory.', 'good');
     STATE.syncSelected = {};
     closeSheet();
@@ -2371,7 +2441,7 @@ function openReorderList() {
       return { name: d.name, unit: d.unit, current: d.qty_in_stock, reorderLevel: d.reorder_level, suggested: suggested };
     });
   pendingReorderList = needed;
-  var body = sheet('Reorder list', '');
+  var body = sheet('Reorder List', '');
   body.innerHTML =
     '<div class="toolbar-row"><div class="toolbar-segment toolbar-end">' +
     '<button class="btn" onclick="exportReorderExcel()">' + icon('download',15) + ' Excel</button>' +
@@ -2502,7 +2572,7 @@ async function saveNewDrug() {
       pack_label: $('#dPackLabel').value.trim() || null
     };
     var { data, error } = await sb.from('drugs').insert(payload).select().single();
-    if (error) { toast(error.message, 'bad'); return; }
+    if (error) { toast(friendlyError(error), 'bad'); return; }
     toast('Drug added.', 'good');
     openRestock(encodeDrugForRestock(data));
   });
@@ -2595,7 +2665,7 @@ async function saveRestock(drugId) {
       p_supplier: supplierName,
       p_supplier_id: matchedSupplier ? matchedSupplier.id : null
     });
-    if (error) { toast(error.message, 'bad'); return; }
+    if (error) { toast(friendlyError(error), 'bad'); return; }
     toast('Restocked.', 'good');
     closeSheet();
     renderInventory();
@@ -2632,7 +2702,7 @@ async function saveWriteOff(batchId) {
     if (!woReason) { toast('Give a reason — it goes on the stock audit trail.', 'bad'); return; }
     // Write-offs permanently remove stock with no undo — a fat-fingered tap
     // at a busy counter shouldn't be able to do that with zero friction.
-    if (!confirm('Write off ' + qty + ' unit(s)? This cannot be undone.')) return;
+    if (!(await askConfirm('Write off stock', 'Write off ' + qty + ' unit(s)? This cannot be undone.', 'Write off', true))) return;
     var { error } = await sb.rpc('record_write_off', {
       p_pharmacy_id: STATE.profile.pharmacy_id, p_batch_id: batchId, p_quantity: qty,
       p_reason: woReason, p_type: $('#woType').value
@@ -2665,7 +2735,7 @@ async function saveCorrection(batchId) {
     // A correction directly overwrites the batch's counted quantity — cheap
     // to close the same confirmation gap write-off and void already have,
     // so a fat-fingered tap doesn't silently overwrite a real count.
-    if (!confirm('Set this batch\'s quantity to ' + qty + '? This overwrites the current count.')) return;
+    if (!(await askConfirm('Correct the count', 'Set this batch\'s quantity to ' + qty + '? This overwrites the current count.', 'Set quantity', true))) return;
     var { error } = await sb.rpc('record_correction', {
       p_pharmacy_id: STATE.profile.pharmacy_id, p_batch_id: batchId, p_new_quantity: qty,
       p_reason: coReason
@@ -2772,14 +2842,17 @@ function heldSalesCard() {
       var cart = h.cart || [];
       var total = cart.reduce(function (a, c) { return a + c.qty * c.price; }, 0);
       return '<div class="list-row"><div><div class="name">' + esc(h.label || 'Held sale') + '</div><div class="meta">' + cart.length + (cart.length === 1 ? ' item · ' : ' items · ') + fmt(total) + ' · ' + new Date(h.created_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) + '</div></div>' +
-        '<div class="right" style="display:flex;gap:6px"><button class="btn small secondary" onclick="resumeHeldSale(this,\'' + h.id + '\')">Resume</button><button class="btn small danger" onclick="deleteHeldSale(this,\'' + h.id + '\')">' + icon('close',14) + '</button></div></div>';
+        '<div class="right" style="display:flex;gap:6px"><button class="btn small secondary" onclick="resumeHeldSale(this,\'' + h.id + '\')">Resume</button><button class="btn small danger" title="Discard" aria-label="Discard held sale" onclick="deleteHeldSale(this,\'' + h.id + '\')">' + icon('close',14) + '</button></div></div>';
     }).join('') + '</div>';
 }
 
 async function holdSale(btn) {
+  if (!STATE.cart.length) { toast('Cart is empty.', 'bad'); return; }
+  var label = await askText('Hold this sale', 'Add a label if you like (optional), for example the customer\'s name or a counter number.', 'Label (optional)', 'Hold sale');
+  if (label === null) return;
+  label = label || null;
   act(btn, async function () {
     if (!STATE.cart.length) { toast('Cart is empty.', 'bad'); return; }
-    var label = prompt('Label for this held sale (optional) — e.g. customer name or counter number:') || null;
     var { error } = await sb.from('held_sales').insert({
       pharmacy_id: STATE.profile.pharmacy_id, label: label, cart: STATE.cart, created_by: STATE.session.user.id
     });
@@ -2790,10 +2863,10 @@ async function holdSale(btn) {
   });
 }
 
-function resumeHeldSale(btn, id) {
+async function resumeHeldSale(btn, id) {
   var h = heldSalesCache.find(function (x) { return x.id === id; });
   if (!h) return;
-  if (STATE.cart.length && !confirm('This will replace your current cart with the held sale. Continue?')) return;
+  if (STATE.cart.length && !(await askConfirm('Replace the cart?', 'This will replace your current cart with the held sale.', 'Continue'))) return;
   act(btn, async function () {
     STATE.cart = h.cart || [];
     await sb.from('held_sales').delete().eq('id', id);
@@ -2803,7 +2876,7 @@ function resumeHeldSale(btn, id) {
 }
 
 async function deleteHeldSale(btn, id) {
-  if (!confirm('Discard this held sale? Its items are not deducted from stock, so nothing to undo.')) return;
+  if (!(await askConfirm('Discard this held sale?', 'Its items were never taken off the stock, so there is nothing to undo.', 'Discard', true))) return;
   act(btn, async function () {
     await sb.from('held_sales').delete().eq('id', id);
     heldSalesCache = heldSalesCache.filter(function (x) { return x.id !== id; });
@@ -3175,7 +3248,8 @@ async function renderReports() {
   drawReportsHub();
 }
 
-function openReportsHub() { reportsView = 'hub'; renderReports(); }
+function openReportView(v) { if (veilBusy) return; reportsView = v; runWithVeil(renderReports); }
+function openReportsHub() { if (veilBusy) return; reportsView = 'hub'; runWithVeil(renderReports); }
 
 var REPORT_TILES = [
   { view: 'sales', kind: 't-sales', ico: 'sell', title: 'Sales Report', desc: 'Revenue, payment methods, top sellers and every transaction, by date range.' },
@@ -3190,7 +3264,7 @@ function drawReportsHub() {
   c.innerHTML =
     '<div class="reports-grid">' +
     REPORT_TILES.filter(function (r) { return r.view !== 'claims' || can('claims'); }).map(function (r) {
-      return '<button class="report-tile ' + r.kind + '" onclick="reportsView=\'' + r.view + '\';renderReports()">' +
+      return '<button class="report-tile ' + r.kind + '" onclick="openReportView(\'' + r.view + '\')">' +
         '<div class="r-ico">' + icon(r.ico, 20) + '</div>' +
         '<div><div class="r-title">' + esc(r.title) + '</div><div class="r-desc">' + esc(r.desc) + '</div></div>' +
       '</button>';
@@ -3199,7 +3273,7 @@ function drawReportsHub() {
 }
 
 function reportsBackBtn() {
-  return '<button class="btn ghost small" style="margin-bottom:10px" onclick="openReportsHub()">&larr; All reports</button>';
+  return '<button class="btn ghost small" style="margin-bottom:10px" onclick="openReportsHub()">&larr; All Reports</button>';
 }
 
 function drawReportsShell() {
@@ -4649,7 +4723,7 @@ async function saveSettings() {
       vat_rate: parseFloat($('#stVat').value) || 16
     };
     var { error } = await sb.from('pharmacies').update(payload).eq('id', STATE.profile.pharmacy_id);
-    if (error) { toast(error.message, 'bad'); return; }
+    if (error) { toast(friendlyError(error), 'bad'); return; }
     STATE.pharmacy = Object.assign({}, STATE.pharmacy, payload);
     toast('Saved.', 'good');
     render();
