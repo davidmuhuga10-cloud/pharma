@@ -1773,8 +1773,10 @@ begin
       v_prev_end := v_start;
       v_bucket := 'hour';
     when 'week' then
-      -- Sunday-start week, matching the app's existing client-side reports logic.
-      v_start := date_trunc('day', now()) - (extract(dow from now())::int * interval '1 day');
+      -- A rolling "last 7 days" (today and the 6 days before it, Nairobi days),
+      -- compared with the 7 days before that. It never restarts on a Monday,
+      -- so the graph always has a full week of points.
+      v_start := ((today_ke() - 6)::timestamp at time zone 'Africa/Nairobi');
       v_prev_start := v_start - interval '7 days';
       v_prev_end := v_start;
       v_bucket := 'day';
@@ -1813,14 +1815,28 @@ begin
   v_profit_total := v_sales_total - v_cost_total;
   v_profit_prev_total := v_sales_prev_total - v_cost_prev_total;
 
-  select coalesce(jsonb_agg(jsonb_build_object('bucket_start', bucket_start, 'total', total) order by bucket_start), '[]'::jsonb)
-    into v_trend
-  from (
-    select date_trunc(v_bucket, sold_at) as bucket_start, sum(total_amount) as total
-    from sales
-    where pharmacy_id = p_pharmacy_id and voided = false and sold_at >= v_start and sold_at < v_end
-    group by 1
-  ) t;
+  if p_range = 'week' then
+    -- One point for each of the 7 days, zero on a day with no sales, so the
+    -- line always spans the whole week.
+    select jsonb_agg(jsonb_build_object('bucket_start', g.day, 'total', coalesce(t.total, 0)) order by g.day)
+      into v_trend
+    from generate_series((today_ke() - 6)::timestamp, today_ke()::timestamp, interval '1 day') as g(day)
+    left join (
+      select date_trunc('day', sold_at at time zone 'Africa/Nairobi') as day, sum(total_amount) as total
+      from sales
+      where pharmacy_id = p_pharmacy_id and voided = false and sold_at >= v_start and sold_at < v_end
+      group by 1
+    ) t on t.day = g.day;
+  else
+    select coalesce(jsonb_agg(jsonb_build_object('bucket_start', bucket_start, 'total', total) order by bucket_start), '[]'::jsonb)
+      into v_trend
+    from (
+      select date_trunc(v_bucket, sold_at) as bucket_start, sum(total_amount) as total
+      from sales
+      where pharmacy_id = p_pharmacy_id and voided = false and sold_at >= v_start and sold_at < v_end
+      group by 1
+    ) t;
+  end if;
 
   select coalesce(jsonb_agg(jsonb_build_object('idx', idx, 'total', total) order by idx), '[]'::jsonb)
     into v_rush

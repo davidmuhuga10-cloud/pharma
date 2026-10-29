@@ -78,7 +78,7 @@ var STRINGS = {
   en: {
     home: 'Home', stock: 'Stock', sell: 'Sell', reports: 'Reports', settings: 'Settings',
     dashboard: 'Dashboard', stockValue: 'Stock value (retail)', salesToday: 'Sales today',
-    salesWeek: 'Sales this week', salesMonth: 'Sales this month', needsAttention: 'Needs attention',
+    salesWeek: 'Sales, last 7 days', salesMonth: 'Sales this month', needsAttention: 'Needs attention',
     outOfStock: 'Out of stock', lowStock: 'Low stock', expiringSoon: 'Expiring soon',
     logOut: 'Log out', addDrug: '+ Add new drug', checkout: 'Checkout', total: 'Total',
     suppliers: 'Suppliers', expenses: 'Expenses'
@@ -86,7 +86,7 @@ var STRINGS = {
   sw: {
     home: 'Nyumbani', stock: 'Bidhaa', sell: 'Uza', reports: 'Ripoti', settings: 'Mipangilio',
     dashboard: 'Dashibodi', stockValue: 'Thamani ya bidhaa (rejareja)', salesToday: 'Mauzo leo',
-    salesWeek: 'Mauzo wiki hii', salesMonth: 'Mauzo mwezi huu', needsAttention: 'Yanayohitaji uangalizi',
+    salesWeek: 'Mauzo siku 7 zilizopita', salesMonth: 'Mauzo mwezi huu', needsAttention: 'Yanayohitaji uangalizi',
     outOfStock: 'Bidhaa zilizoisha', lowStock: 'Bidhaa chache', expiringSoon: 'Zinakaribia kuisha muda',
     logOut: 'Toka', addDrug: '+ Ongeza dawa mpya', checkout: 'Lipa', total: 'Jumla',
     suppliers: 'Wasambazaji', expenses: 'Matumizi'
@@ -1281,7 +1281,7 @@ var dashStale = false;   // true while older numbers are on screen and fresh one
 // The last dashboard is also kept on this device so the next visit opens with
 // numbers on screen instead of placeholders. Cleared on log out. Skipped for
 // custom date ranges and for very large stock lists (localStorage is small).
-var DASH_CACHE_KEY = 'hodhi_dash_cache_v1';
+var DASH_CACHE_KEY = 'hodhi_dash_cache_v2'; // v2: the week view became a rolling 7 days
 function saveDashCache() {
   try {
     if (dashRange === 'custom') return;
@@ -1334,10 +1334,10 @@ var DCOLOR = {
   // gridlines themselves stay light, since those are lines, not text.
   gridline: '#E7E2DC', inkSoft: '#201E1B'
 };
-var DASH_RANGE_LABELS = { today: 'Today', week: 'Week', month: 'Month', year: 'Year', custom: 'Custom' };
-var DASH_PERIOD_LABEL = { today: 'Today', week: 'This week', month: 'This month', year: 'This year', custom: 'Custom range' };
-var DASH_VS_LABEL = { today: 'yesterday', week: 'last week', month: 'last month', year: 'last year', custom: 'the previous period' };
-var DASH_TOPSELLERS_TITLE = { today: 'Top sellers today', week: 'Top sellers this week', month: 'Top sellers this month', year: 'Top sellers this year', custom: 'Top sellers' };
+var DASH_RANGE_LABELS = { today: 'Today', week: '7 Days', month: 'Month', year: 'Year', custom: 'Custom' };
+var DASH_PERIOD_LABEL = { today: 'Today', week: 'Last 7 days', month: 'This month', year: 'This year', custom: 'Custom range' };
+var DASH_VS_LABEL = { today: 'yesterday', week: 'the 7 days before', month: 'last month', year: 'last year', custom: 'the previous period' };
+var DASH_TOPSELLERS_TITLE = { today: 'Top sellers today', week: 'Top sellers, last 7 days', month: 'Top sellers this month', year: 'Top sellers this year', custom: 'Top sellers' };
 var RUSH_LABELS = ['12-3am', '3-6am', '6-9am', '9am-12pm', '12-3pm', '3-6pm', '6-9pm', '9pm-12am'];
 // Item 33: a custom date range picked via the dashboard's calendar button.
 // Set together with dashRange = 'custom'; cleared whenever a preset range
@@ -1642,7 +1642,9 @@ function dashChartW() {
 function axisLineChart(values, labels, w, h, color, isEmpty) {
   var ticks = niceTicks(values.length ? Math.max.apply(null, values) : 0);
   var gutter = 46, padR = 20, plotW = w - gutter - padR, labelBand = 20, totalH = h + labelBand;
-  var labelEvery = Math.max(1, Math.ceil(labels.length * 44 / Math.max(plotW, 1)));
+  // A week (7 labels) always shows every day name, in a slightly smaller size when the screen is narrow.
+  var labelEvery = labels.length <= 7 ? 1 : Math.max(1, Math.ceil(labels.length * 30 / Math.max(plotW, 1)));
+  var labelSize = (labels.length <= 7 && plotW / Math.max(labels.length, 1) < 32) ? 10 : 11;
   var hi = ticks[ticks.length - 1] || 1;
   var n = Math.max(values.length, 1);
   function px(i) { return gutter + (n > 1 ? (i / (n - 1)) * plotW : plotW / 2); }
@@ -1657,7 +1659,7 @@ function axisLineChart(values, labels, w, h, color, isEmpty) {
   labels.forEach(function (l, i) {
     var show = i === lastI || (i % labelEvery === 0 && lastI - i >= labelEvery);
     if (!show) return;
-    axisLabels += '<text x="' + px(i).toFixed(1) + '" y="' + (h + 15) + '" text-anchor="middle" font-size="11" font-weight="600" fill="' + DCOLOR.inkSoft + '">' + esc(l) + '</text>';
+    axisLabels += '<text x="' + px(i).toFixed(1) + '" y="' + (h + 15) + '" text-anchor="middle" font-size="' + labelSize + '" font-weight="600" fill="' + DCOLOR.inkSoft + '">' + esc(l) + '</text>';
   });
   var body;
   if (!isEmpty && values.length) {

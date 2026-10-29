@@ -725,6 +725,40 @@ async function main() {
     assert(!!oldStyle.rows[0].id, 'the old three-argument call still works');
 
     // --------------------------------------------------------------
+    console.log('\n== Dashboard "week" is a rolling last 7 days, never a single dot ==');
+    await asUser(c, ownerId);
+    const dWeek = await addDrug('Week Drug', 1000, 60, 100);
+    const before = (await c.query("select dashboard_data($1,'week') as d", [pharmacyId])).rows[0].d; // earlier tests made sales too
+    const daysAgo = [0, 3, 6, 7, 8, 15];           // today, in the 7 days, in the 7 days, previous x2, outside both
+    const weekSaleIds = [];
+    for (let i = 0; i < daysAgo.length; i++) {
+      const r = await c.query("select record_sale($1,$2::jsonb,$3::jsonb) as id", [pharmacyId, J([{ drug_id: dWeek.id, quantity: i + 1 }]), J([{ method: 'cash', amount: (i + 1) * 100 }])]);
+      weekSaleIds.push(r.rows[0].id);
+    }
+    // put each sale at 00:30 Nairobi time on its day (the hour UTC would call the day before)
+    for (let i = 0; i < daysAgo.length; i++) {
+      await c.query("update sales set sold_at = ((today_ke() - $2::int)::timestamp + interval '30 minutes') at time zone 'Africa/Nairobi' where id = $1 returning id", [weekSaleIds[i], daysAgo[i]]);
+    }
+    // The 'today' sale at 00:30 may be in the future relative to now() early in the day; keep it valid
+    await c.query("update sales set sold_at = least(sold_at, now()) where id = $1 returning id", [weekSaleIds[0]]);
+    const wk = (await c.query("select dashboard_data($1,'week') as d", [pharmacyId])).rows[0].d;
+    const trend = wk.trend;
+    assert(trend.length === 7, 'the week graph always has 7 points (got ' + trend.length + ')');
+    const days7 = (await c.query("select to_char(g, 'YYYY-MM-DD\"T\"HH24:MI:SS') d from generate_series((today_ke()-6)::timestamp, today_ke()::timestamp, interval '1 day') g order by 1")).rows.map((r) => r.d);
+    assert(JSON.stringify(trend.map((t) => t.bucket_start)) === JSON.stringify(days7), 'the 7 points are the last 7 Nairobi days in order, ending today');
+    const tot = (n) => Number(trend[6 - n].total) - Number(before.trend[6 - n].total);
+    assert(tot(3) === 200 && tot(6) === 300, 'a sale at 00:30 Nairobi time counts on its own Nairobi day, not the day before');
+    assert(tot(1) === 0 && tot(2) === 0 && tot(4) === 0 && tot(5) === 0, 'days with no sales show as 0, so the line still spans the week');
+    assert(Number(wk.sales_total) === Number(trend.reduce((a, t) => a + Number(t.total), 0)), 'the sales total equals the sum of the 7 points');
+    assert(tot(0) === 100 && Number(wk.sales_total) - Number(before.sales_total) === 600, 'today counts, and sales older than 7 days are not in the total (added ' + (Number(wk.sales_total) - Number(before.sales_total)) + ')');
+    assert(Number(wk.sales_prev_total) - Number(before.sales_prev_total) === 900, 'the comparison is the 7 days before (7 and 8 days ago = 400 + 500)');
+    const todayR = (await c.query("select dashboard_data($1,'today') as d", [pharmacyId])).rows[0].d;
+    assert(todayR.bucket === 'hour' && wk.bucket === 'day', 'other ranges keep their own buckets');
+    const brandNew = (await c.query("select dashboard_data($1,'week') as d", [pharmacyId])).rows[0].d;
+    assert(brandNew.trend.length === 7, 'still 7 points on every call');
+    await assertThrows(c.query("select dashboard_data($1,'fortnight')", [pharmacyId]), 'an unknown range is still refused', 'an unknown range should be refused');
+
+    // --------------------------------------------------------------
     console.log('\n== Privilege escalation: a staff member cannot promote themselves ==');
     await asUser(c, staffId);
     await assertThrows(
