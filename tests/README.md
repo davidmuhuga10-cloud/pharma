@@ -121,7 +121,11 @@ To prove it works, add `.x { color: #777; }` to `style.css` and run it: it must 
 ## Android app tests
 
 Neither needs a database or a phone. From the project folder run `node tests/android-shell.test.js` and
-`node tests/native-shell.test.js` (or `npm test` in the project folder, which runs all three non-database tests).
+`node tests/native-shell.test.js` (or `npm test` in the project folder, which runs all the non-database tests).
+
+## SMS sender test
+
+`node --experimental-strip-types tests/send-sms.test.js` (Node 22.6 or newer) checks the part of the `send-sms` Edge Function that decides what to send and how to record it, using a pretend database and a pretend SMS provider. It never sends a real message. Real delivery is checked by sending one to your own phone after deploying.
 
 - `android-shell.test.js` checks that the app's package name (`com.pharmacymngt.app`) agrees in the Capacitor config, Gradle, the string resources and the `MainActivity` folder; that the only permission is INTERNET; that backups are off; that every launcher-icon size and the splash image exist; that the offline page and the config copy inside `android/` match the ones in the project; and that `index.html` loads `nativeShell.js` and `sw.js` caches it.
 - `native-shell.test.js` runs `nativeShell.js` in a fake browser. In a normal browser it must change nothing. Inside the app it must set the layout so the top bar sits under the status bar, send printing to the Android print service, set the status bar colour, hide the splash, and route the back button (close a sheet, then the menu, then go Home, then minimise).

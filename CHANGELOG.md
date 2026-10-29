@@ -2,6 +2,17 @@
 
 Newest first. The detailed story for each item is in `PHARMA_PROJECT_STATUS.md`.
 
+## 2026-10-29 (second batch): credit, SMS, controlled drugs, stock take
+
+- **Customers and credit (kopa):** new Customers screen (Customers, Refills, Messages tabs). People can buy on credit: Checkout has a **Credit** payment method (also as part of a split with cash), needs a saved customer (or "+ New customer" on the spot), and stops a sale that would take them over their credit limit. Each customer has a balance, a statement (print), payments (cash, M-Pesa, bank) and reversals (owner or pharmacist, with a reason). A return on a credit sale lowers the debt by the credit that sale carried, never more. Voiding a credit sale removes it from the debt. Sellers can add customers and take payments; only the owner or a pharmacist sets credit limits. The accountant can view, not change.
+- **Refills:** repeat customers (blood pressure, diabetes, family planning) get a refill plan; Due, Next 7 days and All lists; selling that medicine to that customer moves the date on by itself.
+- **SMS:** reminders for refills and debts, one at a time (message shown and editable first) or "Remind all due" (up to 50). Free WhatsApp link beside each. Sent by the new `send-sms` Edge Function through the same Africa's Talking account as the password-reset codes. The database approves and logs every message first: only the owner or a pharmacist can send, customers marked "never text" are skipped, nobody is reminded twice in a day, and each pharmacy has a daily limit (30, set by the platform, not by the pharmacy). Owner can switch SMS off. Every message is listed under Messages with sent or failed and why.
+- **Controlled drugs:** the owner or a pharmacist can mark a drug as a Dangerous drug (DDA) or Psychotropic. Selling one needs the patient, the prescriber and the prescription number, and every movement (received, sold, returned, voided, corrected, written off, stock take) is written to a ledger nobody can edit, with the balance after each. The register shows shelf versus ledger and flags any mismatch; per-drug ledger can be printed or exported to Excel.
+- **Stock take:** count the shelf (a stock taker can count), see differences from the system, give a reason for each (missing, damaged, expired, found), and an owner or pharmacist approves in one step. Sales made while counting do not look like losses. History shows the value lost or gained at cost.
+- **Dashboard:** alerts for money owed by customers, refills due, controlled drugs that do not match the ledger, and a stock take in progress (5th, optional request; the dashboard still draws if it fails).
+- **Fixes found while testing:** typing an amount at checkout put the digits in reverse ("100" became "001") because the box lost its cursor on every keystroke; now it keeps focus and cursor.
+- **Database:** migrations `2026-10-29_a_enum_values.sql` then `2026-10-29_b_credit_controlled_stocktake_refills_sms.sql` (applied to the live project and added to `schema.sql`). `record_sale` gains an optional `p_customer_id` (the old five-argument version is dropped so calls cannot become ambiguous; old calls still work). New tables are readable by the pharmacy's own staff only and written only through checked functions. SQL tests: 163 (was 43); new `tests/send-sms.test.js` (18). Service worker cache is now `hodhi-shell-v2j`.
+
 ## 2026-10-29
 
 - **Phone bottom bar:** the tab icons are now glass 3D chips, the same look as the menu drawer; the active tab turns gold and lifts. The desktop sidebar is unchanged.

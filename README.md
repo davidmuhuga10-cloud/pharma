@@ -14,14 +14,16 @@ Live site: https://pharmacymngt.netlify.app
 | `nativeShell.js`, `capacitor.config.json`, `www/`, `android/` | The Android app: a Capacitor shell around the live site (see `android/ANDROID_APP.md`) |
 | `admin.html`, `admin.js`, `admin.css` | Platform admin portal at `/admin` |
 | `schema.sql` | Full database: tables, views, functions, security |
-| `migrations/` | SQL changes (28 Oct review; 29 Oct nightly cleanup and faster dashboard), already applied live |
+| `migrations/` | SQL changes (28 Oct review; 29 Oct nightly cleanup, faster dashboard, and the credit / refills / SMS / controlled drugs / stock take batch), already applied live |
+| `supabase/functions/` | Edge Functions: `send-otp`, `verify-otp`, `reset-password-by-phone` (password reset codes) and `send-sms` (customer reminders) |
 | `netlify.toml`, `netlify/functions/` | Netlify settings and the daily keep-alive ping that stops the free-tier database pausing |
 | `tests/` | SQL tests, the no-gray-text test, the loading-screen test and the Android shell tests |
 
 ## Screens
 
 - **Phone (under 860px):** top bar with a hamburger that opens the left drawer; bottom bar with Home, Inventory, Sell, Expenses, Reports.
-- **Desktop (860px and up):** left sidebar; split sign-in screen.
+- **Desktop (860px and up):** left sidebar (including Customers); split sign-in screen.
+- **Customers:** credit (kopa) balances and statements, refills, SMS reminders. **Stock take** and **Controlled drugs** are reached from Inventory (and the phone menu).
 - **Sign-in:** phone + password log-in; new pharmacies create an account; staff with an invite code use "Have a code? Staff login". The app shows the view for the person's role.
 
 ## Run and test
@@ -33,6 +35,7 @@ node tests/banned-colours.test.js        # no gray text
 node tests/android-shell.test.js         # Android settings agree with each other
 node tests/native-shell.test.js          # print and back button inside the app
 node tests/critical-css.test.js          # loading screen styles match in index.html and style.css
+node --experimental-strip-types tests/send-sms.test.js   # SMS sending logic (no network)
 cd tests && npm install && node run_tests.js   # SQL tests, local throwaway Postgres
 ```
 

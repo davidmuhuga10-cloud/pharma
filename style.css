@@ -1068,3 +1068,19 @@ html,body{margin:0}
 }
 @keyframes updSlide { 0% { left: -35%; } 100% { left: 100%; } }
 @media (prefers-reduced-motion: reduce) { .updating-bar::after { animation: none; width: 100%; opacity: .5; } }
+
+/* ---------------------------------------------------------------------- */
+/* 2026-10-29: customers & credit, refills, SMS, controlled drugs,         */
+/* stock take. Reuses the existing cards, KPI tiles, badges and sheets;    */
+/* only what those did not already cover is here.                          */
+/* ---------------------------------------------------------------------- */
+.dash-alert.amber { background: var(--amber-light); border-color: #ecd9a0; color: var(--amber-ink); }
+.dash-alert.green { background: var(--green-light); border-color: #b9dcc8; color: var(--green); }
+.list-row > div:first-child { min-width: 0; }
+.field textarea { resize: vertical; line-height: 1.4; }
+.stcount {
+  padding: 9px 10px; border: 1px solid var(--line); border-radius: 10px; background: #fff; text-align: right;
+}
+.stcount:focus { outline: none; border-color: var(--green); box-shadow: 0 0 0 3px var(--green-light); }
+.list-row .meta.wrap { white-space: normal; }
+.kpi-grid > .kpi { min-width: 0; overflow-wrap: anywhere; }
