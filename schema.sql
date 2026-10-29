@@ -5571,3 +5571,19 @@ grant update (status, updated_at) on insurance_claims to authenticated;
 
 revoke delete on drugs, suppliers from authenticated;
 revoke insert, delete on profiles, pharmacies from authenticated;
+
+-- ------------------------------------------------------------- keep_alive()
+-- The daily Netlify ping (netlify/functions/keep-alive.js) used to read one
+-- row from `pharmacies` with the public key just to touch the database. The
+-- signed-out role holds nothing now, so that read is refused. This gives the
+-- ping something it is allowed to do: it returns the time and nothing else -
+-- no pharmacy data of any kind.
+create or replace function public.keep_alive()
+returns timestamptz
+language sql
+volatile
+security invoker
+set search_path = public
+as $$ select now() $$;
+
+grant execute on function public.keep_alive() to anon, authenticated;
