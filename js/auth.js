@@ -291,19 +291,7 @@ async function doJoin() {
     var phone = $('#jnPhone').value.trim();
     var pw = $('#jnPw').value;
     if (!code || !phone || pw.length < 8) { err.textContent = 'Fill in the staff code, phone number, and an 8+ character password.'; return; }
-    var { data: signUpData, error: suErr } = await sb.auth.signUp({ email: phoneToAuthEmail(phone), password: pw });
-    if (suErr) { err.textContent = friendlyError(suErr); return; }
-    stashPendingSignup({ kind: 'staff', code: code, fullName: fullName, phone: phone });
-    if (!signUpData.session) {
-      toast('Account created — log in with your phone number and password and it will pick up your staff code automatically.', 'good');
-      renderLogin();
-      return;
-    }
-    STATE.session = signUpData.session;
-    await finishPendingSignupIfAny();
-    await loadProfileAndPharmacy();
-    if (!STATE.profile) { err.textContent = 'Account created but joining the pharmacy failed — check the code and try logging in again.'; return; }
-    render();
+    await startSignupVerify({ kind: 'staff', code: code, fullName: fullName, phone: phone, pw: pw }, err);
   });
 }
 
@@ -345,26 +333,119 @@ async function doSignup() {
     var phone = $('#suPhone').value.trim();
     var pw = $('#suPw').value;
     if (!pharmacyName || !phone || pw.length < 8) { err.textContent = 'Fill in the pharmacy name, phone number, and an 8+ character password.'; return; }
-    var { data: signUpData, error: suErr } = await sb.auth.signUp({ email: phoneToAuthEmail(phone), password: pw });
-    if (suErr) { err.textContent = friendlyError(suErr); return; }
-    // Stash what they typed BEFORE checking for a session — if this Supabase
-    // project requires email confirmation, signUp() returns no session at
-    // all, so there's no authenticated user yet to attach a pharmacy to.
-    // loadProfileAndPharmacy() finishes this automatically on their first
-    // real login (see finishPendingSignupIfAny above). Confirmation should be
-    // turned OFF for this project since the derived address can't receive it
-    // — see PHARMA_PROJECT_STATUS.md.
-    stashPendingSignup({ kind: 'owner', pharmacyName: pharmacyName, fullName: fullName, phone: phone });
-    if (!signUpData.session) {
-      err.textContent = '';
-      toast('Account created — log in with your phone number and password to finish setting up your pharmacy.', 'good');
-      renderLogin();
+    await startSignupVerify({ kind: 'owner', pharmacyName: pharmacyName, fullName: fullName, phone: phone, pw: pw }, err);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Phone check at sign-up. The account is NOT created until the number has been
+// proven with a text code: send-otp -> verify-otp (purpose 'signup') -> the
+// signup-by-phone Edge Function, which needs the verified token and creates the
+// account server-side. suFlow holds what the person typed while they wait for
+// the code; it lives only in memory and is wiped once the account exists.
+// ---------------------------------------------------------------------------
+var suFlow = null;
+
+async function startSignupVerify(flow, err) {
+  var ok = await sendSignupCode(flow.phone, err);
+  if (!ok) return;
+  suFlow = flow;
+  drawSignupCode();
+  toast('Code sent — check your phone.', 'good');
+}
+
+// Sends (or re-sends) the code. Returns true when a text really went out.
+async function sendSignupCode(phone, err) {
+  var { data, error } = await sb.functions.invoke('send-otp', { body: { phone: phone, purpose: 'signup' } });
+  if (error || !data || data.ok === false) {
+    err.textContent = (data && data.message) || friendlyError(error);
+    return false;
+  }
+  if (data.sent === false) {
+    err.textContent = 'Could not send a code right now. Check the phone number and try again shortly.';
+    return false;
+  }
+  return true;
+}
+
+function drawSignupCode() {
+  var body = $('#authBody') || (function () { render(); return $('#authBody'); })();
+  body.innerHTML = authSetMode(suFlow.kind === 'staff' ? 'join' : 'signup') +
+    '<div class="card">' +
+    '<h2 class="auth-title">Confirm your phone</h2>' +
+    '<div class="tiny" style="margin-bottom:10px">We sent a 6-digit code to ' + esc(suFlow.phone) + '. Enter it to create your account.</div>' +
+    '<div class="field"><label>Code</label><input id="suCode" type="tel" inputmode="numeric" maxlength="6" placeholder="123456" autocomplete="one-time-code"></div>' +
+    '<div id="suCodeErr" class="error-text"></div>' +
+    '<button class="btn primary" id="suCodeBtn" onclick="doVerifySignupCode()">Verify and create account</button>' +
+    AUTH_FOOT + '</div>' +
+    authLinks([['', 'Wrong number? Go back', 'backFromSignupCode()'], ['', 'Resend code', 'doResendSignupCode()']]);
+}
+
+function backFromSignupCode() {
+  var f = suFlow; suFlow = null;
+  if (f && f.kind === 'staff') {
+    renderJoin();
+    $('#jnCode').value = f.code; $('#jnName').value = f.fullName; $('#jnPhone').value = f.phone;
+  } else {
+    renderSignup();
+    if (f) { $('#suPharmacy').value = f.pharmacyName; $('#suName').value = f.fullName; $('#suPhone').value = f.phone; }
+  }
+}
+
+async function doResendSignupCode() {
+  var err = $('#suCodeErr'); err.textContent = '';
+  if (!suFlow) { renderSignup(); return; }
+  if (await sendSignupCode(suFlow.phone, err)) toast('New code sent.', 'good');
+}
+
+async function doVerifySignupCode() {
+  var btn = $('#suCodeBtn'); var err = $('#suCodeErr'); err.textContent = '';
+  act(btn, async function () {
+    if (!suFlow) { renderSignup(); return; }
+    var code = $('#suCode').value.trim();
+    if (!/^\d{6}$/.test(code)) { err.textContent = 'Enter the 6-digit code.'; return; }
+    var v = await sb.functions.invoke('verify-otp', { body: { phone: suFlow.phone, purpose: 'signup', code: code } });
+    if (v.error || !v.data || v.data.ok === false) {
+      err.textContent = (v.data && v.data.message) || friendlyError(v.error);
       return;
     }
-    STATE.session = signUpData.session;
+    // Phone proven. Create the account (server-side, needs the token), then sign in.
+    var c = await sb.functions.invoke('signup-by-phone', {
+      body: { phone: suFlow.phone, password: suFlow.pw, otp_verified_token: v.data.verified_token }
+    });
+    if (c.error || !c.data || c.data.error) {
+      if (c.data && c.data.exists) { suFlow = null; renderLogin(); toast(c.data.error, 'bad'); return; }
+      err.textContent = (c.data && c.data.error) || friendlyError(c.error);
+      return;
+    }
+    var f = suFlow;
+    var { error: siErr } = await sb.auth.signInWithPassword({ email: phoneToAuthEmail(f.phone), password: f.pw });
+    suFlow = null;
+    if (siErr) {
+      // Account exists; only the automatic sign-in failed — send them to log in.
+      stashPendingSignup(f.kind === 'staff'
+        ? { kind: 'staff', code: f.code, fullName: f.fullName, phone: f.phone }
+        : { kind: 'owner', pharmacyName: f.pharmacyName, fullName: f.fullName, phone: f.phone });
+      renderLogin();
+      toast('Account created — log in with your phone number and password.', 'good');
+      return;
+    }
+    // Keep what they typed until the pharmacy is set up (finishPendingSignupIfAny clears it).
+    stashPendingSignup(f.kind === 'staff'
+      ? { kind: 'staff', code: f.code, fullName: f.fullName, phone: f.phone }
+      : { kind: 'owner', pharmacyName: f.pharmacyName, fullName: f.fullName, phone: f.phone });
+    STATE.session = (await sb.auth.getSession()).data.session;
+    $('#app').innerHTML = loadScreenHtml();
     await finishPendingSignupIfAny();
-    await loadProfileAndPharmacy();
-    if (!STATE.profile) { err.textContent = 'Account created but pharmacy setup failed — please try logging in again.'; return; }
+    try { await loadProfileAndPharmacy(); }
+    catch (loadErr) { render(); toast(friendlyError(loadErr), 'bad'); return; }
+    if (!STATE.profile) {
+      render();
+      toast(f.kind === 'staff'
+        ? 'Account created, but joining the pharmacy failed — check the staff code and log in again.'
+        : 'Account created, but pharmacy setup did not finish — log in again to complete it.', 'bad');
+      return;
+    }
     render();
   });
 }

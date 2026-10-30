@@ -2,6 +2,11 @@
 
 Newest first. The detailed story for each item is in `PHARMA_PROJECT_STATUS.md`.
 
+## 2026-10-30: sign-up now confirms the phone number first
+
+- **Code before account:** creating a pharmacy account or joining as staff now texts a 6-digit code to the phone number first. The account is only created after the right code is entered (new Edge Function `signup-by-phone`; `send-otp` and `verify-otp` accept the new purpose `signup`; migration `2026-10-30_signup_otp_purpose.sql`).
+- **One manual step in Supabase:** Authentication > Sign In / Providers > turn OFF "Allow new users to sign up", so nobody can skip the code by calling sign-up directly. Log in, password reset and the new sign-up all keep working with it off.
+
 ## 2026-10-30: trials, paid plans and admin pharmacy management
 
 - **Trial and plan:** every new pharmacy gets a 90-day free trial and becomes Active when the admin marks its first payment. The admin list and each pharmacy page show "Trial · N days left", "Active · N days left", or "Trial ended".

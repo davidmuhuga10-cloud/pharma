@@ -16,7 +16,7 @@ Live site: https://pharmacymngt.netlify.app
 | `admin.html`, `admin.js`, `admin.css` | Platform admin portal at `/admin` |
 | `schema.sql` | Full database: tables, views, functions, security |
 | `migrations/` | SQL changes (28 Oct fixes; 29 Oct nightly cleanup, faster dashboard, the credit / refills / SMS / controlled drugs / stock take batch, and `2026-10-29_d_scalability.sql`: indexes plus the server-side sales report and supplier balances; and `2026-10-29_e_import_cleanup_admin.sql`: fast bulk import, old-log cleanup, admin portal indexes; and `2026-10-29_f_lock_down_table_access.sql`: row-level security audit and least-privilege table access; run each new migration in Supabase before deploying the matching code) |
-| `supabase/functions/` | Edge Functions: `send-otp`, `verify-otp`, `reset-password-by-phone` (password reset codes) and `send-sms` (customer reminders) |
+| `supabase/functions/` | Edge Functions: `send-otp`, `verify-otp` (text codes for password reset and sign-up), `signup-by-phone` (creates an account only after the code is verified), `reset-password-by-phone` and `send-sms` (customer reminders) |
 | `netlify.toml`, `netlify/functions/` | Netlify settings, the daily keep-alive ping that stops the free-tier database pausing, and the M-Pesa SMS purchase (`sms-topup`, `pay-callback`; needs the MPESA_* and SUPABASE_SERVICE_ROLE_KEY variables set in Netlify) |
 | `tests/` | SQL tests, the no-gray-text test, the loading-screen test and the Android shell tests |
 

@@ -1458,7 +1458,7 @@ insert into master_drugs (category_name, name, form, unit, is_prescription, sort
 create table phone_otps (
   id uuid primary key default gen_random_uuid(),
   phone text not null,
-  purpose text not null check (purpose in ('password_reset')),
+  purpose text not null check (purpose in ('password_reset', 'signup')),
   code_hash text not null,
   expires_at timestamptz not null,
   attempts integer not null default 0,

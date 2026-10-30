@@ -1,21 +1,13 @@
-// Pharma — send-otp
+// Hodhi — send-otp
 //
 // Sends a 6-digit SMS code to a phone number and records only its hash, as
-// the first half of proving phone ownership before a sensitive action.
-// Currently used for one purpose: 'password_reset'. See verify-otp for the
-// second half, and reset-password-by-phone for where the resulting verified
-// token is actually required.
+// the first half of proving phone ownership. Purposes: 'password_reset'
+// (see reset-password-by-phone) and 'signup' (see signup-by-phone). See
+// verify-otp for the second half.
 //
-// Every "expected" outcome here (bad phone, rate limited, etc.) returns HTTP
-// 200 with ok:false in the body, never a non-2xx status. supabase-js's
-// sb.functions.invoke() discards the response body whenever the Edge
-// Function returns a non-2xx status — data comes back null and error.message
-// is the fixed generic string "Edge Function returned a non-2xx status code",
-// regardless of what JSON was actually sent. app.js calls this through
-// sb.functions.invoke(), so status codes here stay 200 for every outcome the
-// caller needs to read and show to the user. A non-2xx is reserved only for
-// truly malformed requests this app's own client never sends (wrong HTTP
-// method, unparseable body).
+// Every "expected" outcome returns HTTP 200 with ok:false in the body, never
+// a non-2xx status: sb.functions.invoke() discards the body of non-2xx
+// replies, so the caller could never show the real message.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
@@ -25,8 +17,7 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-// Deliberately just 'password_reset' for now — see the file header.
-const PURPOSES = ["password_reset"];
+const PURPOSES = ["password_reset", "signup"];
 const CODE_TTL_MS = 5 * 60 * 1000; // 5 minutes to enter the code
 const RESEND_COOLDOWN_MS = 30 * 1000;
 const MAX_SENDS_PER_WINDOW = 5;
@@ -39,8 +30,7 @@ function json(body: unknown, status = 200) {
   });
 }
 
-// Must exactly match normalizePhone() in app.js / reset-password-by-phone —
-// 07.../7.../254... all become the same bare-digit 2547... key.
+// Must exactly match normalizePhone() in the app / reset-password-by-phone.
 function normalizePhone(raw: string): string {
   let digits = (raw || "").replace(/\D/g, "");
   if (digits.length === 10 && digits.charAt(0) === "0") digits = "254" + digits.slice(1);
@@ -63,8 +53,7 @@ async function hashCode(phone: string, purpose: string, code: string): Promise<s
   return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-// sms_platform_config — single row, server-only (RLS enabled, zero
-// policies). Loaded once per invocation.
+// sms_platform_config — single row, server-only (RLS enabled, zero policies).
 async function loadSmsConfig(admin: any) {
   try {
     const { data, error } = await admin.from("sms_platform_config").select("*").eq("id", 1).maybeSingle();
@@ -83,9 +72,6 @@ function apiBase(cfg: any) {
     : "https://api.africastalking.com";
 }
 
-// Africa's Talking's own per-recipient status codes, translated to plain
-// English for the one caller here (a pharmacist reading an error message,
-// not a developer reading raw JSON).
 const AT_STATUS_LABELS: Record<string, string> = {
   Success: "Delivered successfully.",
   InvalidPhoneNumber: "This phone number is invalid.",
@@ -149,9 +135,8 @@ Deno.serve(async (req: Request) => {
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
 
-  // Rate limit, enforced directly against phone_otps (no separate store) —
-  // a resend cooldown plus a rolling-window cap, both keyed on the
-  // normalized phone so "0712345678" and "+254712345678" share one bucket.
+  // Rate limit against phone_otps: resend cooldown + rolling-window cap,
+  // keyed on the normalized phone.
   const sinceWindow = new Date(Date.now() - WINDOW_MS).toISOString();
   const { data: recent, error: recentErr } = await admin
     .from("phone_otps")
@@ -182,8 +167,6 @@ Deno.serve(async (req: Request) => {
 
   const smsConfig = await loadSmsConfig(admin);
   if (!isConfigured(smsConfig)) {
-    // Never silently pretend a code went out — sent:false lets the caller
-    // say so instead of telling someone to go check a phone that got nothing.
     return json({ ok: true, sent: false, message: "SMS provider is not configured — no code was actually sent." });
   }
 

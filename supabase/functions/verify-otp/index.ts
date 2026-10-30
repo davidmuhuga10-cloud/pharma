@@ -1,16 +1,13 @@
-// Pharma — verify-otp
+// Hodhi — verify-otp
 //
-// The second half of phone verification (see send-otp for the first) —
-// checks a submitted 6-digit code against the latest unconsumed phone_otps
-// row for that phone+purpose, and on a match issues a short-lived signed
-// token proving THIS phone was just verified for THIS purpose.
-// reset-password-by-phone requires that token (matching its own phone +
-// purpose) before touching an account — this endpoint never touches an
-// account itself, it only proves phone ownership.
+// Second half of phone verification (see send-otp). Checks a submitted
+// 6-digit code against the latest unconsumed phone_otps row for that
+// phone+purpose and, on a match, returns a short-lived signed token proving
+// THIS phone was just verified for THIS purpose. reset-password-by-phone and
+// signup-by-phone each require that token. This endpoint never touches an
+// account itself.
 //
-// Every expected outcome returns HTTP 200 with ok:false in the body instead
-// of a non-2xx status — see send-otp's file header for exactly why
-// (sb.functions.invoke() discards the response body on any non-2xx status).
+// Every expected outcome returns HTTP 200 with ok:false (see send-otp).
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
@@ -20,7 +17,7 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const PURPOSES = ["password_reset"];
+const PURPOSES = ["password_reset", "signup"];
 const MAX_ATTEMPTS = 5;
 const TOKEN_TTL_MS = 15 * 60 * 1000; // 15 minutes to actually use a verified token
 
