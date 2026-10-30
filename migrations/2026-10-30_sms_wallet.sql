@@ -1,7 +1,7 @@
 -- 2026-10-30 SMS wallet: buy SMS with M-Pesa and see what was used
 --
 -- Modelled on Kodi's SMS wallet. Each pharmacy has a KES balance; every SMS
--- sent costs sms_platform_config.price_per_sms (KES 2) per 160-character part;
+-- sent costs sms_platform_config.price_per_sms (KES 1) per 160-character part;
 -- a failed send is refunded automatically. A balance is only ever topped up by
 -- sms_topup_complete(), which only the server (service role) can call after
 -- Safaricom confirms the M-Pesa payment, exactly once per payment.
@@ -12,7 +12,8 @@
 begin;
 
 alter table public.sms_platform_config
-  add column if not exists price_per_sms numeric(8,2) not null default 2;
+  add column if not exists price_per_sms numeric(8,2) not null default 1;
+update public.sms_platform_config set price_per_sms = 1 where id = 1 and price_per_sms = 2;
 alter table public.sms_platform_config drop constraint if exists sms_platform_config_price_check;
 alter table public.sms_platform_config add constraint sms_platform_config_price_check check (price_per_sms > 0);
 
@@ -190,7 +191,7 @@ begin
   if not v_enabled then
     raise exception 'SMS is switched off for this pharmacy (Customers > Messages)';
   end if;
-  select coalesce((select price_per_sms from sms_platform_config where id = 1), 2) into v_price;
+  select coalesce((select price_per_sms from sms_platform_config where id = 1), 1) into v_price;
   select balance into v_balance from sms_wallets where pharmacy_id = p_pharmacy_id for update;
   v_balance := coalesce(v_balance, 0);
   select count(*) into v_used from sms_log
@@ -290,7 +291,7 @@ returns jsonb language plpgsql stable security definer set search_path to 'publi
 as $function$
 declare
   v_pid uuid := my_pharmacy_id();
-  v_price numeric := coalesce((select price_per_sms from sms_platform_config where id = 1), 2);
+  v_price numeric := coalesce((select price_per_sms from sms_platform_config where id = 1), 1);
   v_balance numeric;
 begin
   if v_pid is null or my_role() not in ('owner', 'co_owner', 'pharmacist') then
@@ -318,7 +319,7 @@ begin
   if not is_platform_admin() then raise exception 'Not authorized'; end if;
   return jsonb_build_object(
     'balance', coalesce((select balance from sms_wallets where pharmacy_id = p_pharmacy_id), 0),
-    'price_per_sms', coalesce((select price_per_sms from sms_platform_config where id = 1), 2),
+    'price_per_sms', coalesce((select price_per_sms from sms_platform_config where id = 1), 1),
     'sent_30d', (select count(*) from sms_log where pharmacy_id = p_pharmacy_id and status <> 'failed' and created_at > now() - interval '30 days'),
     'sent_all', (select count(*) from sms_log where pharmacy_id = p_pharmacy_id and status <> 'failed'),
     'bought_all', (select coalesce(sum(amount), 0) from sms_wallet_transactions where pharmacy_id = p_pharmacy_id and kind = 'topup'),

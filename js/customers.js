@@ -535,7 +535,7 @@ function messagesHtml() {
 // the purchase until it says paid or failed.
 function openBuySms() {
   var w = smsWallet || { price_per_sms: 2 };
-  var price = Number(w.price_per_sms) || 2;
+  var price = Number(w.price_per_sms) || 1;
   var body = sheet('Buy SMS',
     '<div class="tiny" style="margin-bottom:10px">Each SMS costs ' + fmt(price) + '. You will get an M-Pesa prompt on the phone below; enter your PIN to pay.</div>' +
     '<div class="toolbar-row">' + [100, 200, 500, 1000].map(function (a) {
