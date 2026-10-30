@@ -7,9 +7,10 @@
 // Backgrounds, borders and shadows may stay neutral; only text is policed.
 const fs = require('fs'), path = require('path');
 const ROOT = path.join(__dirname, '..');
-const FILES = ['style.css', 'admin.css', 'admin.js', 'index.html', 'admin.html', 'nativeShell.js', 'www/index.html', 'www/error.html'];
-// The app's code lives in js/ (split out of the old app.js)
-fs.readdirSync(path.join(ROOT, 'js')).filter(f => f.endsWith('.js')).forEach(f => FILES.push('js/' + f));
+// The app's code is split into js/*.js (there is no app.js any more), so scan every file there:
+// a missing file is skipped silently below, which is how the old 'app.js' entry stopped checking anything.
+const JS_FILES = fs.readdirSync(path.join(ROOT, 'js')).filter(f => f.endsWith('.js')).sort().map(f => 'js/' + f);
+const FILES = ['style.css', 'admin.css', ...JS_FILES, 'admin.js', 'index.html', 'admin.html', 'nativeShell.js', 'www/index.html', 'www/error.html'];
 const RETIRED = [{ hex: '8a837c', rgb: /138\s*,\s*131\s*,\s*124/ }, { hex: '6b6560', rgb: /107\s*,\s*101\s*,\s*96/ }];
 
 function toRgb(v) {

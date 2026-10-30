@@ -2,6 +2,12 @@
 
 Newest first. The detailed story for each item is in `PHARMA_PROJECT_STATUS.md`.
 
+## 2026-10-30 (evening): stock valuation shows cost and price per unit; two tests that had stopped checking
+
+- **Stock Valuation:** each drug now reads like "20 tablets · cost KES 50 · price KES 100": the quantity, then what one unit cost and what one unit sells for, with the value of all the stock still shown on the right. The quantity / cost / price text is on a line of its own that never wraps (it uses the whole row width and shrinks slightly on narrow phones; checked at 320, 390 and 1280px, including a long name and six-figure values). A drug held in batches bought at different prices shows the average, and a drug whose cost was never entered (stock imported from a sheet has selling prices only) shows a dash for the cost instead of "KES 0". Print and Excel have the same two new columns, Unit cost and Unit price. No database change: the per-unit figures are the existing stock values divided by the quantity. New test `tests/valuation-row.test.js` (proven red against the old wording).
+- **Two tests had silently stopped working after the code split** (both still pointed at the deleted `app.js`): `banned-colours.test.js` skipped the missing file, so the no-gray-text rule was no longer checked in any of the app's code; `critical-css.test.js` crashed. The first now scans every file in `js/` and the second reads `js/core.js`. The code passes both; a gray text colour added to a `js/` file now fails the test (shown once).
+- Service worker cache is now `hodhi-shell-v2v`.
+
 ## 2026-10-30 (later): a data leak in the admin helper closed, changelog tidied
 
 - **Fixed:** `admin_pharmacy_stats()`, the helper behind the admin portal, could be called through the public API by anyone, even someone not signed in, and returned every pharmacy's name, town, owner name and phone, staff counts and sales figures. It had been locked down on 28 Oct, but the trials migration re-created it (to add the plan columns) and a re-created function is open to everyone again. It is now closed to signed-out and signed-in users; the admin portal is unaffected because the admin functions that call it run with the owner's rights. Migration `2026-10-30_b_lock_admin_pharmacy_stats.sql` (already applied to the live project; also in `schema.sql`, after the function).

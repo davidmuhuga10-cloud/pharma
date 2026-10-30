@@ -38,6 +38,7 @@ node tests/android-shell.test.js         # Android settings agree with each othe
 node tests/native-shell.test.js          # print and back button inside the app
 node tests/critical-css.test.js          # loading screen styles match in index.html and style.css
 node tests/js-split.test.js              # js/ files: load order, offline cache list, one init()
+node tests/valuation-row.test.js         # stock valuation row wording and per-unit maths
 node --experimental-strip-types tests/send-sms.test.js   # SMS sending logic (no network)
 cd tests && npm install && node run_tests.js   # SQL tests, local throwaway Postgres
 ```

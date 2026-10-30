@@ -281,6 +281,40 @@ async function loadValuationReport() {
   }
 }
 
+// One drug's figures for the valuation report. The view gives the value of ALL the
+// stock of a drug (cost and retail); the per-unit cost and price are those values
+// divided by the quantity, so a drug held in batches bought at different prices shows
+// the average. A cost of 0 means no cost was ever entered (stock imported from a sheet
+// has selling prices only), and shows as a dash instead of "KES 0".
+function valuationUnitCost(r) {
+  var q = Number(r.qty_in_stock) || 0;
+  return q > 0 ? Number(r.stock_value_cost || 0) / q : 0;
+}
+function valuationUnitPrice(r) {
+  var q = Number(r.qty_in_stock) || 0;
+  return q > 0 ? Number(r.stock_value_retail || 0) / q : 0;
+}
+// "tablet" -> "tablets" for a quantity other than 1; short codes (ml, mg, g) are left alone.
+function valuationUnitWord(unit, qty) {
+  var u = String(unit || 'unit');
+  if (Number(qty) !== 1 && /^[A-Za-z]{4,}$/.test(u) && !/s$/i.test(u)) u += 's';
+  return u;
+}
+function valuationLine(r) {
+  var cost = valuationUnitCost(r);
+  return r.qty_in_stock + ' ' + esc(valuationUnitWord(r.unit, r.qty_in_stock)) +
+    ' · cost ' + (cost > 0 ? fmt(cost) : '–') +
+    ' · price ' + fmt(valuationUnitPrice(r));
+}
+
+// One drug on the report: the name and the value of all its stock on the top line, and the
+// quantity, cost and price on a line of their own that is never allowed to wrap (it uses the
+// full width of the row and shrinks a little on narrow phones instead).
+function valuationRow(r) {
+  return '<div class="val-row"><div class="val-top"><span class="name">' + esc(r.name) + '</span><span class="right">' + fmt(r.stock_value_retail) + '</span></div>' +
+    '<div class="val-meta">' + valuationLine(r) + '</div></div>';
+}
+
 function drawValuationReportBody() {
   var body = $('#reportBody');
   var d = valuationReportData;
@@ -293,22 +327,25 @@ function drawValuationReportBody() {
     '</div>' +
     '<div class="section-title">By drug</div>' +
     '<div class="card">' + (d.rows.length ? d.rows.map(function (r) {
-      return listRow(r.name, r.qty_in_stock + ' ' + esc(r.unit) + ' · cost ' + fmt(r.stock_value_cost), fmt(r.stock_value_retail));
+      return valuationRow(r);
     }).join('') : '<div class="empty">No stock recorded yet.</div>') + '</div>';
 }
 
 function printValuationReport() {
   if (!valuationReportData) { toast('Report still loading.', 'bad'); return; }
-  var rows = valuationReportData.rows.map(function (r) { return [r.name, r.qty_in_stock + ' ' + r.unit, fmt(r.stock_value_cost), fmt(r.stock_value_retail)]; });
+  var rows = valuationReportData.rows.map(function (r) {
+    var cost = valuationUnitCost(r);
+    return [r.name, r.qty_in_stock + ' ' + valuationUnitWord(r.unit, r.qty_in_stock), cost > 0 ? fmt(cost) : '–', fmt(valuationUnitPrice(r)), fmt(r.stock_value_cost), fmt(r.stock_value_retail)];
+  });
   printHtml('Stock Valuation Report', todayStr(),
-    tableHtml(['Drug', 'Qty in stock', 'Value (cost)', 'Value (retail)'], rows),
+    tableHtml(['Drug', 'Qty in stock', 'Unit cost', 'Unit price', 'Value (cost)', 'Value (retail)'], rows),
     'Total cost ' + fmt(valuationReportData.totalCost) + ' · Total retail ' + fmt(valuationReportData.totalRetail));
 }
 
 function exportValuationReportExcel() {
   if (!valuationReportData) { toast('Report still loading.', 'bad'); return; }
   var rows = valuationReportData.rows.map(function (r) {
-    return { 'Drug': r.name, 'Unit': r.unit, 'Qty in stock': r.qty_in_stock, 'Value (cost)': Number(r.stock_value_cost || 0), 'Value (retail)': Number(r.stock_value_retail || 0) };
+    return { 'Drug': r.name, 'Unit': r.unit, 'Qty in stock': r.qty_in_stock, 'Unit cost': Math.round(valuationUnitCost(r) * 100) / 100, 'Unit price': Math.round(valuationUnitPrice(r) * 100) / 100, 'Value (cost)': Number(r.stock_value_cost || 0), 'Value (retail)': Number(r.stock_value_retail || 0) };
   });
   exportExcel((STATE.pharmacy.name || 'Pharma') + ' - stock valuation - ' + todayStr() + '.xlsx', 'Valuation', rows);
 }

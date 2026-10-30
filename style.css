@@ -1205,3 +1205,16 @@ html,body{margin:0}
   border-radius: 20px; border: 1.5px solid var(--green); box-shadow: var(--shadow-lg);
   max-height: 100%; min-height: 0;
 }
+
+/* Stock Valuation: each drug is a name + value line and a quantity / cost / price line that
+   stays on ONE line (it takes the whole row width and shrinks a little on narrow phones). */
+.val-row { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.val-row:last-child { border-bottom: none; }
+.val-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.val-top .name { font-weight: 600; min-width: 0; }
+.val-top .right { white-space: nowrap; }
+.val-meta {
+  margin-top: 3px; font-size: clamp(10px, 3.1vw, 12px); color: var(--ink-soft);
+  white-space: nowrap; overflow-x: auto; scrollbar-width: none;
+}
+.val-meta::-webkit-scrollbar { display: none; }
