@@ -9,6 +9,11 @@
   ## node_modules from being published as part of the website.
   command = "rm -rf node_modules"
 
+  ## MPESA_ENV is only the word "production" or "sandbox", not a secret. Netlify's
+  ## secret scan would otherwise fail the build on every file that uses that word.
+  [build.environment]
+    SECRETS_SCAN_OMIT_KEYS = "MPESA_ENV"
+
 ## keep-alive: reads one row from Supabase every day at 03:00 UTC (06:00 in
 ## Nairobi) so the free-tier project never pauses from a quiet week. See
 ## netlify/functions/keep-alive.js.
