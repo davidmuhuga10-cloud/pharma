@@ -6186,3 +6186,12 @@ revoke all on function public.admin_sms_wallet(uuid) from public, anon;
 revoke all on function public.admin_adjust_sms_credit(uuid, numeric, text) from public, anon;
 grant execute on function public.admin_sms_wallet(uuid) to authenticated;
 grant execute on function public.admin_adjust_sms_credit(uuid, numeric, text) to authenticated;
+
+-- Folded in from migrations/2026-10-30_service_role_table_access.sql
+-- The server-side account (service_role: Edge Functions and Netlify functions)
+-- must be able to read and write the tables it works on. It had lost these,
+-- which stopped password-reset codes and SMS sending.
+grant select, insert, update, delete on all tables in schema public to service_role;
+grant usage, select on all sequences in schema public to service_role;
+alter default privileges in schema public grant select, insert, update, delete on tables to service_role;
+alter default privileges in schema public grant usage, select on sequences to service_role;
