@@ -1,4 +1,4 @@
-// Hodhi — send-otp
+// Pharma — send-otp
 //
 // Sends a 6-digit SMS code to a phone number and records only its hash, as
 // the first half of proving phone ownership. Purposes: 'password_reset'
@@ -170,7 +170,7 @@ Deno.serve(async (req: Request) => {
     return json({ ok: true, sent: false, message: "SMS provider is not configured — no code was actually sent." });
   }
 
-  const message = `Your Hodhi verification code is ${code}. It expires in 5 minutes. Do not share this code.`;
+  const message = `Your Pharma verification code is ${code}. It expires in 5 minutes. Do not share this code.`;
   const result = await sendSms(smsConfig, phone, message);
   if (result.status !== "sent") {
     return json({ ok: true, sent: false, message: `Could not deliver the code: ${result.raw}` });

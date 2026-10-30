@@ -1,4 +1,4 @@
-// Hodhi — verify-otp
+// Pharma — verify-otp
 //
 // Second half of phone verification (see send-otp). Checks a submitted
 // 6-digit code against the latest unconsumed phone_otps row for that
