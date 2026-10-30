@@ -5,7 +5,8 @@
  * install it, so they add Pharma to their phone or computer as a real app. This
  * is a web-app install (no APK, so no "unknown sources" warning).
  *
- *  - Android and computers (Chrome, Edge, Samsung Internet, Opera): the browser
+ *  - Phones and tablets only: nothing is shown on a computer.
+ *  - Android (Chrome, Edge, Samsung Internet, Opera): the browser
  *    says "this site can be installed" (beforeinstallprompt); the button installs
  *    in one tap.
  *  - iPhone and iPad: Apple has no one-tap install, so the card shows the two
@@ -64,6 +65,8 @@
               (isAndroid && /; wv\)/.test(ua));
   // iOS: only Safari-engine browsers can "Add to Home Screen"; in-app ones cannot.
   var iosSafariLike = isIOS && !inApp;
+  // Phones and tablets only. On a computer people just use the website, so no popup.
+  if (!isIOS && !isAndroid) return;
 
   // ---- The card ----
   function addStyle() {
