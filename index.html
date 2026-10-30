@@ -5,7 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Pharma — Pharmacy Stock &amp; Sales</title>
 <meta name="theme-color" content="#0F5132">
+<!-- Make the installed website look like the Android app: green bar, own name, own icon.
+     iPhone ignores manifest.json for these, so it needs its own tags. -->
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Pharma">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
 <link rel="manifest" href="manifest.json">
+<!-- The "Install Pharma" popup. Plain script, tiny, in the head so it hears the browser's "installable" message early. -->
+<script src="install.js"></script>
 <!-- Start the connection to the database now, so the first request does not wait for it. -->
 <link rel="preconnect" href="https://ovegzdlrhlcpjfcsoumu.supabase.co" crossorigin>
 <!-- Does nothing in a browser; inside the Android app it fixes the layout, printing and the back button. deferred so it never holds up the first screen. -->
