@@ -5723,6 +5723,11 @@ as $function$
   from withact w;
 $function$;
 
+-- Internal helper for admin_overview() / admin_pharmacy_detail() only. Dropping and
+-- re-creating a function makes it executable by everyone again, so lock it here
+-- (migrations/2026-10-30_b_lock_admin_pharmacy_stats.sql).
+revoke all on function public.admin_pharmacy_stats() from public, anon, authenticated;
+
 create or replace function public.admin_extend_trial(p_pharmacy_id uuid, p_days integer)
 returns jsonb language plpgsql security definer set search_path to 'public'
 as $function$

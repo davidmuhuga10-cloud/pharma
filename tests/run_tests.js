@@ -861,6 +861,13 @@ async function main() {
     const writable = await c.query("select distinct table_name from information_schema.role_table_grants where table_schema = 'public' and grantee = 'authenticated' and privilege_type in ('INSERT','UPDATE','DELETE') and table_name = any($1)", [readOnlyTables]);
     assert(writable.rows.length === 0, 'tables changed only through checked functions are read-only for signed-in users' + (writable.rows.length ? ' (writable: ' + writable.rows.map((r) => r.table_name).join(', ') + ')' : ''));
 
+    // Functions that run with the database owner's rights and are only for the server: nobody may call them through the API.
+    const internalFns = await c.query("select p.proname, has_function_privilege('anon', p.oid, 'execute') as anon_x, has_function_privilege('authenticated', p.oid, 'execute') as auth_x from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname in ('admin_pharmacy_stats','log_sign_in','rls_auto_enable')");
+    const openInternal = internalFns.rows.filter((r) => r.anon_x || r.auth_x).map((r) => r.proname);
+    assert(openInternal.length === 0, 'internal-only functions (admin_pharmacy_stats, log_sign_in, rls_auto_enable) cannot be called by signed-out or signed-in users' + (openInternal.length ? ' (callable: ' + openInternal.join(', ') + ')' : ''));
+    const anonDefiner = await c.query("select p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.prokind = 'f' and p.prosecdef and has_function_privilege('anon', p.oid, 'execute') and p.prorettype <> 'trigger'::regtype and p.proname not in ('keep_alive')");
+    assert(anonDefiner.rows.length === 0, 'signed-out visitors can call no owner-rights function except keep_alive()' + (anonDefiner.rows.length ? ' (callable: ' + anonDefiner.rows.map((r) => r.proname).join(', ') + ')' : ''));
+
     // What an attendant can still do, and what they can no longer do by calling the table API directly
     await asUser(c, staffId); // attendant
     const lockSale = await c.query("select s.id from sales s limit 1");
