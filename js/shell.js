@@ -254,6 +254,7 @@ function navMenuItems() {
     if (seeStock) out.push({ tab: 'inventory', label: 'Inventory', ic: '&#128138;' });
     if (can('sell')) out.push({ tab: 'sell', label: 'Sell', ic: '&#129534;' });
     if (canSeeCustomers()) out.push({ tab: 'customers', label: 'Customers', ic: '&#128101;' });
+    if (can('sms')) out.push({ tab: 'sms', label: 'SMS', ic: '&#128172;' });
     if (can('stock_take')) out.push({ tab: 'stocktake', label: 'Stock Take', ic: '&#128203;' });
     if (canSeeControlled()) out.push({ tab: 'controlled', label: 'Controlled <br>Drugs', ic: '&#128274;' });
     if (seeReports) {
@@ -415,13 +416,14 @@ function navBar() {
   // icon). Same emoji as the menu drawer's rows (navMenuItems) so the two
   // always match.
   var CHIP = { dashboard: '&#127968;', inventory: '&#128138;', sell: '&#129534;', suppliers: '&#128666;',
-               expenses: '&#128181;', reports: '&#128202;', settings: '&#9881;', customers: '&#128101;' };
+               expenses: '&#128181;', reports: '&#128202;', settings: '&#9881;', customers: '&#128101;', sms: '&#128172;' };
   var items = [['dashboard', 'home', t('home')]];
   if (can('view_inventory')) items.push(['inventory', 'stock', 'Inventory']);
   if (can('sell')) items.push(['sell', 'sell', t('sell')]);
   var seeSuppliers = can('suppliers') || can('view_suppliers');
   var seeExpenses = can('expenses') || can('view_expenses');
   if (canSeeCustomers()) items.push(['customers', 'people', 'Customers', true]);
+  if (can('sms')) items.push(['sms', 'chat', 'SMS', true]);
   if (seeSuppliers) items.push(['suppliers', 'truck', t('suppliers'), true]);
   if (seeExpenses) items.push(['expenses', 'wallet', t('expenses')]);
   items.push(['reports', 'reports', t('reports')]);
@@ -506,6 +508,7 @@ function renderTab() {
   else if (STATE.tab === 'suppliers') return renderSuppliers();
   else if (STATE.tab === 'expenses') return renderExpenses();
   else if (STATE.tab === 'customers') return renderCustomers();
+  else if (STATE.tab === 'sms') return renderSmsModule();
   else if (STATE.tab === 'stocktake') return renderStockTake();
   else if (STATE.tab === 'controlled') return renderControlled();
 }

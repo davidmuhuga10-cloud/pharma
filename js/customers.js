@@ -95,7 +95,7 @@ function doSendOneSms(customerId, kind, refId) {
     refreshCustomersScreen();
   });
 }
-function refreshCustomersScreen() { if (STATE.tab === 'customers') renderCustomers(); }
+function refreshCustomersScreen() { if (STATE.tab === 'customers') renderCustomers(); else if (STATE.tab === 'sms') renderSmsModule(); }
 
 // ---------------------------------------------------------------------------
 // CUSTOMERS screen: Customers (with what they owe) | Refills | Messages
@@ -154,6 +154,26 @@ async function renderCustomers() {
   if (custDetailId) { openCustomerDetail(custDetailId); return; }
   drawCustomers();
 }
+
+// The SMS menu item: the same Messages view, on its own page so the credit,
+// Buy SMS button and usage are one tap from the menu.
+async function renderSmsModule() {
+  var c = $('#content');
+  if (!can('sms')) { c.innerHTML = '<div class="card empty">You do not have access to SMS.</div>'; return; }
+  c.innerHTML = '<div class="empty">Loading SMS…</div>';
+  try {
+    await Promise.all([loadCustomers(), loadSmsLog(), loadSmsWallet()]);
+  } catch (e) {
+    errorCard(c, friendlyError(e), 'renderSmsModule');
+    return;
+  }
+  drawSmsModule();
+}
+function drawSmsModule() {
+  $('#content').innerHTML = '<div class="section-title" style="margin-top:0">SMS</div>' + messagesHtml();
+}
+// After a change on the Messages view, redraw whichever page it is shown on.
+function redrawMessages() { if (STATE.tab === 'sms') drawSmsModule(); else drawCustomers(); }
 
 function setCustTab(t) { custTab = t; custDetailId = null; renderCustomers(); }
 
@@ -587,7 +607,7 @@ function doBuySms() {
         closeSheet();
         toast('Payment received. ' + Number(st.available_sms || st.sms).toLocaleString('en-US') + ' SMS available.', 'good');
         await loadSmsWallet();
-        if (custTab === 'messages' && !custDetailId) drawCustomers();
+        if (STATE.tab === 'sms' || (custTab === 'messages' && !custDetailId)) redrawMessages();
         return;
       }
       if (st.status === 'failed') { msg.textContent = st.message || 'The payment did not go through.'; return; }
@@ -603,7 +623,7 @@ function toggleSmsEnabled(btn) {
     STATE.pharmacy = Object.assign({}, STATE.pharmacy, { sms_enabled: on });
     saveProfileCache();
     toast(on ? 'SMS is on.' : 'SMS is off.', 'good');
-    drawCustomers();
+    redrawMessages();
   });
 }
 function openComposeSms() {
