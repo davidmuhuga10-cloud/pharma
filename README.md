@@ -23,7 +23,7 @@ Live site: https://pharmacymngt.netlify.app
 ## Screens
 
 - **Phone (under 860px):** top bar with a hamburger that opens the left drawer; bottom bar with Home, Inventory, Sell, Expenses, Reports.
-- **Desktop (860px and up):** left sidebar (including Customers); split sign-in screen.
+- **Desktop (860px and up):** scrolling left sidebar listing every module the role may use (same list as the phone menu); split sign-in screen.
 - **Customers:** credit (kopa) balances and statements, refills, SMS reminders. **Stock take** and **Controlled drugs** are reached from Inventory (and the phone menu).
 - **Plans:** every pharmacy starts a 90-day free trial; the admin marks the first payment and can add or take away days. When the plan ends the pharmacy is locked out until the admin extends or activates it.
 - **Sign-in:** phone + password log-in (every password box has a show/hide eye); new pharmacies create an account; staff with an invite code use "Have a code? Staff login". The app shows the view for the person's role.
@@ -39,6 +39,8 @@ node tests/native-shell.test.js          # print and back button inside the app
 node tests/critical-css.test.js          # loading screen styles match in index.html and style.css
 node tests/js-split.test.js              # js/ files: load order, offline cache list, one init()
 node tests/valuation-row.test.js         # stock valuation row wording and per-unit maths
+node tests/sidebar.test.js               # desktop sidebar: every module present, phone bar unchanged, one lit row
+node tests/auth-desktop.test.js          # desktop sign-in: same pieces as the phone, split-screen styles
 node --experimental-strip-types tests/send-sms.test.js   # SMS sending logic (no network)
 cd tests && npm install && node run_tests.js   # SQL tests, local throwaway Postgres
 ```

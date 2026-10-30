@@ -145,13 +145,155 @@ async function saveNewDrug() {
       pack_label: $('#dPackLabel').value.trim() || null
     };
     var { data, error } = await sb.from('drugs').insert(payload).select().single();
-    if (error) { toast(friendlyError(error), 'bad'); return; }
+    if (error) {
+      // The name is taken: by a drug in the list, or by one that was stopped (hidden).
+      if (error.code === '23505' || /duplicate key|unique constraint/i.test(error.message || '')) {
+        toast('A drug with that name already exists. If you stopped selling it, bring it back from Hidden drugs on the Inventory screen.', 'bad');
+      } else toast(friendlyError(error), 'bad');
+      return;
+    }
     toast('Drug added.', 'good');
     openRestock(encodeDrugForRestock(data));
   });
 }
 
 function encodeDrugForRestock(drug) { return btoa(encodeURIComponent(JSON.stringify(drug))); }
+
+// ---------------------------------------------------------------------------
+// EDIT, STOP SELLING, DELETE — fixing a mistyped drug and retiring one that is
+// no longer sold. A drug with history is never deleted (old sales and reports
+// point at it): it is hidden instead, and can be brought back. Only a drug that
+// never had a batch or a sale can be deleted. The rules live in the database
+// (edit_drug, set_drug_active, delete_drug); the screens just ask.
+// ---------------------------------------------------------------------------
+
+function drugToolsHtml(drugRow, neverStocked) {
+  if (!can('edit_inventory') || !drugRow) return '';
+  return '<div class="drug-tools" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">' +
+    '<button class="btn secondary small" onclick="openEditDrug(\'' + encodeDrugForRestock(drugRow) + '\')">Edit details</button>' +
+    (neverStocked
+      ? '<button class="btn danger small" onclick="deleteDrugNow(this,\'' + drugRow.id + '\')">Delete drug</button>'
+      : '<button class="btn secondary small" onclick="stopSellingDrug(this,\'' + drugRow.id + '\')">Stop selling</button>') +
+    '</div>';
+}
+
+function openEditDrug(encodedDrug) {
+  var drug = JSON.parse(decodeURIComponent(atob(encodedDrug)));
+  var catOptions = STATE.categoriesCache.map(function (c) {
+    return '<option value="' + c.id + '"' + (c.id === drug.category_id ? ' selected' : '') + '>' + esc(c.name) + '</option>';
+  }).join('');
+  var forms = ['tablet', 'capsule', 'syrup', 'injection', 'cream_ointment', 'drops', 'suppository', 'inhaler', 'iv_fluid', 'other'];
+  var body = sheet('Edit: ' + drug.name, '');
+  body.innerHTML =
+    '<div class="field"><label>Drug name</label><input id="eName" value="' + esc(drug.name) + '"></div>' +
+    '<div class="row-2">' +
+    '<div class="field"><label>Form</label><select id="eForm">' +
+      forms.map(function (f) { return '<option value="' + f + '"' + (f === drug.form ? ' selected' : '') + '>' + f.replace('_', '/') + '</option>'; }).join('') +
+    '</select></div>' +
+    '<div class="field"><label>Unit</label><input id="eUnit" value="' + esc(drug.unit || '') + '"></div></div>' +
+    '<div class="field"><label>Category</label><select id="eCat"><option value="">— none —</option>' + catOptions + '</select></div>' +
+    '<div class="row-2">' +
+    '<div class="field"><label>Reorder level</label><input id="eReorder" type="number" min="0" value="' + (drug.reorder_level == null ? '' : drug.reorder_level) + '"></div>' +
+    '<div class="field"><label>Prescription only?</label><select id="eRx"><option value="false"' + (drug.is_prescription ? '' : ' selected') + '>No</option><option value="true"' + (drug.is_prescription ? ' selected' : '') + '>Yes</option></select></div></div>' +
+    '<div class="row-2">' +
+    '<div class="field"><label>Pack size (optional)</label><input id="ePackSize" type="number" min="1" value="' + (drug.pack_size || '') + '"></div>' +
+    '<div class="field"><label>Pack label (optional)</label><input id="ePackLabel" value="' + esc(drug.pack_label || '') + '"></div></div>' +
+    '<button class="btn primary" id="eSaveBtn" onclick="saveEditedDrug(\'' + drug.id + '\')">Save changes</button>' +
+    '<div class="tiny" style="margin-top:10px">Stock and past sales are not touched. Past sales and reports will show the new name.</div>';
+}
+
+function saveEditedDrug(drugId) {
+  act($('#eSaveBtn'), async function () {
+    var name = $('#eName').value.trim();
+    if (!name) { toast('Give the drug a name.', 'bad'); return; }
+    var reorder = parseInt($('#eReorder').value, 10);
+    if (isNaN(reorder) || reorder < 0) { toast('Enter a reorder level of 0 or more.', 'bad'); return; }
+    await rpcCall('edit_drug', {
+      p_pharmacy_id: STATE.profile.pharmacy_id,
+      p_drug_id: drugId,
+      p_name: name,
+      p_category_id: $('#eCat').value || null,
+      p_form: $('#eForm').value,
+      p_unit: $('#eUnit').value.trim(),
+      p_reorder_level: reorder,
+      p_is_prescription: $('#eRx').value === 'true',
+      p_pack_size: parseInt($('#ePackSize').value, 10) || null,
+      p_pack_label: $('#ePackLabel').value.trim() || null
+    });
+    toast('Drug updated.', 'good');
+    clearDashCache();
+    closeSheet();
+    renderInventory();
+  });
+}
+
+async function stopSellingDrug(btn, drugId) {
+  var d = STATE.drugsCache.find(function (x) { return x.drug_id === drugId; });
+  var name = d ? d.name : 'this drug';
+  var left = d ? Number(d.qty_in_stock || 0) + Number(d.qty_expired || 0) : 0;
+  if (left > 0) {
+    toast(qtyUnit(left, d.unit) + ' still in stock (expired stock counts). Sell it or write it off first, then stop selling ' + name + '.', 'bad');
+    return;
+  }
+  var ok = await askConfirm('Stop selling ' + name + '?',
+    'It will disappear from Sell and Inventory. Its sales history stays, and you can bring it back from Hidden drugs.', 'Stop selling', true);
+  if (!ok) return;
+  act(btn, async function () {
+    await rpcCall('set_drug_active', { p_pharmacy_id: STATE.profile.pharmacy_id, p_drug_id: drugId, p_active: false });
+    toast(name + ' is hidden.', 'good');
+    clearDashCache();
+    closeSheet();
+    renderInventory();
+  });
+}
+
+async function deleteDrugNow(btn, drugId) {
+  var d = STATE.drugsCache.find(function (x) { return x.drug_id === drugId; });
+  var name = d ? d.name : 'this drug';
+  var ok = await askConfirm('Delete ' + name + ' for good?',
+    'It never had any stock or sales, so nothing else is affected. This cannot be undone.', 'Delete', true);
+  if (!ok) return;
+  act(btn, async function () {
+    await rpcCall('delete_drug', { p_pharmacy_id: STATE.profile.pharmacy_id, p_drug_id: drugId });
+    toast('Drug deleted.', 'good');
+    clearDashCache();
+    closeSheet();
+    renderInventory();
+  });
+}
+
+function openHiddenDrugs() {
+  sheet('Hidden drugs', '<div class="empty">Loading…</div>');
+  loadHiddenDrugs();
+}
+
+async function loadHiddenDrugs() {
+  var body = $('#sheetBody');
+  if (!body) return;
+  try {
+    var { data, error } = await sb.from('drugs').select('id, name, unit')
+      .eq('pharmacy_id', STATE.profile.pharmacy_id).eq('active', false).order('name');
+    if (error) throw error;
+    body.innerHTML =
+      '<div class="tiny" style="margin-bottom:10px">Drugs you stopped selling. They stay out of Sell and Inventory until you bring them back; their old sales are kept.</div>' +
+      ((data || []).length ? '<div class="card">' + data.map(function (x) {
+        return '<div class="list-row"><div><div class="name">' + esc(x.name) + '</div><div class="meta">' + esc(x.unit || '') + '</div></div>' +
+          '<div class="right"><button class="btn secondary small" onclick="restoreDrug(this,\'' + x.id + '\')">Bring back</button></div></div>';
+      }).join('') + '</div>' : '<div class="empty">No hidden drugs.</div>');
+  } catch (e) {
+    errorCard(body, friendlyError(e), 'loadHiddenDrugs');
+  }
+}
+
+function restoreDrug(btn, drugId) {
+  act(btn, async function () {
+    await rpcCall('set_drug_active', { p_pharmacy_id: STATE.profile.pharmacy_id, p_drug_id: drugId, p_active: true });
+    toast('Drug is back on the list.', 'good');
+    clearDashCache();
+    loadHiddenDrugs();
+    renderInventory();
+  });
+}
 
 async function openDrugDetail(drugId) {
   var d = STATE.drugsCache.find(function (x) { return x.drug_id === drugId; });
@@ -176,6 +318,7 @@ async function openDrugDetail(drugId) {
     '</div>' +
     (can('restock') ? '<button class="btn primary" style="margin-bottom:14px" onclick="closeSheet();openRestock(' + "'" + encodeDrugForRestock(drugRow) + "'" + ')">+ Restock this drug</button>' : '') +
     drugControlHtml(drugRow) +
+    drugToolsHtml(drugRow, !(detail[1].data || []).length && !(detail[2].data || []).length) +
     '<div class="section-title">Batches</div>' +
     (batches && batches.length ? batches.map(function (b) {
       var d2 = daysUntil(b.expiry_date);

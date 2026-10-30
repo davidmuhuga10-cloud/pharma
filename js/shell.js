@@ -204,6 +204,8 @@ async function loadProfileAndPharmacy() {
 
 function render() {
   var app = $('#app');
+  var oldNb = document.getElementById('nbList');
+  var nbTop = oldNb ? oldNb.scrollTop : 0;
   if (!STATE.session || !STATE.profile) {
     app.innerHTML = authScreen();
     if (!STATE.recoveryMode) {
@@ -225,11 +227,13 @@ function render() {
     '<div class="topbar-id">' + logoMarkHtml(30) + '<div><div class="brand">Pharma</div>' +
     '<div class="sub">' + esc(STATE.pharmacy ? STATE.pharmacy.name : '') + '</div></div></div>' +
     '</div>' +
-    '<button onclick="logout()">Log out</button></div>' +
+    '<button class="tb-logout" onclick="logout()">Log out</button>' + profileMenuHtml() + '</div>' +
     '<div class="content" id="content"></div>' +
     navBar() +
     navDrawerHtml();
   wireNavDrawer();
+  wireNavSidebar(nbTop);
+  wireProfileMenu();
   return renderTab();
 }
 
@@ -397,51 +401,104 @@ function goReport(view) {
   setTab('reports');
 }
 
-// Same markup renders as the phone's bottom tab bar and the desktop's full
-// left sidebar (see style.css's .navbar rules) — the brand block and the
-// account footer are written here too, but stay hidden (display:none)
-// until the desktop layout has room for them.
+// One list of buttons is both the phone's bottom tab bar and the desktop's
+// full left sidebar (style.css, .navbar rules). The rows come from
+// navMenuItems() - the same permission-gated list as the phone's menu drawer -
+// so the sidebar always has every module that menu has, and the two can never
+// drift apart. A phone shows only the five thumb-sized tabs in PHONE_BAR (the
+// rest carry .nav-desktop-extra and stay hidden below 860px, where the drawer
+// lists them instead); the sidebar shows everything in one scrolling list, with
+// no group headings. The brand block and the brand block is written here too but stays
+// hidden until the desktop layout has room for it.
 function navBar() {
-  // Item 3: dashboard/reports/settings are on every role's list, so they
-  // stay unconditional — but inventory and sell aren't (e.g. accountant
-  // has neither, stock_taker has no 'sell'), so they're now gated the same
-  // way suppliers/expenses already were.
-  // The fourth element marks a destination as desktop-sidebar-only. Seven
-  // items crammed into a phone's bottom bar left each target well under the
-  // ~40px a thumb needs, so Suppliers and Settings now live in the menu
-  // drawer on a phone (navMenuItems above) and stay on the sidebar at 860px+,
-  // where there is a full column and no size pressure at all. The bar itself
-  // is unchanged on desktop — see .nav-desktop-extra in style.css.
-  // The glass 3D chip shown on phones (the desktop sidebar keeps the line
-  // icon). Same emoji as the menu drawer's rows (navMenuItems) so the two
-  // always match.
-  var CHIP = { dashboard: '&#127968;', inventory: '&#128138;', sell: '&#129534;', suppliers: '&#128666;',
-               expenses: '&#128181;', reports: '&#128202;', settings: '&#9881;', customers: '&#128101;', sms: '&#128172;' };
-  var items = [['dashboard', 'home', t('home')]];
-  if (can('view_inventory')) items.push(['inventory', 'stock', 'Inventory']);
-  if (can('sell')) items.push(['sell', 'sell', t('sell')]);
-  var seeSuppliers = can('suppliers') || can('view_suppliers');
-  var seeExpenses = can('expenses') || can('view_expenses');
-  if (canSeeCustomers()) items.push(['customers', 'people', 'Customers', true]);
-  if (can('sms')) items.push(['sms', 'chat', 'SMS', true]);
-  if (seeSuppliers) items.push(['suppliers', 'truck', t('suppliers'), true]);
-  if (seeExpenses) items.push(['expenses', 'wallet', t('expenses')]);
-  items.push(['reports', 'reports', t('reports')]);
-  items.push(['settings', 'settings', t('settings'), true]);
-  var p = STATE.profile || {};
-  var pharmacy = STATE.pharmacy || {};
+  var PHONE_BAR = { dashboard: 1, inventory: 1, sell: 1, expenses: 1, reports: 1 };
+  // The shorter names the bottom bar has always used; every other row keeps
+  // the drawer's wording (minus its manual line breaks).
+  var LABEL = { dashboard: t('home'), sell: t('sell'), suppliers: t('suppliers'), expenses: t('expenses'),
+                reports: t('reports'), settings: t('settings') };
   return '<div class="navbar">' +
     '<div class="navbar-brand">' + logoMarkHtml(38) + '<div class="word">Pharma</div></div>' +
-    items.map(function (i) {
-      var cls = (navTabOn(i[0]) ? 'active' : '') + (i[3] ? ' nav-desktop-extra' : '');
-      return '<button class="' + cls.trim() + '" onclick="setTab(\'' + i[0] + '\')">' +
-        '<span class="ic">' + icon(i[1], 20) + '</span>' +
-        '<span class="ic3d" aria-hidden="true">' + (CHIP[i[0]] || '') + '</span>' + i[2] + '</button>';
-    }).join('') +
-    '<div class="navbar-spacer"></div>' +
-    '<div class="navbar-foot"><div class="who">' + esc(pharmacy.name || '') + '</div>' +
-    '<div class="role">' + esc(p.full_name || '') + '</div>' + (p.role ? '<div class="role">' + esc(roleLabel(p.role)) + '</div>' : '') + '</div>' +
+    '<div class="nb-list" id="nbList">' + navMenuItems().map(function (m) {
+      if (m.grp) return '';   // the drawer's Stock / Money / More headings are not shown on the bar
+      var phone = !m.report && !!PHONE_BAR[m.tab];
+      var label = (!m.report && LABEL[m.tab]) || m.label.replace(/\s*<br>\s*/g, ' ');
+      // Sidebar: exactly one row is current (a Reports sub-screen lights its
+      // own row, not "Reports"). Phone bar: the parent tab stays lit while a
+      // screen inside it is open (navTabOn) - .parent-open marks that case so
+      // the sidebar can switch it back off.
+      var deskOn = m.report
+        ? (STATE.tab === 'reports' && reportsView === m.report)
+        : (STATE.tab === m.tab && !(m.tab === 'reports' && reportsView !== 'hub'));
+      var phoneOn = phone && navTabOn(m.tab);
+      var cls = (deskOn || phoneOn ? 'active' : '') + (phoneOn && !deskOn ? ' parent-open' : '') + (phone ? '' : ' nav-desktop-extra');
+      // Reports always opens its hub (not whichever report was open last), so
+      // the row that lights up is the one that was tapped.
+      var go = m.report ? "goReport('" + m.report + "')" : m.tab === 'reports' ? "goReport('hub')" : "setTab('" + m.tab + "')";
+      return '<button class="' + cls.trim() + '" onclick="' + go + '">' +
+        '<span class="ic3d" aria-hidden="true">' + m.ic + '</span>' + label + '</button>';
+    }).join('') + '</div>' +
     '</div>';
+}
+
+// Desktop topbar: a Profile button (where Log out sits on a phone) that opens a
+// small card with who is signed in and the Log out button. The account details
+// used to be a card at the bottom of the sidebar. Phones keep the plain Log out
+// button (.tb-logout); the profile (.tb-profile) is hidden below 860px.
+function profileMenuHtml() {
+  var p = STATE.profile || {}, ph = STATE.pharmacy || {};
+  var name = p.full_name || '';
+  var ini = esc((name.trim().charAt(0) || '?').toUpperCase());
+  return '<div class="tb-profile" id="tbProfile">' +
+    '<button class="tb-profile-btn" id="btnProfile" aria-haspopup="true" aria-expanded="false">' +
+      '<span class="tb-av" aria-hidden="true">' + ini + '</span>Profile' +
+      '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg></button>' +
+    '<div class="tb-menu" id="tbMenu">' +
+      '<div class="tb-m-name">' + esc(name || 'Your account') + '</div>' +
+      (p.role ? '<div class="tb-m-line">' + esc(roleLabel(p.role)) + '</div>' : '') +
+      (ph.name ? '<div class="tb-m-line">' + esc(ph.name) + '</div>' : '') +
+      '<button class="tb-m-out" onclick="logout()">Log out</button>' +
+    '</div></div>';
+}
+
+function closeProfileMenu() {
+  var w = document.getElementById('tbProfile'), b = document.getElementById('btnProfile');
+  if (w) w.classList.remove('open');
+  if (b) b.setAttribute('aria-expanded', 'false');
+}
+function wireProfileMenu() {
+  var w = document.getElementById('tbProfile'), b = document.getElementById('btnProfile');
+  if (!w || !b) return;
+  b.onclick = function (e) {
+    e.stopPropagation();
+    var open = !w.classList.contains('open');
+    w.classList.toggle('open', open);
+    b.setAttribute('aria-expanded', open ? 'true' : 'false');
+  };
+  // The page-wide listeners are attached once (render() rebuilds the topbar
+  // every time) and look the menu up each time they run.
+  if (!wireProfileMenu._global) {
+    wireProfileMenu._global = true;
+    document.addEventListener('click', function (e) {
+      var wrap = document.getElementById('tbProfile');
+      if (wrap && !wrap.contains(e.target)) closeProfileMenu();
+    });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeProfileMenu(); });
+  }
+}
+
+// The sidebar list is rebuilt by every render(), which would snap it back to
+// the top each time a lower row (Settings, say) is tapped. render() hands in
+// the old scroll position; this restores it and, if the current row is out of
+// view (opened from elsewhere), scrolls it into view. No-op on a phone, where
+// the list has no height of its own.
+function wireNavSidebar(top) {
+  var list = document.getElementById('nbList');
+  if (!list || !list.clientHeight || list.scrollHeight <= list.clientHeight) return;
+  list.scrollTop = top || 0;
+  var on = list.querySelector('button.active:not(.parent-open)');
+  if (!on) return;
+  var r = on.getBoundingClientRect(), l = list.getBoundingClientRect();
+  if (r.top < l.top || r.bottom > l.bottom) list.scrollTop += (r.top - l.top) - (l.height - r.height) / 2;
 }
 
 // UI fix: was a round floating button that only refreshed on a full

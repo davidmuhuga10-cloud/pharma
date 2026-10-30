@@ -17,10 +17,10 @@ function authHeroHtml() {
     '<h1 class="auth-hero-word">Pharma</h1>' +
     '<p class="auth-hero-tag">Know your stock</p>' +
     '<div class="auth-feats">' +
-    '<div class="auth-feat"><i>&#128138;</i>Batch<br>tracking</div>' +
-    '<div class="auth-feat"><i>&#9200;</i>Expiry<br>alerts</div>' +
-    '<div class="auth-feat"><i>&#128202;</i>Daily<br>reports</div>' +
-    '<div class="auth-feat"><i>&#129534;</i>Printed<br>receipts</div>' +
+    '<div class="auth-feat"><i>&#128138;</i><span>Batch<br>tracking</span></div>' +
+    '<div class="auth-feat"><i>&#9200;</i><span>Expiry<br>alerts</span></div>' +
+    '<div class="auth-feat"><i>&#128202;</i><span>Daily<br>reports</span></div>' +
+    '<div class="auth-feat"><i>&#129534;</i><span>Printed<br>receipts</span></div>' +
     '</div></div>';
 }
 // Tells style.css which auth screen is showing (the benefit row is for log-in
@@ -41,27 +41,18 @@ function authLinks(list) {
   }).join('<span class="auth-sep"> &middot; </span>') + '</div>';
 }
 
-// Desktop gets a proper split layout (green brand panel with floating stat
-// cards + form) instead of a small centered card floating in a sea of empty
-// page; mobile gets the same green panel collapsed into a curved-gradient
-// hero above the form. The phone layout is the "dispensing label" sign-in
-// (approved sketch): hospital-cross mark, "Know your stock", an emoji benefit
-// row, and the form as a label card. It reuses the same #authBody/ids as the
-// desktop layout, which is untouched (>= 860px).
-// Sketched against Kodi's own login/signup screens and approved (headline
-// wording, trust line, stat-card colors) before being wired up here — see
-// style.css's .auth-wrap/.auth-brand rules for the responsive behavior.
-// The headline and the tag below it share the same fixed max-width + centered
-// auto-wrap technique (see .auth-brand-headline/.auth-brand-tag in
-// style.css) specifically so the headline visually centers on the same axis
-// as the tag beneath it, instead of each line just centering inside the
-// full-width panel independently.
+// One sign-in design on every screen size (the "dispensing label" sign-in):
+// hospital-cross mark, "Know your stock", four feature chips, and the form as a
+// cream label card with the two links under it. A phone stacks them (curved
+// green header, card below); at 860px+ it is a split screen with the same
+// pieces: green hero on the left, label card on the right (style.css, the
+// "AUTH, desktop" block). Both use the same #authBody and ids.
 function authScreen() {
   if (STATE.recoveryMode) return recoveryScreen();
   var msg = STATE.disabledMessage;
   STATE.disabledMessage = null;
   // auth-bg-fill is a full-bleed absolutely-positioned green layer behind
-  // EVERYTHING (mobile only — disabled at 900px, where auth-brand paints its
+  // EVERYTHING (phone only — hidden at 860px+, where auth-brand paints its
   // own green instead) so the hero text, the card and the trust line all sit
   // on ONE continuous green screen, exactly like the approved sketch —
   // instead of auth-brand's green box ending right after its own text and
@@ -75,18 +66,7 @@ function authScreen() {
     '<div class="auth-brand">' +
     '<div class="auth-brand-top">' +
     authHeroHtml() +
-    '<div class="auth-desk-top">' + logoMarkHtml(56) +
-    '<h1 class="auth-brand-headline">Know Your Stock<br>Never Run Dry</h1>' +
-    '<div class="auth-brand-tag">Batches, sales, expiry tracking and reports &mdash; everything a pharmacy needs, in one place.</div>' +
     '</div>' +
-    '</div>' +
-    '<div class="auth-brand-line line-top"></div>' +
-    '<div class="auth-stat-stack">' +
-    '<div class="auth-stat-card s1"><div class="auth-stat-lab">Sales this month</div><div class="auth-stat-val">KES 480,500</div></div>' +
-    '<div class="auth-stat-card s2"><div class="auth-stat-lab">Drugs tracked</div><div class="auth-stat-val">312 Drugs</div></div>' +
-    '<div class="auth-stat-card s3"><div class="auth-stat-lab">Batches monitored</div><div class="auth-stat-val">1,140 Batches</div><div class="auth-stat-sub">Expiry-tracked</div></div>' +
-    '</div>' +
-    '<div class="auth-brand-line line-bottom"></div>' +
     '</div>' +
     '<div class="auth-form-col"><div class="auth-card">' +
     (msg ? '<div class="card" style="border-color:#EFC3BE;background:#FBE9E7;margin-bottom:12px">' + esc(msg) + '</div>' : '') +

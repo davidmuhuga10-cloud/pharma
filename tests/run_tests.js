@@ -638,6 +638,62 @@ async function main() {
     await assertThrows(c.query('select cancel_stock_take($1,$2)', [pharmacyId, take3]), 'a cancelled stock take cannot be cancelled again', 'double cancel should have been refused');
 
     // --------------------------------------------------------------
+    console.log('\n== Edit, stop selling and delete a drug ==');
+    await asUser(c, pharmacistId);
+    const eA = await addDrug('Amoxcilin 500', 20, 5, 10);          // mistyped on purpose
+    const eB = await addDrug('Amoxicillin 250', 0, 5, 10);         // no stock, never restocked
+    const sold0 = (await c.query('select count(*)::int n from sale_items')).rows[0].n;
+    await c.query("select edit_drug($1,$2,'Amoxicillin 500',null,'capsule','capsule',12,false,10,'strip')", [pharmacyId, eA.id]);
+    const eaRow = (await c.query('select name, form::text, unit, reorder_level, is_prescription, pack_size, pack_label from drugs where id = $1', [eA.id])).rows[0];
+    assert(eaRow.name === 'Amoxicillin 500' && eaRow.form === 'capsule' && eaRow.unit === 'capsule' && eaRow.reorder_level === 12 && eaRow.is_prescription === false && eaRow.pack_size === 10 && eaRow.pack_label === 'strip', 'edit_drug fixes the name and the other details');
+    assert(await shelf(eA.id) === 20, 'editing a drug leaves its stock alone');
+    await asUser(c, staffId);
+    await sell([{ drug_id: eA.id, quantity: 2 }], [{ method: 'cash', amount: 20 }]);
+    await asUser(c, pharmacistId);
+    const soldName = (await c.query("select d.name from sale_items si join drugs d on d.id = si.drug_id where si.drug_id = $1", [eA.id])).rows[0].name;
+    assert(soldName === 'Amoxicillin 500', 'a past sale shows the corrected name');
+    await assertThrows(c.query("select edit_drug($1,$2,'amoxicillin 250',null,'tablet','tablet',5,false,null,null)", [pharmacyId, eA.id]), 'a name already used by another drug is refused (any capitals)', 'a duplicate name should have been refused');
+    await assertThrows(c.query("select edit_drug($1,$2,'   ',null,'tablet','tablet',5,false,null,null)", [pharmacyId, eA.id]), 'an empty name is refused', 'an empty name should have been refused');
+    await assertThrows(c.query("select edit_drug($1,$2,'X',null,'tablet','tablet',-1,false,null,null)", [pharmacyId, eA.id]), 'a negative reorder level is refused', 'a negative reorder level should have been refused');
+    await assertThrows(c.query("select edit_drug($1,$2,'X',gen_random_uuid(),'tablet','tablet',5,false,null,null)", [pharmacyId, eA.id]), 'a category from nowhere is refused', 'an unknown category should have been refused');
+    await c.query("select edit_drug($1,$2,'Amoxicillin 500',null,'capsule','capsule',12,false,10,'strip')", [pharmacyId, eA.id]);
+    assert(true, 'saving a drug under its own name is fine');
+    await assertThrows(c.query('select set_drug_active($1,$2,false)', [pharmacyId, eA.id]), 'a drug with stock cannot be hidden', 'hiding a drug that still has stock should have been refused');
+    await c.query("update batches set quantity_remaining = 0 where drug_id = $1", [eA.id]);
+    await c.query("update batches set expiry_date = current_date - 5, quantity_remaining = 3 where drug_id = $1", [eA.id]);
+    await assertThrows(c.query('select set_drug_active($1,$2,false)', [pharmacyId, eA.id]), 'expired stock still counts, so the drug cannot be hidden', 'hiding a drug with expired stock should have been refused');
+    await c.query("update batches set quantity_remaining = 0 where drug_id = $1", [eA.id]);
+    await c.query('select set_drug_active($1,$2,false)', [pharmacyId, eA.id]);
+    assert((await c.query('select count(*)::int n from v_drug_stock where drug_id = $1', [eA.id])).rows[0].n === 0, 'a hidden drug leaves the stock list and Sell');
+    assert((await c.query('select count(*)::int n from sale_items where drug_id = $1', [eA.id])).rows[0].n >= 1, 'its sales history is still there');
+    await assertThrows(c.query("select edit_drug($1,$2,'Amoxicillin 500',null,'tablet','tablet',5,false,null,null)", [pharmacyId, eB.id]), 'a name used by a hidden drug is refused too', 'a hidden drug name should have been refused');
+    await c.query('select set_drug_active($1,$2,true)', [pharmacyId, eA.id]);
+    assert((await c.query('select count(*)::int n from v_drug_stock where drug_id = $1', [eA.id])).rows[0].n === 1, 'bringing a drug back puts it on the list again');
+    await assertThrows(c.query('select delete_drug($1,$2)', [pharmacyId, eA.id]), 'a drug that ever had stock cannot be deleted', 'deleting a drug with stock history should have been refused');
+    const eC = await addDrug('Typo drug', 0, 1, 2);
+    await asUser(c, staffId);
+    await assertThrows(c.query("select edit_drug($1,$2,'Hacked',null,'tablet','tablet',5,false,null,null)", [pharmacyId, eC.id]), 'an attendant cannot edit a drug', 'an attendant should not be able to edit a drug');
+    await assertThrows(c.query('select set_drug_active($1,$2,false)', [pharmacyId, eC.id]), 'an attendant cannot hide a drug', 'an attendant should not be able to hide a drug');
+    await assertThrows(c.query('select delete_drug($1,$2)', [pharmacyId, eC.id]), 'an attendant cannot delete a drug', 'an attendant should not be able to delete a drug');
+    await asUser(c, pharmacistId);
+    await c.query('select delete_drug($1,$2)', [pharmacyId, eC.id]);
+    assert((await c.query('select count(*)::int n from drugs where id = $1', [eC.id])).rows[0].n === 0, 'a drug added by mistake can be deleted');
+    await assertThrows(c.query('select delete_drug($1,$2)', [pharmacyId, eC.id]), 'deleting it twice says not found', 'a second delete should have been refused');
+    // a drug that has been on a stock take or the controlled ledger is protected by its own records
+    const eD = await addDrug('Counted once', 0, 1, 2);
+    const takeX = (await c.query("select start_stock_take($1,'Del') as id", [pharmacyId])).rows[0].id;
+    await c.query('select stock_take_count($1,$2,$3,0)', [pharmacyId, takeX, eD.id]);
+    await assertThrows(c.query('select delete_drug($1,$2)', [pharmacyId, eD.id]), 'a drug on a stock take cannot be deleted', 'deleting a drug on a stock take should have been refused');
+    await c.query('select cancel_stock_take($1,$2)', [pharmacyId, takeX]);
+    // another pharmacy cannot touch it
+    const drugOtherOwner = (await c.query('insert into auth.users default values returning id')).rows[0].id;
+    await asUser(c, drugOtherOwner);
+    const drugOtherPh = (await c.query("select bootstrap_pharmacy('Other Pharmacy', 'Other Owner', '0799999999') as id")).rows[0].id;
+    await assertThrows(c.query("select edit_drug($1,$2,'Stolen',null,'tablet','tablet',5,false,null,null)", [drugOtherPh, eA.id]), 'another pharmacy cannot edit this drug', 'a drug of another pharmacy should not be editable');
+    await assertThrows(c.query('select set_drug_active($1,$2,false)', [pharmacyId, eA.id]), 'another pharmacy cannot use this pharmacy id', 'wrong pharmacy id should have been refused');
+    await asUser(c, pharmacistId);
+
+    // --------------------------------------------------------------
     console.log('\n== Refills ==');
     await asUser(c, staffId);
     const plan = (await c.query("select save_refill_plan($1,$2,'Credit Drug',30,$3,(current_date - 40),30) as id", [pharmacyId, jane, dCredit.id])).rows[0].id;
