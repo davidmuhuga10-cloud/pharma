@@ -17,7 +17,7 @@ Live site: https://pharmacymngt.netlify.app
 | `schema.sql` | Full database: tables, views, functions, security |
 | `migrations/` | SQL changes (28 Oct fixes; 29 Oct nightly cleanup, faster dashboard, the credit / refills / SMS / controlled drugs / stock take batch, and `2026-10-29_d_scalability.sql`: indexes plus the server-side sales report and supplier balances; and `2026-10-29_e_import_cleanup_admin.sql`: fast bulk import, old-log cleanup, admin portal indexes; and `2026-10-29_f_lock_down_table_access.sql`: row-level security audit and least-privilege table access; run each new migration in Supabase before deploying the matching code) |
 | `supabase/functions/` | Edge Functions: `send-otp`, `verify-otp`, `reset-password-by-phone` (password reset codes) and `send-sms` (customer reminders) |
-| `netlify.toml`, `netlify/functions/` | Netlify settings and the daily keep-alive ping that stops the free-tier database pausing |
+| `netlify.toml`, `netlify/functions/` | Netlify settings, the daily keep-alive ping that stops the free-tier database pausing, and the M-Pesa SMS purchase (`sms-topup`, `pay-callback`; needs the MPESA_* and SUPABASE_SERVICE_ROLE_KEY variables set in Netlify) |
 | `tests/` | SQL tests, the no-gray-text test, the loading-screen test and the Android shell tests |
 
 ## Screens
@@ -25,7 +25,8 @@ Live site: https://pharmacymngt.netlify.app
 - **Phone (under 860px):** top bar with a hamburger that opens the left drawer; bottom bar with Home, Inventory, Sell, Expenses, Reports.
 - **Desktop (860px and up):** left sidebar (including Customers); split sign-in screen.
 - **Customers:** credit (kopa) balances and statements, refills, SMS reminders. **Stock take** and **Controlled drugs** are reached from Inventory (and the phone menu).
-- **Sign-in:** phone + password log-in; new pharmacies create an account; staff with an invite code use "Have a code? Staff login". The app shows the view for the person's role.
+- **Plans:** every pharmacy starts a 90-day free trial; the admin marks the first payment and can add or take away days. When the plan ends the pharmacy is locked out until the admin extends or activates it.
+- **Sign-in:** phone + password log-in (every password box has a show/hide eye); new pharmacies create an account; staff with an invite code use "Have a code? Staff login". The app shows the view for the person's role.
 
 ## Run and test
 

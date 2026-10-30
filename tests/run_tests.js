@@ -665,9 +665,14 @@ async function main() {
     await asUser(c, staffId);
     await assertThrows(c.query("select sms_queue($1,$2::jsonb)", [pharmacyId, J([{ customer_id: jane, body: 'hi', kind: 'custom' }])]), 'a seller cannot send SMS', 'a seller should not be able to send SMS');
     await asUser(c, pharmacistId);
+    await assertThrows(c.query("select sms_queue($1,$2::jsonb)", [pharmacyId, J([{ customer_id: jane, body: 'hi', kind: 'custom' }])]), 'with no SMS credit nothing is queued', 'a pharmacy with no SMS credit should not be able to queue a message');
+    await c.query("select set_config('app.current_user_id', '', false)");
+    await c.query("insert into sms_wallets (pharmacy_id, balance) values ($1, 100) on conflict (pharmacy_id) do update set balance = 100", [pharmacyId]);
+    await asUser(c, pharmacistId);
     const q1 = (await c.query("select sms_queue($1,$2::jsonb) as r", [pharmacyId, J([{ customer_id: jane, body: 'Hello Jane, your refill is due.', kind: 'refill', ref_id: planB }])])).rows[0].r;
     assert(q1.queued.length === 1 && q1.queued[0].to === '254712345678', 'a pharmacist queues a refill reminder to the customer\'s number');
     assert((await c.query("select status from sms_log where id = $1", [q1.queued[0].id])).rows[0].status === 'queued', 'the log row starts as queued');
+    assert(Number((await c.query('select balance from sms_wallets where pharmacy_id = $1', [pharmacyId])).rows[0].balance) === 99, 'a short SMS costs KES 1 from the wallet');
     assert((await c.query('select last_reminded_on from refill_plans where id = $1', [planB])).rows[0].last_reminded_on !== null, 'the refill is marked as reminded today');
     const q2 = (await c.query("select sms_queue($1,$2::jsonb) as r", [pharmacyId, J([{ customer_id: jane, body: 'again', kind: 'refill', ref_id: planB }])])).rows[0].r;
     assert(q2.queued.length === 0 && q2.skipped[0].reason === 'already_reminded_today', 'the same refill is not texted twice in one day');
@@ -688,6 +693,10 @@ async function main() {
     await c.query("update sms_log set status = 'failed' where pharmacy_id = $1 and body = 'second' returning 1", [pharmacyId]);
     await c.query("select sms_queue($1,$2::jsonb)", [pharmacyId, J([{ customer_id: jane, body: 'retry', kind: 'custom' }])]);
     assert(true, 'a failed message does not use up the daily allowance');
+    const refunds = (await c.query("select count(*)::int n from sms_wallet_transactions where pharmacy_id = $1 and kind = 'refund'", [pharmacyId])).rows[0].n;
+    assert(refunds === 1, 'a message that failed to send is refunded once');
+    await c.query("update sms_log set status = 'failed' where pharmacy_id = $1 and body = 'second' returning 1", [pharmacyId]);
+    assert((await c.query("select count(*)::int n from sms_wallet_transactions where pharmacy_id = $1 and kind = 'refund'", [pharmacyId])).rows[0].n === 1, 'marking it failed again does not refund twice');
     await asUser(c, pharmacistId);
     await assertThrows(c.query('select set_sms_enabled($1,false)', [pharmacyId]), 'a pharmacist cannot switch SMS off', 'only the owner should be able to switch SMS off');
     await asUser(c, ownerId);
@@ -877,6 +886,28 @@ async function main() {
       const okSale = await c.query("select record_sale($1,$2::jsonb,$3::jsonb) as id", [pharmacyId, J([{ drug_id: lockSellDrug.id, quantity: 1 }]), J([{ method: 'cash', amount: 2 }])]);
       assert(!!okSale.rows[0].id, 'selling through the checked function still works for a signed-in user');
     });
+
+    // --------------------------------------------------------------
+    console.log('\n== Trials, paid plans and lock-out ==');
+    await asUser(c, ownerId);
+    const trialRow = (await c.query('select subscription_status, subscription_expires_at > now() + interval \'89 days\' as ninety from pharmacies where id = $1', [pharmacyId])).rows[0];
+    assert(trialRow.subscription_status === 'trial' && trialRow.ninety, 'a new pharmacy starts a 90-day trial');
+    await assertThrows(c.query('select admin_extend_trial($1, 10)', [pharmacyId]), 'only the platform admin can change trial days', 'an owner should not be able to extend their own trial');
+    await assertThrows(c.query('select admin_delete_pharmacy($1, $2)', [pharmacyId, 'Test Pharmacy']), 'only the platform admin can delete a pharmacy', 'an owner should not be able to delete a pharmacy');
+    await c.query("select set_config('app.current_user_id', '', false)");
+    await c.query("update pharmacies set subscription_expires_at = now() - interval '1 day' where id = $1", [pharmacyId]);
+    await asUser(c, ownerId);
+    assert((await c.query('select my_pharmacy_id() as p')).rows[0].p === null, 'when the trial has ended the owner is locked out of the pharmacy');
+    assert((await c.query('select my_subscription() as s')).rows[0].s.locked === true, 'my_subscription tells the app the pharmacy is locked');
+    await c.query("select set_config('app.current_user_id', '', false)");
+    const adminRes = await c.query("insert into auth.users default values returning id");
+    await c.query('insert into platform_admins (user_id) values ($1)', [adminRes.rows[0].id]);
+    await asUser(c, adminRes.rows[0].id);
+    await c.query("select admin_activate_pharmacy($1, 30)", [pharmacyId]);
+    await asUser(c, ownerId);
+    assert((await c.query('select my_pharmacy_id() as p')).rows[0].p === pharmacyId, 'marking the pharmacy as paid lifts the lock');
+    await asUser(c, adminRes.rows[0].id);
+    await assertThrows(c.query('select admin_delete_pharmacy($1, $2)', [pharmacyId, 'Test Pharmacy']), 'a pharmacy that is still paid up cannot be deleted', 'deleting a pharmacy before its plan has ended should have been refused');
 
     // --------------------------------------------------------------
     console.log('\n== Privilege escalation: a staff member cannot promote themselves ==');

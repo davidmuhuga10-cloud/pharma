@@ -176,12 +176,24 @@ async function loadProfileAndPharmacy() {
     return;
   }
   // The pharmacy, categories and suppliers don't depend on each other, so ask
-  // for all three at once (one round trip instead of three in a row).
+  // for all three at once (one round trip instead of three in a row). The plan
+  // check rides along: if the trial or paid plan has ended the database already
+  // refuses this pharmacy its data (my_pharmacy_id), so show a clear message
+  // instead of empty screens. A failed check (offline) is not a lock-out.
   var rest = await Promise.all([
     sb.from('pharmacies').select('*').eq('id', profile.pharmacy_id).maybeSingle(),
     sb.from('drug_categories').select('*').eq('pharmacy_id', profile.pharmacy_id).order('name'),
-    sb.from('suppliers').select('*').eq('pharmacy_id', profile.pharmacy_id).order('name')
+    sb.from('suppliers').select('*').eq('pharmacy_id', profile.pharmacy_id).order('name'),
+    sb.rpc('my_subscription')
   ]);
+  var sub = rest[3].data;
+  if (sub && sub.locked) {
+    clearProfileCache();
+    STATE.profile = null;
+    STATE.disabledMessage = (sub.status === 'active' ? 'Your Pharma plan has ended.' : 'Your free trial has ended.') +
+      ' Contact the Pharma team to activate ' + (sub.pharmacy_name || 'your pharmacy') + ' and get back in. Your data is safe.';
+    return;
+  }
   if (rest[0].error) throw rest[0].error;
   STATE.profile = profile;
   STATE.pharmacy = rest[0].data;

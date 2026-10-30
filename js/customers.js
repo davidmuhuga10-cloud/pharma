@@ -110,6 +110,7 @@ var custDetail = null;      // { row, statement, refills }
 var refillsCache = [];
 var refillFilter = 'due';
 var smsLogCache = [];
+var smsWallet = null;       // my_sms_wallet(): balance, price, usage; null when not allowed or offline
 var refillDrugNames = [];   // [{id, name}] for the refill form's suggestions
 
 function canSeeCustomers() { return can('customers') || can('view_customers'); }
@@ -126,6 +127,12 @@ async function loadRefills() {
   if (r.error) throw r.error;
   refillsCache = r.data || [];
 }
+// The wallet is shown beside the message list; if it cannot be read the list
+// still works (sending is checked by the database either way).
+async function loadSmsWallet() {
+  var r = await sb.rpc('my_sms_wallet');
+  smsWallet = r.error ? null : r.data;
+}
 async function loadSmsLog() {
   var r = await sb.from('sms_log').select('*, customers(name)').order('created_at', { ascending: false }).limit(60);
   if (r.error) throw r.error;
@@ -139,7 +146,7 @@ async function renderCustomers() {
   try {
     await loadCustomers();
     if (custTab === 'refills' && !custDetailId) await loadRefills();
-    if (custTab === 'messages' && !custDetailId) await loadSmsLog();
+    if (custTab === 'messages' && !custDetailId) await Promise.all([loadSmsLog(), loadSmsWallet()]);
   } catch (e) {
     errorCard(c, friendlyError(e), 'renderCustomers');
     return;
@@ -501,13 +508,18 @@ function messagesHtml() {
   var usedToday = smsLogCache.filter(function (m) { return m.status !== 'failed' && String(new Date(new Date(m.created_at).getTime() + 3 * 3600 * 1000).toISOString()).slice(0, 10) === start; }).length;
   var enabled = p.sms_enabled !== false;
   var isOwner = STATE.profile.role === 'owner' || STATE.profile.role === 'co_owner';
+  var w = smsWallet;
   return '<div class="kpi-grid" style="margin-bottom:14px">' +
+    (w ? kpi('SMS credit', fmt(w.balance), Number(w.available_sms) > 0 ? 't-green' : 't-red') +
+         kpi('Messages left', Number(w.available_sms).toLocaleString('en-US'), Number(w.available_sms) > 0 ? 't-green' : 't-red') : '') +
     kpi('Sent today', usedToday + (p.sms_daily_cap ? ' of ' + p.sms_daily_cap : ''), 't-sales') +
+    (w ? kpi('Last 30 days', Number(w.sent_30d).toLocaleString('en-US') + ' sent · ' + fmt(w.spent_30d), 't-amber') : '') +
     kpi('SMS', enabled ? 'On' : 'Off', enabled ? 't-green' : 't-red') + '</div>' +
     '<div class="toolbar-row">' +
-    (can('sms') && enabled ? '<button class="btn primary" onclick="openComposeSms()">+ New message</button>' : '') +
+    (isOwner && w ? '<button class="btn primary" onclick="openBuySms()">Buy SMS</button>' : '') +
+    (can('sms') && enabled ? '<button class="btn ' + (isOwner && w ? 'secondary' : 'primary') + '" onclick="openComposeSms()">+ New message</button>' : '') +
     (isOwner ? '<button class="btn ghost" onclick="toggleSmsEnabled(this)">' + (enabled ? 'Turn SMS off' : 'Turn SMS on') + '</button>' : '') + '</div>' +
-    '<div class="tiny" style="margin-bottom:10px">Messages go out from the Pharma SMS service. Every message is listed here with who sent it. Customers marked "never text" are skipped.</div>' +
+    '<div class="tiny" style="margin-bottom:10px">Messages go out from the Pharma SMS service' + (w ? ' and cost ' + fmt(w.price_per_sms) + ' each (a message over 160 characters counts as more than one; a message that fails to send is refunded)' : '') + '. Every message is listed here with who sent it. Customers marked "never text" are skipped.</div>' +
     '<div class="card">' + (smsLogCache.length ? smsLogCache.map(function (m) {
       var badge = m.status === 'sent' ? '<span class="badge good">Sent</span>' : m.status === 'failed' ? '<span class="badge bad">Failed</span>' : '<span class="badge warn">Waiting</span>';
       var who = (m.customers && m.customers.name) || showPhone(m.to_phone);
@@ -517,6 +529,73 @@ function messagesHtml() {
         '<div class="right">' + badge + '</div></div>';
     }).join('') : '<div class="empty">No messages yet.</div>') + '</div>';
 }
+// ----- buy SMS with M-Pesa -----------------------------------------------------
+// The Netlify function sms-topup sends the PIN prompt to the phone; the wallet
+// is credited by Safaricom's result (never by this screen), so we only watch
+// the purchase until it says paid or failed.
+function openBuySms() {
+  var w = smsWallet || { price_per_sms: 2 };
+  var price = Number(w.price_per_sms) || 2;
+  var body = sheet('Buy SMS',
+    '<div class="tiny" style="margin-bottom:10px">Each SMS costs ' + fmt(price) + '. You will get an M-Pesa prompt on the phone below; enter your PIN to pay.</div>' +
+    '<div class="toolbar-row">' + [100, 200, 500, 1000].map(function (a) {
+      return '<button class="btn ghost small" type="button" onclick="setBuyAmount(' + a + ')">' + fmt(a) + '</button>';
+    }).join('') + '</div>' +
+    '<div class="field"><label>Amount (KES)</label><input id="buyAmt" type="number" inputmode="numeric" min="50" step="1" placeholder="e.g. 200" oninput="buyPreview()"></div>' +
+    '<div class="tiny" id="buyPreview" style="margin:-4px 0 12px"></div>' +
+    '<div class="field"><label>M-Pesa phone number</label><input id="buyPhone" type="tel" inputmode="tel" placeholder="07XX XXX XXX" value="' + esc((STATE.profile && STATE.profile.phone) || '') + '"></div>' +
+    '<div id="buyMsg" class="tiny" style="margin-bottom:10px"></div>' +
+    '<button class="btn primary" id="buyBtn" onclick="doBuySms()">Pay with M-Pesa</button>');
+  window._buyPrice = price;
+}
+function setBuyAmount(a) { $('#buyAmt').value = a; buyPreview(); }
+function buyPreview() {
+  var a = Number($('#buyAmt').value);
+  $('#buyPreview').textContent = a >= 50 ? 'You will get ' + Math.floor(a / window._buyPrice).toLocaleString('en-US') + ' SMS.' : '';
+}
+async function smsTopupCall(payload) {
+  var sess = (await sb.auth.getSession()).data.session;
+  if (!sess) throw new Error('Please sign in again.');
+  var res = await fetch('/.netlify/functions/sms-topup', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + sess.access_token },
+    body: JSON.stringify(payload)
+  });
+  var j = await res.json().catch(function () { return null; });
+  if (!j) throw new Error('Could not reach the payment service. Check your connection and try again.');
+  if (!j.ok) throw new Error(j.message || 'Something went wrong. Please try again.');
+  return j;
+}
+function doBuySms() {
+  var btn = $('#buyBtn'), msg = $('#buyMsg');
+  act(btn, async function () {
+    msg.textContent = '';
+    var amount = Number($('#buyAmt').value);
+    if (!(amount >= 50) || Math.round(amount) !== amount) { msg.textContent = 'Enter a whole amount of KES 50 or more.'; return; }
+    var started;
+    try { started = await smsTopupCall({ action: 'start', amount: amount, phone: $('#buyPhone').value }); }
+    catch (e) { msg.textContent = e.message; return; }
+    msg.textContent = 'Check the phone ' + started.phone + ' and enter your M-Pesa PIN…';
+    var begun = Date.now();
+    while (Date.now() - begun < 120000) {
+      await new Promise(function (r) { setTimeout(r, 4000); });
+      if (!$('#buyMsg')) return;            // sheet closed: stop watching (payment still gets credited)
+      var st;
+      try { st = await smsTopupCall({ action: 'status', request_id: started.request_id, confirm: Date.now() - begun > 20000 }); }
+      catch (e) { continue; }
+      if (st.status === 'paid') {
+        closeSheet();
+        toast('Payment received. ' + Number(st.available_sms || st.sms).toLocaleString('en-US') + ' SMS available.', 'good');
+        await loadSmsWallet();
+        if (custTab === 'messages' && !custDetailId) drawCustomers();
+        return;
+      }
+      if (st.status === 'failed') { msg.textContent = st.message || 'The payment did not go through.'; return; }
+    }
+    msg.textContent = 'Still waiting for M-Pesa. If you paid, the SMS will be added in a minute; otherwise try again.';
+  });
+}
+
 function toggleSmsEnabled(btn) {
   act(btn, async function () {
     var on = !(STATE.pharmacy && STATE.pharmacy.sms_enabled !== false);

@@ -101,7 +101,7 @@ function renderLogin() {
     '<div class="card">' +
     '<h2 class="auth-title">Welcome back &#128075;</h2>' +
     '<div class="field"><label>Phone number</label><input id="loPhone" type="tel" placeholder="07XXXXXXXX"></div>' +
-    '<div class="field"><label>Password</label><input id="loPw" type="password" placeholder="••••••••"></div>' +
+    '<div class="field"><label>Password</label>' + pwField('loPw', '••••••••') + '</div>' +
     '<div id="loErr" class="error-text"></div>' +
     '<button class="btn primary" id="loBtn" onclick="doLogin()">Log in</button>' +
     '<div class="tiny auth-forgot"><a href="#" onclick="renderForgotPassword();return false;">Forgot password?</a></div>' +
@@ -118,7 +118,7 @@ function renderSignup() {
     '<div class="field"><label>Pharmacy name</label><input id="suPharmacy" placeholder="e.g. Afya Bora Pharmacy"></div>' +
     '<div class="field"><label>Your name</label><input id="suName" placeholder="e.g. Daud Kinyua"></div>' +
     '<div class="field"><label>Phone number</label><input id="suPhone" type="tel" placeholder="07XXXXXXXX"></div>' +
-    '<div class="field"><label>Password</label><input id="suPw" type="password" placeholder="At least 8 characters"></div>' +
+    '<div class="field"><label>Password</label>' + pwField('suPw', 'At least 8 characters') + '</div>' +
     '<div id="suErr" class="error-text"></div>' +
     '<button class="btn primary" id="suBtn" onclick="doSignup()">Create pharmacy account</button>' +
     AUTH_FOOT + '</div>' +
@@ -136,7 +136,7 @@ function renderJoin() {
     '<div class="field"><label>Staff code</label><input id="jnCode" placeholder="e.g. 2E530A" style="text-transform:uppercase"></div>' +
     '<div class="field"><label>Your name</label><input id="jnName" placeholder="e.g. Daud Kinyua"></div>' +
     '<div class="field"><label>Phone number</label><input id="jnPhone" type="tel" placeholder="07XXXXXXXX"></div>' +
-    '<div class="field"><label>Password</label><input id="jnPw" type="password" placeholder="At least 8 characters"></div>' +
+    '<div class="field"><label>Password</label>' + pwField('jnPw', 'At least 8 characters') + '</div>' +
     '<div id="jnErr" class="error-text"></div>' +
     '<button class="btn primary" id="jnBtn" onclick="doJoin()">Join pharmacy</button>' +
     AUTH_FOOT + '</div>' + authLinks([['', 'Back to log in', 'renderLogin()']]);
@@ -192,7 +192,7 @@ function drawForgotPassword() {
       '<div class="card">' +
       '<h2 class="auth-title">Choose a new password</h2>' +
       '<div class="tiny" style="margin-bottom:10px">Phone number verified. Choose a new password.</div>' +
-      '<div class="field"><label>New password</label><input id="fpPw" type="password" placeholder="At least 8 characters"></div>' +
+      '<div class="field"><label>New password</label>' + pwField('fpPw', 'At least 8 characters') + '</div>' +
       '<div id="fpErr" class="error-text"></div>' +
       '<button class="btn primary" id="fpBtn" onclick="doSetResetPassword()">Set new password</button>' +
       AUTH_FOOT + '</div>' + authLinks([['', 'Back to log in', 'renderLogin()']]);
@@ -262,7 +262,7 @@ function recoveryScreen() {
   return '<div class="auth-wrap-simple"><div class="auth-card">' +
     logoMarkHtml(44) + '<div class="mark">Pharma</div><div class="tag">Set a new password</div>' +
     '<div class="card" style="margin-top:14px">' +
-    '<div class="field"><label>New password</label><input id="rcPw" type="password" placeholder="At least 8 characters"></div>' +
+    '<div class="field"><label>New password</label>' + pwField('rcPw', 'At least 8 characters') + '</div>' +
     '<div id="rcErr" class="error-text"></div>' +
     '<button class="btn primary" id="rcBtn" onclick="doSetNewPassword()">Save new password</button>' +
     '</div></div></div>';

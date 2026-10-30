@@ -2,6 +2,17 @@
 
 Newest first. The detailed story for each item is in `PHARMA_PROJECT_STATUS.md`.
 
+## 2026-10-30: trials, paid plans and admin pharmacy management
+
+- **Trial and plan:** every new pharmacy gets a 90-day free trial and becomes Active when the admin marks its first payment. The admin list and each pharmacy page show "Trial · N days left", "Active · N days left", or "Trial ended".
+- **Admin controls:** add or take away days (any number), end the plan now, mark as paid for a number of days, and delete a pharmacy. Delete is only allowed once the plan has ended, asks for the admin password again, then the exact pharmacy name, and refuses to delete a pharmacy that holds the admin account. Migration `2026-10-30_trials_and_admin_management.sql`.
+- **Lock-out:** when the end date passes, the pharmacy is shut out of all its data by the database itself (`my_pharmacy_id()` / `my_role()` return nothing) and the app shows "Your free trial has ended". The platform admin is never locked out; adding days or marking as paid unlocks straight away. `my_subscription()` tells the app the plan state. Migration `2026-10-30_trial_lockout.sql`.
+- **Admin screens:** removed "Recent sign-ins" and "Show as a table"; the post-login loading screen is now the same as the pharmacy app's; admin sign-in has a show/hide eye.
+- **Password eye:** every password box in the app (log in, sign up, staff join, new password, reset) has a show/hide eye.
+- **Review tune-up:** indexes on three foreign keys, the profiles policy reads `auth.uid()` once per query, and the three password-reset functions are saved in `supabase/functions/` (migration `2026-10-30_review_fk_indexes_and_profiles_policy.sql`).
+- **SMS wallet (buy SMS with M-Pesa):** each pharmacy has a KES SMS wallet. The owner taps Buy SMS on Customers > Messages, gets an M-Pesa prompt, and the wallet is credited when Safaricom confirms (exactly once, never by the screen). Each SMS costs `sms_platform_config.price_per_sms` (KES 2) per 160-character part, charged when it is queued and refunded automatically if it fails to send. The Messages tab shows credit, messages left and the last 30 days of use. The admin pharmacy page shows the same numbers and can add or remove credit by hand. Same Daraja app and same SMS sender as Kodi. Migration `2026-10-30_sms_wallet.sql`; functions `sms-topup` and `pay-callback` (Netlify). New pharmacies start with no SMS credit.
+- **To switch on payments:** add to Netlify environment variables `MPESA_ENV`, `MPESA_CONSUMER_KEY`, `MPESA_CONSUMER_SECRET`, `MPESA_PASSKEY`, `MPESA_SHORTCODE`, `MPESA_TILL_NUMBER`, `MPESA_CALLBACK_SECRET` (same values as Kodi, with a new long random secret) and `SUPABASE_SERVICE_ROLE_KEY` (Pharma's). Until they are set the Buy SMS button says payments are being set up.
+
 ## 2026-10-29 (fifth batch): row-level security and table access locked down
 
 - **Row-level security:** it was already ON for all 31 tables, and no pharmacy could see another's rows. But the older tables still let any signed-in person (an attendant included) insert, edit or delete rows directly through the public API, skipping the checked functions: rewrite a sale's total, change a batch quantity, or delete the stock-movement audit trail. Signed-out visitors and signed-in users also held privileges (TRUNCATE, TRIGGER, REFERENCES) that row-level security does not cover, and the server-only tables (one-time codes, reset attempts, SMS settings) were open to signed-in users at the table-privilege level (row-level security still blocked every row).

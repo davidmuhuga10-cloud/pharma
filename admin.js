@@ -3,8 +3,10 @@
    an account only gets in if it's listed in platform_admins (checked by the
    database, not just here). All cross-pharmacy data comes from two
    SECURITY DEFINER functions — admin_overview() and
-   admin_pharmacy_detail() — see schema.sql section 10. Read-only: nothing
-   on this page changes a pharmacy's data. */
+   admin_pharmacy_detail() — see schema.sql section 10. Reading is open to
+   any platform admin; changing a pharmacy (trial days, mark as paid, delete)
+   goes through admin_extend_trial / admin_activate_pharmacy /
+   admin_delete_pharmacy, which re-check admin rights in the database. */
 
 var sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -15,8 +17,7 @@ var A = {
   detail: {},          // pharmacy_id -> admin_pharmacy_detail() result
   filter: 'all',       // all | active | setting_up | quiet | dormant | not_started
   q: '',
-  sort: 'active',      // active | newest | name | sales | signins
-  feedAll: false
+  sort: 'active'       // active | newest | name | sales | signins
 };
 
 var STATUS = {
@@ -60,6 +61,39 @@ function toast(msg, kind) {
   t.textContent = msg;
   document.body.appendChild(t);
   setTimeout(function () { t.remove(); }, 2800);
+}
+// Disable a button and show "Please wait…" for the length of an async action,
+// so it can't be double-tapped; restores the original label afterwards.
+function act(btn, fn) {
+  if (!btn) { fn().catch(function (e) { toast(friendlyError(e), 'bad'); }); return; }
+  var original = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = 'Please wait…';
+  fn().catch(function (e) { toast(friendlyError(e), 'bad'); })
+    .finally(function () { btn.disabled = false; btn.innerHTML = original; });
+}
+// Small centered dialog. Returns the overlay element; onOpen(overlay) wires
+// its buttons. closeModal() removes it. Clicking the backdrop or pressing
+// Escape cancels.
+function closeModal() { var m = document.querySelector('.adm-modal'); if (m) m.remove(); }
+function modal(title, bodyHtml, opts) {
+  opts = opts || {};
+  closeModal();
+  var m = document.createElement('div');
+  m.className = 'adm-modal';
+  m.innerHTML =
+    '<div class="adm-modal-box" role="dialog" aria-modal="true">' +
+      '<div class="adm-modal-head"><h3>' + esc(title) + '</h3>' +
+      '<button class="adm-modal-x" aria-label="Close" onclick="closeModal()">&times;</button></div>' +
+      '<div class="adm-modal-body">' + bodyHtml + '</div>' +
+    '</div>';
+  m.addEventListener('click', function (e) { if (e.target === m) closeModal(); });
+  document.addEventListener('keydown', function esc0(e) {
+    if (e.key === 'Escape') { closeModal(); document.removeEventListener('keydown', esc0); }
+  });
+  document.body.appendChild(m);
+  if (opts.onOpen) opts.onOpen(m);
+  return m;
 }
 function friendlyError(e) {
   var msg = (e && e.message) || String(e || '');
@@ -116,6 +150,19 @@ function exactTime(iso) {
 function statusBadge(s) {
   var m = STATUS[s] || { label: s, cls: 'muted' };
   return '<span class="badge ' + m.cls + '"><span class="dot"></span>' + esc(m.label) + '</span>';
+}
+// Plan = free trial or paid. Days left come from the database so the admin
+// screen and the lock-out in the app always agree.
+function planInfo(p) {
+  var left = p.trial_days_left, paid = p.subscription_status === 'active';
+  if (left == null) return { label: paid ? 'Active' : 'Trial', cls: paid ? 'good' : 'info', ended: false, left: null };
+  if (left <= 0) return { label: paid ? 'Paid plan ended' : 'Trial ended', cls: 'bad', ended: true, left: left };
+  var txt = left + (left === 1 ? ' day left' : ' days left');
+  return { label: (paid ? 'Active · ' : 'Trial · ') + txt, cls: paid ? 'good' : (left <= 7 ? 'warn' : 'info'), ended: false, left: left };
+}
+function planBadge(p) {
+  var pi = planInfo(p);
+  return '<span class="badge ' + pi.cls + '"><span class="dot"></span>' + esc(pi.label) + '</span>';
 }
 // Which signal made a pharmacy "last active" — shown next to the time.
 function activeVia(p) {
@@ -187,10 +234,12 @@ function renderLogin(errorMsg) {
       '<form class="card" id="loginForm" style="padding:18px">' +
         (errorMsg ? '<div class="err">' + esc(errorMsg) + '</div>' : '') +
         '<div class="field"><label for="lgPhone">Phone number</label><input id="lgPhone" type="tel" inputmode="tel" autocomplete="username" placeholder="07XX XXX XXX" required></div>' +
-        '<div class="field"><label for="lgPw">Password</label><input id="lgPw" type="password" autocomplete="current-password" required></div>' +
+        '<div class="field"><label for="lgPw">Password</label><div class="pw-wrap"><input id="lgPw" type="password" autocomplete="current-password" required>' +
+          '<button type="button" class="pw-eye" aria-label="Show password" aria-pressed="false">' + EYE_ON + '</button></div></div>' +
         '<button class="btn primary" id="lgBtn" type="submit">Sign in</button>' +
       '</form>' +
     '</div></div>';
+  wirePwEyes($('#loginForm'));
   $('#loginForm').addEventListener('submit', doLogin);
   $('#lgPhone').focus();
 }
@@ -251,11 +300,11 @@ function shell(sub, body) {
     '<main class="adm-wrap">' + body + '</main>';
 }
 
+// Same loading screen as the pharmacy app (markup in loadScreenHtml, js/core.js;
+// styles in style.css), so signing in looks the same on both sides.
 function renderLoading() {
-  $('#admin').innerHTML = shell('Loading…',
-    '<div class="adm-kpis">' + [1, 2, 3, 4, 5].map(function () { return '<div class="kpi skeleton" style="height:96px;border-color:transparent"></div>'; }).join('') + '</div>' +
-    '<div class="card skeleton" style="height:240px;border-color:transparent"></div>' +
-    '<div class="card skeleton" style="height:320px;border-color:transparent"></div>');
+  document.title = 'Pharma Admin';
+  $('#admin').innerHTML = '<div class="loadscreen" role="status" aria-label="Opening Pharma Admin"><div class="loadscreen-mark"><svg viewBox="0 0 48 48" aria-hidden="true"><polygon points="18,6 30,6 30,18 42,18 42,30 30,30 30,42 18,42 18,30 6,30 6,18 18,18" fill="#fff" stroke="#fff" stroke-width="6" stroke-linejoin="round"/></svg></div><p class="loadscreen-word">Pharma</p><svg class="loadscreen-ecg" viewBox="0 0 200 34" fill="none" stroke="#E7C76A" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M0 18h54l8-14 10 28 10-20 6 6h112"/></svg><p class="loadscreen-tag">Admin</p></div>';
 }
 
 function errorBlock(msg, retry) {
@@ -304,24 +353,9 @@ function drawOverview() {
     '<div class="card"><div class="card-head"><div><h2>Active pharmacies per day</h2>' +
     '<div class="sub">Last 30 days. A pharmacy counts as active on a day if anyone there signed in, made a sale or moved stock.</div></div></div>' +
     '<div class="chart-box" id="chartOverview" data-empty="No activity in the last 30 days"></div>' +
-    dataTable(o.daily, [['Day', function (d) { return fmtDate(d.day); }], ['Active pharmacies', function (d) { return d.active_pharmacies; }],
-      ['Sign-ins', function (d) { return d.sign_ins; }], ['Sales', function (d) { return d.sales; }]]) +
     '</div>';
 
-  var feed = o.recent_sign_ins || [];
-  var shown = A.feedAll ? feed : feed.slice(0, 5);
-  var feedHtml =
-    '<div class="card"><div class="card-head"><div><h2>Recent sign-ins</h2><div class="sub">Who logged in, and when</div></div></div>' +
-    (feed.length ? shown.map(function (x) {
-      return '<div class="feed-row"><div class="row-avatar">' + esc(initials(x.full_name)) + '</div>' +
-        '<div class="body"><div class="nm">' + esc(x.full_name || 'Unnamed') + (x.is_admin ? ' <span class="badge admin">You</span>' : '') + '</div>' +
-        '<div class="mt">' + esc(roleLabel(x.role)) + ' · <a href="#/p/' + esc(x.pharmacy_id) + '">' + esc(x.pharmacy_name) + '</a></div></div>' +
-        '<div class="when" title="' + esc(exactTime(x.signed_in_at)) + '">' + esc(fmtWhen(x.signed_in_at)) + '</div></div>';
-    }).join('') : '<div class="empty-note">No sign-ins recorded yet.</div>') +
-    (feed.length > 5 ? '<button class="btn ghost small" style="margin-top:8px" onclick="A.feedAll=!A.feedAll;drawOverview()">' + (A.feedAll ? 'Show fewer' : 'Show all ' + feed.length) + '</button>' : '') +
-    '</div>';
-
-  var body = tiles + '<div class="adm-grid-2">' + chart + feedHtml + '</div>' +
+  var body = tiles + chart +
     '<div class="card adm-section" id="phCard"></div>';
   $('#admin').innerHTML = shell('Platform overview · updated ' + hm(A.loadedAt), body);
   barChart($('#chartOverview'), o.daily, 'active_pharmacies', function (d) {
@@ -396,7 +430,7 @@ function drawPharmacies() {
     rows =
       '<div class="only-wide"><div class="table-scroll"><table class="adm-table"><thead><tr>' +
         '<th>Pharmacy</th><th>Owner</th><th>Joined</th><th>Last sign-in</th><th>Last active</th>' +
-        '<th class="num">Staff</th><th class="num">Drugs</th><th class="num">Sales · 30d</th><th>Status</th></tr></thead><tbody>' +
+        '<th class="num">Staff</th><th class="num">Drugs</th><th class="num">Sales · 30d</th><th>Plan</th><th>Status</th></tr></thead><tbody>' +
       list.map(function (p) {
         var st = STATUS[p.status] || { cls: 'muted' };
         var via = activeVia(p);
@@ -410,12 +444,14 @@ function drawPharmacies() {
           '<td class="num">' + num(p.active_staff) + (p.staff_count !== p.active_staff ? '<div class="mt">of ' + num(p.staff_count) + '</div>' : '') + '</td>' +
           '<td class="num">' + num(p.drugs_count) + '</td>' +
           '<td class="num">' + kes(p.sales_value_30d) + '<div class="mt">' + pl(p.sales_30d, 'sale') + '</div></td>' +
+          '<td>' + planBadge(p) + (p.subscription_expires_at ? '<div class="mt">to ' + esc(fmtDate(p.subscription_expires_at)) + '</div>' : '') + '</td>' +
           '<td>' + statusBadge(p.status) + '</td></tr>';
       }).join('') + '</tbody></table></div></div>' +
       '<div class="only-narrow">' + list.map(function (p) {
         var st = STATUS[p.status] || { cls: 'muted' };
         return '<a class="ph-row" href="#/p/' + esc(p.id) + '"><div class="row-avatar ' + (AVATAR_CLS[st.cls] || '') + '">' + esc(initials(p.name)) + '</div>' +
           '<div class="body"><div class="top"><div class="nm">' + esc(p.name) + '</div>' + statusBadge(p.status) + '</div>' +
+          '<div style="margin:2px 0 4px">' + planBadge(p) + '</div>' +
           '<div class="mt">' + esc(p.owner_name || '—') + (p.owner_phone ? ' · ' + esc(p.owner_phone) : '') + (p.town ? ' · ' + esc(p.town) : '') + '</div>' +
           '<div class="mt">Joined ' + esc(fmtDate(p.created_at)) + ' · Last sign-in ' + esc(fmtWhen(p.last_sign_in_at)) + '</div>' +
           '<div class="stats"><span><b>' + num(p.active_staff) + '</b> staff</span><span><b>' + num(p.drugs_count) + '</b> drugs</span>' +
@@ -443,6 +479,7 @@ function exportCsv() {
     ['Joined', function (p) { return fmtDate(p.created_at); }], ['Last sign-in', function (p) { return p.last_sign_in_at ? exactTime(p.last_sign_in_at) : ''; }],
     ['Last active', function (p) { return p.last_active_at ? exactTime(p.last_active_at) : ''; }],
     ['Status', function (p) { return (STATUS[p.status] || {}).label || p.status; }],
+    ['Plan', function (p) { return planInfo(p).label; }], ['Plan ends', function (p) { return p.subscription_expires_at ? fmtDate(p.subscription_expires_at) : ''; }],
     ['Staff (active)', 'active_staff'], ['Staff (total)', 'staff_count'], ['Drugs', 'drugs_count'],
     ['Sign-ins (30d)', 'sign_ins_30d'], ['Sales (30d)', 'sales_30d'], ['Sales value KES (30d)', 'sales_value_30d'], ['Sales (all time)', 'sales_count']
   ];
@@ -490,7 +527,7 @@ function drawDetail(d) {
     '<div class="card"><div class="ph-hero">' +
       '<div class="row-avatar lg ' + (AVATAR_CLS[st.cls] || '') + '">' + esc(initials(p.name)) + '</div>' +
       '<div class="body"><h1>' + esc(p.name) + '</h1>' +
-        '<div style="margin-bottom:6px">' + statusBadge(p.status) + '</div>' +
+        '<div style="margin-bottom:6px">' + planBadge(p) + ' ' + statusBadge(p.status) + '</div>' +
         '<div class="mt">Joined <b>' + esc(fmtDate(p.created_at)) + '</b> (' + esc(ago(p.created_at)) + ') · Last active <b>' + esc(p.last_active_at ? ago(p.last_active_at) : 'never') + '</b>' + (via ? ' — ' + esc(via) : '') + '</div>' +
         '<div class="mt">Owner: <b>' + esc(p.owner_name || '—') + '</b>' + (phone ? ' · ' + esc(phone) : '') + (p.town ? ' · ' + esc(p.town) : '') + '</div>' +
         (phone ? '<div class="ph-contact"><a class="btn secondary small" href="' + esc(telHref(phone)) + '">' + icon('phone', 15) + 'Call</a>' +
@@ -514,8 +551,6 @@ function drawDetail(d) {
   var chart =
     '<div class="card"><div class="card-head"><div><h2>Sales per day</h2><div class="sub">Last 30 days · hover a bar for the amount and that day\'s sign-ins</div></div></div>' +
     '<div class="chart-box" id="chartDetail" data-empty="No sales in the last 30 days"></div>' +
-    dataTable(d.daily, [['Day', function (x) { return fmtDate(x.day); }], ['Sales', function (x) { return x.sales; }],
-      ['Amount', function (x) { return kes(x.sales_value); }], ['Sign-ins', function (x) { return x.sign_ins; }]]) +
     '</div>';
 
   var history = d.sign_ins || [];
@@ -551,12 +586,202 @@ function drawDetail(d) {
     '</div>';
 
   $('#admin').innerHTML = shell(p.name,
-    '<a class="back-link" href="#/">' + icon('back') + 'All pharmacies</a>' + hero + tiles +
-    '<div class="adm-grid-2">' + chart + signins + '</div>' + staffHtml);
+    '<a class="back-link" href="#/">' + icon('back') + 'All pharmacies</a>' + hero + subscriptionCard(p) + '<div class="card" id="smsCard"><div class="empty-note">Loading SMS…</div></div>' + tiles +
+    '<div class="adm-grid-2">' + chart + signins + '</div>' + staffHtml + dangerCard(p));
+  wireSubscription(p);
+  loadAdminSms(p);
 
   barChart($('#chartDetail'), d.daily, 'sales', function (x) {
     return '<b>' + esc(fmtDate(x.day)) + '</b><br><span class="sw"></span>' + num(x.sales) + (x.sales === 1 ? ' sale' : ' sales') + ' · ' + kes(x.sales_value) +
       '<br>' + num(x.sign_ins) + (x.sign_ins === 1 ? ' sign-in' : ' sign-ins');
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Subscription: trial days, mark as paid, delete
+// ---------------------------------------------------------------------------
+function subscriptionCard(p) {
+  var pi = planInfo(p), paid = p.subscription_status === 'active';
+  var line = p.subscription_expires_at
+    ? (pi.ended ? 'Ended on ' : (paid ? 'Paid until ' : 'Trial ends on ')) + '<b>' + esc(fmtDate(p.subscription_expires_at)) + '</b>'
+    : 'No end date set';
+  return '<div class="card" id="subCard"><div class="card-head"><div><h2>Subscription</h2>' +
+    '<div class="sub">Every pharmacy starts with a 3-month free trial and becomes Active when you mark its first payment. When the end date passes, the pharmacy is locked out until you extend or activate it.</div></div>' +
+    planBadge(p) + '</div>' +
+    '<div class="sub-line">' + line + '</div>' +
+    '<div class="sub-grid">' +
+      '<div class="sub-box"><div class="sub-t">Add or remove days</div>' +
+        '<div class="field"><label for="trDays">Number of days</label><input id="trDays" type="number" min="1" step="1" inputmode="numeric" placeholder="e.g. 30"></div>' +
+        '<div class="sub-btns"><button class="btn primary small" id="trAdd">Add days</button>' +
+        '<button class="btn ghost small" id="trCut">Take away days</button>' +
+        '<button class="btn ghost small" id="trEnd">End now</button></div></div>' +
+      '<div class="sub-box"><div class="sub-t">' + (paid ? 'Renew payment' : 'Mark as paid (first payment)') + '</div>' +
+        '<div class="field"><label for="actDays">Paid for how many days</label><input id="actDays" type="number" min="1" step="1" inputmode="numeric" value="30"></div>' +
+        '<div class="sub-btns"><button class="btn primary small" id="actBtn">' + (paid ? 'Renew' : 'Activate') + '</button></div></div>' +
+    '</div></div>';
+}
+
+function dangerCard(p) {
+  var pi = planInfo(p);
+  return '<div class="card danger-zone"><div class="card-head"><div><h2>Delete this pharmacy</h2>' +
+    '<div class="sub">Permanently removes the pharmacy, its staff logins and all its drugs, sales and records. This cannot be undone. Only available after the trial or plan has ended.</div></div></div>' +
+    (pi.ended ? '' : '<div class="foot-note" style="border-top:0;margin-top:0;padding-top:0">This pharmacy still has time left. Use “End now” above first if you really want to delete it.</div>') +
+    '<button class="btn danger small" id="delBtn"' + (pi.ended ? '' : ' disabled') + '>Delete pharmacy…</button></div>';
+}
+
+// Re-read the pharmacy after a change so the badge, dates and tables update.
+async function reloadAfterChange(id) {
+  A.overview = null; delete A.detail[id];
+  await showDetail(id);
+}
+
+async function changeDays(p, sign) {
+  var n = parseInt($('#trDays').value, 10);
+  if (!(n > 0)) { toast('Enter the number of days first.', 'bad'); return; }
+  var r = await sb.rpc('admin_extend_trial', { p_pharmacy_id: p.id, p_days: sign * n });
+  if (r.error) throw r.error;
+  toast(sign > 0 ? 'Added ' + n + ' days.' : 'Took away ' + n + ' days.');
+  await reloadAfterChange(p.id);
+}
+
+function wireSubscription(p) {
+  var add = $('#trAdd'), cut = $('#trCut'), end = $('#trEnd'), actv = $('#actBtn'), del = $('#delBtn');
+  add.onclick = function () { act(add, function () { return changeDays(p, 1); }); };
+  cut.onclick = function () { act(cut, function () { return changeDays(p, -1); }); };
+  end.onclick = function () {
+    modal('End the plan now?',
+      '<p>' + esc(p.name) + ' will be locked out of the app straight away until you add days or mark it as paid.</p>' +
+      '<div class="adm-modal-actions"><button class="btn ghost small" onclick="closeModal()">Cancel</button><button class="btn danger small" id="endGo">End now</button></div>',
+      { onOpen: function (m) {
+        var go = $('#endGo', m);
+        go.onclick = function () {
+          act(go, async function () {
+            // Moves the end date to just before now, whatever is left.
+            var left = Math.max(Number(p.trial_days_left) || 0, 0);
+            var r = await sb.rpc('admin_extend_trial', { p_pharmacy_id: p.id, p_days: -(left + 1) });
+            if (r.error) throw r.error;
+            closeModal(); toast('Plan ended.');
+            await reloadAfterChange(p.id);
+          });
+        };
+      } });
+  };
+  actv.onclick = function () {
+    act(actv, async function () {
+      var n = parseInt($('#actDays').value, 10);
+      if (!(n > 0)) { toast('Enter how many days were paid for.', 'bad'); return; }
+      var r = await sb.rpc('admin_activate_pharmacy', { p_pharmacy_id: p.id, p_days: n });
+      if (r.error) throw r.error;
+      toast(p.name + ' is active for ' + n + ' days.');
+      await reloadAfterChange(p.id);
+    });
+  };
+  del.onclick = function () { startDelete(p); };
+}
+
+// SMS credit: balance, usage and a manual add / remove (a gift, or fixing a
+// payment made outside M-Pesa). Read-only numbers come from admin_sms_wallet.
+async function loadAdminSms(p) {
+  var card = $('#smsCard');
+  var r;
+  try { r = await sb.rpc('admin_sms_wallet', { p_pharmacy_id: p.id }); } catch (e) { r = { error: e }; }
+  card = $('#smsCard');
+  if (!card) return;
+  if (r.error) { card.innerHTML = '<div class="empty-note">' + esc(friendlyError(r.error)) + '</div>'; return; }
+  var w = r.data;
+  card.innerHTML =
+    '<div class="card-head"><div><h2>SMS credit</h2><div class="sub">Bought by the pharmacy with M-Pesa. Each SMS costs ' + kes(w.price_per_sms) + '.</div></div></div>' +
+    '<div class="sub-line"><b>' + kes(w.balance) + '</b> left · ' + pl(w.sent_30d, 'SMS') + ' sent in 30 days · ' + pl(w.sent_all, 'SMS') + ' sent in total · ' + kes(w.bought_all) + ' bought in total</div>' +
+    '<div class="sub-grid"><div class="sub-box"><div class="sub-t">Add or remove credit</div>' +
+      '<div class="field"><label for="smsAmt">Amount in KES (use a minus to remove)</label><input id="smsAmt" type="number" step="1" inputmode="numeric" placeholder="e.g. 200"></div>' +
+      '<div class="field"><label for="smsNote">Note</label><input id="smsNote" type="text" maxlength="80" placeholder="e.g. Free credit"></div>' +
+      '<div class="sub-btns"><button class="btn primary small" id="smsAdj">Save</button></div></div>' +
+    '<div class="sub-box"><div class="sub-t">Latest activity</div>' +
+      (w.recent.length ? w.recent.map(function (t) {
+        return '<div class="mt">' + esc(fmtDate(t.created_at)) + ' · ' + esc(t.description || t.kind) + ' · <b>' + (Number(t.amount) > 0 ? '+' : '') + kes(t.amount).replace('KES -', '−KES ') + '</b></div>';
+      }).join('') : '<div class="mt">Nothing yet.</div>') +
+    '</div></div>';
+  var btn = $('#smsAdj');
+  btn.onclick = function () {
+    act(btn, async function () {
+      var n = Number($('#smsAmt').value);
+      if (!n) { toast('Enter an amount first.', 'bad'); return; }
+      var res = await sb.rpc('admin_adjust_sms_credit', { p_pharmacy_id: p.id, p_amount: n, p_note: $('#smsNote').value });
+      if (res.error) throw res.error;
+      toast('SMS credit is now ' + kes(res.data.balance) + '.');
+      await loadAdminSms(p);
+    });
+  };
+}
+
+// Two steps, same as Kodi: first your password again, then the exact name.
+function startDelete(p) {
+  modal('Delete ' + p.name + '?',
+    '<p>Step 1 of 2 — confirm it is you. Enter your admin password.</p>' +
+    '<div class="field"><label for="delPw">Your password</label>' + pwField('delPw', 'current-password') + '</div>' +
+    '<div id="delErr" class="err" style="display:none"></div>' +
+    '<div class="adm-modal-actions"><button class="btn ghost small" onclick="closeModal()">Cancel</button><button class="btn primary small" id="delNext">Continue</button></div>',
+    { onOpen: function (m) {
+      wirePwEyes(m);
+      var pw = $('#delPw', m), next = $('#delNext', m), err = $('#delErr', m);
+      pw.focus();
+      function go() {
+        if (!pw.value) { err.textContent = 'Enter your password.'; err.style.display = 'block'; return; }
+        act(next, async function () {
+          err.style.display = 'none';
+          var u = await sb.auth.getUser();
+          var email = u.data && u.data.user && u.data.user.email;
+          if (!email) throw new Error('Your session has ended. Please log in again.');
+          var r = await sb.auth.signInWithPassword({ email: email, password: pw.value });
+          if (r.error) { err.textContent = 'That password is not correct.'; err.style.display = 'block'; return; }
+          confirmDelete(p);
+        });
+      }
+      next.onclick = go;
+      pw.addEventListener('keydown', function (e) { if (e.key === 'Enter') go(); });
+    } });
+}
+
+function confirmDelete(p) {
+  modal('Delete ' + p.name + '?',
+    '<p>Step 2 of 2 — type the pharmacy name exactly to delete it for good: <b>' + esc(p.name) + '</b></p>' +
+    '<div class="field"><input id="delName" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Pharmacy name"></div>' +
+    '<div class="adm-modal-actions"><button class="btn ghost small" onclick="closeModal()">Cancel</button><button class="btn danger small" id="delGo" disabled>Delete for good</button></div>',
+    { onOpen: function (m) {
+      var inp = $('#delName', m), go = $('#delGo', m);
+      inp.focus();
+      inp.addEventListener('input', function () { go.disabled = inp.value.trim() !== p.name; });
+      go.onclick = function () {
+        act(go, async function () {
+          var r = await sb.rpc('admin_delete_pharmacy', { p_pharmacy_id: p.id, p_confirm_name: inp.value.trim() });
+          if (r.error) throw r.error;
+          closeModal();
+          A.overview = null; A.detail = {};
+          toast(p.name + ' was deleted.');
+          location.hash = '#/';
+          route();
+        });
+      };
+    } });
+}
+
+// Password field with a show/hide eye, same markup as the main app.
+function pwField(id, autocomplete) {
+  return '<div class="pw-wrap"><input id="' + id + '" type="password" autocomplete="' + autocomplete + '">' +
+    '<button type="button" class="pw-eye" aria-label="Show password" aria-pressed="false">' + EYE_ON + '</button></div>';
+}
+var EYE_ON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>';
+var EYE_OFF = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18"/><path d="M10.6 5.1A10.6 10.6 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4.2M6.5 6.6A16.6 16.6 0 0 0 2 12s3.6 7 10 7c1.7 0 3.2-.4 4.5-1"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>';
+function wirePwEyes(root) {
+  (root || document).querySelectorAll('.pw-eye').forEach(function (b) {
+    b.onclick = function () {
+      var inp = b.parentNode.querySelector('input');
+      var show = inp.type === 'password';
+      inp.type = show ? 'text' : 'password';
+      b.innerHTML = show ? EYE_OFF : EYE_ON;
+      b.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+      b.setAttribute('aria-pressed', show ? 'true' : 'false');
+    };
   });
 }
 
@@ -639,13 +864,5 @@ window.addEventListener('resize', function () {
   clearTimeout(resizeT);
   resizeT = setTimeout(function () { CHARTS.forEach(function (c) { if (document.body.contains(c.el)) drawBarChart(c.el, c.rows, c.key, c.tipFn); }); }, 150);
 });
-
-function dataTable(rows, cols) {
-  return '<details class="data-table"><summary>Show as a table</summary><div class="table-scroll"><table class="adm-table"><thead><tr>' +
-    cols.map(function (c, i) { return '<th' + (i ? ' class="num"' : '') + '>' + esc(c[0]) + '</th>'; }).join('') + '</tr></thead><tbody>' +
-    (rows || []).slice().reverse().map(function (r) {
-      return '<tr>' + cols.map(function (c, i) { return '<td' + (i ? ' class="num"' : '') + '>' + esc(c[1](r)) + '</td>'; }).join('') + '</tr>';
-    }).join('') + '</tbody></table></div></details>';
-}
 
 init();

@@ -128,12 +128,30 @@ var ICONS = {
   wallet: '<path d="M3 7a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v1H5a2 2 0 0 0-2 2Z"/><path d="M3 8v10a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2H5a2 2 0 0 1-2-2Z"/><circle cx="16" cy="14.5" r="1.4"/>',
   people: '<circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17" cy="9" r="2.4"/><path d="M16.5 14.2c2.6.2 4.5 2.4 4.5 5.3"/>',
   // Item 33 (mobile dashboard redesign): the date-range calendar-picker button.
-  calendar: '<rect x="3.5" y="5" width="17" height="15" rx="2"/><line x1="3.5" y1="9.5" x2="20.5" y2="9.5"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/>'
+  calendar: '<rect x="3.5" y="5" width="17" height="15" rx="2"/><line x1="3.5" y1="9.5" x2="20.5" y2="9.5"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/>',
+  eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>',
+  eyeOff: '<path d="M3 3l18 18"/><path d="M10.6 5.1A10.6 10.6 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4.2M6.5 6.6A16.6 16.6 0 0 0 2 12s3.6 7 10 7c1.7 0 3.2-.4 4.5-1"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>'
 };
 function icon(name, size) {
   var s = size || 18;
   return '<svg class="ic-svg" width="' + s + '" height="' + s + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + (ICONS[name] || '') + '</svg>';
 }
+// A password box with a show/hide eye. One click handler on the document
+// covers every box, including ones drawn later.
+function pwField(id, placeholder) {
+  return '<div class="pw-wrap"><input id="' + id + '" type="password" placeholder="' + placeholder + '">' +
+    '<button type="button" class="pw-eye" aria-label="Show password" aria-pressed="false">' + icon('eye', 20) + '</button></div>';
+}
+document.addEventListener('click', function (e) {
+  var b = e.target.closest && e.target.closest('.pw-eye');
+  if (!b) return;
+  var inp = b.parentNode.querySelector('input');
+  var show = inp.type === 'password';
+  inp.type = show ? 'text' : 'password';
+  b.innerHTML = icon(show ? 'eyeOff' : 'eye', 20);
+  b.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+  b.setAttribute('aria-pressed', show ? 'true' : 'false');
+});
 // The brand mark used on the auth screen, topbar and loading screen — a
 // rounded badge in brand green with the "P" letterform, matching the app's
 // icon set (icons/icon-*.png) instead of plain unstyled text.
