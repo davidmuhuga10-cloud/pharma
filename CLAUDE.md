@@ -24,9 +24,16 @@ node tests/native-shell.test.js       # print and back button inside the app
 node tests/critical-css.test.js       # loading screen styles match everywhere
 node tests/js-split.test.js           # js/ files in order, cached offline, init() once
 node tests/valuation-row.test.js      # stock valuation row wording
-node tests/sidebar.test.js            # desktop sidebar lists every module; phone bar unchanged
+node tests/sidebar.test.js            # desktop docked menu; phone bar unchanged
 node tests/auth-desktop.test.js       # desktop sign-in matches the phone's
 node --experimental-strip-types tests/send-sms.test.js   # SMS sender logic
 cd tests && npm install && node run_tests.js   # SQL tests; needs a local throwaway Postgres (see tests/README.md)
 for f in js/*.js; do node --check $f; done   # syntax check
 ```
+
+## Never overwrite a file from a stale copy (rule added 31 Oct 2026, after an incident)
+- **What happened:** on 30 Oct a whole `style.css` (plus `js/shell.js`, the changelog and the status file) was saved from a working copy that had been fetched hours earlier. Another session had changed those files in between, so the save silently deleted its work: the desktop sign-in styles, the stock valuation rows and several notes. The desktop sign-in showed an empty green panel until it was recovered from Git.
+- **Rule 1:** before changing any file, fetch it again from the project folder on the computer, right then. Never edit from an earlier copy, a mirror or memory of what the file said.
+- **Rule 2:** before saving, compare the file with the last Git version (`git diff` or `git show HEAD:<file>`). Every changed line must be one that was meant. If other lines changed, stop and find out why.
+- **Rule 3:** prefer small edits (a few lines) over saving a whole file. Save a whole file only if it was fetched in the same step.
+- **Rule 4:** after saving, look at the screen it affects (sign-in, menu, phone and desktop widths) before saying it is done, and say what was NOT checked.
