@@ -327,20 +327,6 @@ h2 { font-size: 16px; }
 .auth-brand { position: relative; padding: calc(40px + env(safe-area-inset-top, 0px)) 24px 8px; text-align: center; color: #fff; }
 .auth-brand-top { position: relative; z-index: 1; }
 .auth-brand .brand-badge { margin: 0 auto 16px; background: #fff; color: var(--green); box-shadow: none; }
-/* Headline and tag share the same fixed max-width, centered as a block with
-   margin:auto, so the browser wraps and centers both exactly the same way —
-   the headline no longer drifts off-center relative to the tag beneath it
-   the way independently-centered full-width lines could. */
-.auth-brand-headline {
-  font-size: 22px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.25;
-  margin: 0 auto 8px; max-width: 250px; text-align: center;
-}
-.auth-brand-tag { font-size: 13.5px; opacity: 0.88; max-width: 260px; margin: 0 auto; line-height: 1.5; }
-/* Dashed rule + floating stat cards: desktop-only (see the 900px query
-   below) — collapsed out of the flow on mobile, where there's no room for
-   them. */
-.auth-brand-line { display: none; }
-.auth-stat-stack { display: none; }
 .auth-form-col { flex: 1; display: flex; align-items: center; justify-content: center; padding: 8px 20px 0; }
 .auth-card { width: 100%; max-width: 380px; }
 /* The sign-in card itself: a soft tint instead of plain white, per direct
@@ -453,56 +439,6 @@ h2 { font-size: 16px; }
      capping unnecessarily narrow. */
   .content { margin-left: var(--sidebar-w); margin-right: 0; width: calc(100% - var(--sidebar-w)); max-width: 1200px; padding: 24px 32px 60px; }
   .kpi-grid { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
-
-  /* The auth screen becomes a real two-column layout instead of a small
-     card adrift in empty space — a brand panel that fills its full column,
-     with a dashed top/bottom rule and three floating, staggered stat cards
-     (the room a phone screen doesn't have) instead of the mobile trust line. */
-  .auth-wrap { flex-direction: row; min-height: 100vh; padding-bottom: 0; }
-  /* Desktop is a genuine two-color split (green left / paper right), not one
-     continuous screen, so the shared mobile background layer is turned off
-     and auth-brand goes back to painting its own green — same gradient,
-     sized to its own column instead of the full viewport. */
-  .auth-bg-fill { display: none; }
-  /* flex:1 on BOTH auth-brand and auth-form-col — an even 50/50 split, same
-     as the approved sketch (its desktop mockup was flex:1/flex:1 too). The
-     green panel had been left at the OLD pre-redesign 42-44%/capped-560px
-     split, which made the beige form side visibly wider than the green
-     side — the reverse of the sketch, where green was the bigger/equal
-     rectangle, not the smaller one. */
-  /* Centered (not left-aligned like Kodi's own desktop panel) and anchored
-     near the top instead of vertically centered — direct feedback: the
-     badge/headline/tag were sitting left-aligned with a big empty gap above
-     the badge from centering them in the full column height. */
-  .auth-brand {
-    flex: 1; display: flex; flex-direction: column; align-items: center;
-    justify-content: flex-start; padding: 40px 56px; text-align: center;
-    background: linear-gradient(160deg, #17945C 0%, var(--green) 55%, var(--green-dark) 100%);
-  }
-  .auth-brand-top { width: 100%; }
-  .auth-brand .brand-badge { margin: 0 auto 20px; }
-  .auth-brand-headline { text-align: center; margin: 0 auto 10px; max-width: 340px; font-size: 30px; }
-  .auth-brand-tag { text-align: center; margin: 0 auto; max-width: 340px; font-size: 15px; }
-  .auth-brand-line {
-    display: block; width: 100%; height: 4px;
-    background: repeating-linear-gradient(to right, rgba(255,255,255,0.5) 0 24px, transparent 24px 36px);
-    margin: 28px 0;
-  }
-  .auth-stat-stack { display: block; position: relative; width: 100%; max-width: 400px; height: 280px; margin-top: 6px; }
-  .auth-stat-card {
-    position: absolute; width: 88%; max-width: 330px; border-radius: 15px;
-    padding: 13px 26px; box-shadow: 0 12px 28px rgba(0,0,0,0.22); color: #fff;
-  }
-  .auth-stat-card.s1 { background: var(--green-dark); top: 0; left: 14px; transform: rotate(-5deg); z-index: 3; }
-  .auth-stat-card.s2 { background: #1E4E7A; top: 100px; left: 66px; transform: rotate(3.5deg); z-index: 2; }
-  .auth-stat-card.s3 { background: #7A3A6B; top: 200px; left: 28px; transform: rotate(-2.5deg); z-index: 1; }
-  .auth-stat-lab { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.75; }
-  .auth-stat-val { font-size: 22px; font-weight: 800; margin-top: 2px; letter-spacing: -0.01em; }
-  .auth-stat-sub { font-size: 11px; margin-top: 2px; opacity: 0.8; }
-  .auth-form-col { flex: 1; padding: 40px; }
-  .auth-card { max-width: 400px; }
-  .auth-toggle { color: var(--ink-soft); }
-  .auth-toggle a { color: var(--green); text-decoration: none; }
 }
 
 /* ---------------------------------------------------------------------- */
@@ -945,7 +881,6 @@ body.nav-open .navdrawer { transform: none; }
 .auth-forgot a { color: var(--green); font-weight: 600; }
 
 @media (max-width: 859px) {
-  .auth-desk-top { display: none; }
   .auth-hero { display: block; }
   /* "Daylight" background: cream paper, a curved green header that holds the logo,
      and a gold heartbeat line across its top. A second heartbeat line runs along
@@ -1245,4 +1180,111 @@ html,body{margin:0}
 .sheet {
   border-radius: 20px; border: 1.5px solid var(--green); box-shadow: var(--shadow-lg);
   max-height: 100%; min-height: 0;
+}
+
+/* Stock Valuation: each drug is a name + value line and a quantity / cost / price line that
+   stays on ONE line (it takes the whole row width and shrinks a little on narrow phones). */
+.val-row { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.val-row:last-child { border-bottom: none; }
+.val-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.val-top .name { font-weight: 600; min-width: 0; }
+.val-top .right { white-space: nowrap; }
+.val-meta {
+  margin-top: 3px; font-size: clamp(10px, 3.1vw, 12px); color: var(--ink-soft);
+  white-space: nowrap; overflow-x: auto; scrollbar-width: none;
+}
+.val-meta::-webkit-scrollbar { display: none; }
+
+/* ---------------------------------------------------------------------- */
+/* AUTH, desktop (860px and up) — the same "dispensing label" sign-in as   */
+/* the phone, as a split screen: green hero on the left (cross mark,       */
+/* "Pharma", "Know your stock", four glass feature chips, gold heartbeat   */
+/* line), the cream label card on the right with the two links under it.   */
+/* Applies to every sign-in step (log in, sign up, staff, reset).          */
+/* ---------------------------------------------------------------------- */
+@media (min-width: 860px) {
+  .auth-wrap { flex-direction: row; min-height: 100vh; min-height: 100dvh; padding-bottom: 0; background: var(--paper); }
+  .auth-bg-fill { display: none; }
+  .auth-brand {
+    flex: 0 0 47%; box-sizing: border-box; position: relative; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; padding: 40px 48px; text-align: center; overflow: hidden;
+    background: radial-gradient(circle at 18% 0%, #1C7A52 0%, transparent 55%), linear-gradient(180deg, #0F5132 0%, #09291B 100%);
+  }
+  .auth-brand::before {
+    content: ''; position: absolute; left: 0; right: 0; top: 34px; height: 60px; pointer-events: none;
+    background: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20390%2060'%20preserveAspectRatio='none'%3E%3Cpath%20d='M0%2034%20H120%20L134%2034%20L142%2012%20L154%2052%20L164%2022%20L172%2034%20H250%20L262%2034%20L270%2018%20L280%2046%20L288%2034%20H390'%20fill='none'%20stroke='%23E7C76A'%20stroke-opacity='0.7'%20stroke-width='2'%20stroke-linecap='round'%20stroke-linejoin='round'%20vector-effect='non-scaling-stroke'/%3E%3C/svg%3E") 0 0 / 100% 60px no-repeat;
+  }
+  .auth-brand-top { width: 100%; position: relative; z-index: 1; }
+  .auth-hero { display: block; }
+  .auth-hero-mark {
+    width: 112px; height: 112px; margin: 0 auto 18px; border-radius: 32px; display: grid; place-items: center;
+    background: linear-gradient(160deg, #D7332B, #A61E17);
+    box-shadow: 0 0 0 5px #fff, 0 16px 34px rgba(0,0,0,0.4);
+  }
+  .auth-hero-mark svg { width: 68px; height: 68px; display: block; }
+  .auth-hero-word { margin: 0; font-size: 64px; font-weight: 900; letter-spacing: -0.045em; line-height: 1; color: #fff; }
+  .auth-hero-tag { margin: 12px 0 0; font-size: 14px; font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase; color: #E7C76A; }
+  .auth-feats { display: grid; grid-template-columns: repeat(2, max-content); justify-content: center; gap: 22px 56px; margin: 38px 0 0; }
+  .auth-feat { display: flex; align-items: center; gap: 14px; width: auto; text-align: left; font-size: 16px; font-weight: 700; line-height: 1.2; color: #fff; }
+  .auth-feat i {
+    display: grid; place-items: center; flex: none; width: 56px; height: 56px; margin: 0; border-radius: 16px;
+    font-style: normal; font-size: 26px; line-height: 1; border: 1px solid rgba(255,255,255,0.35);
+    background: linear-gradient(160deg, rgba(255,255,255,0.34), rgba(255,255,255,0.05));
+    box-shadow: 0 5px 10px rgba(0,0,0,0.4), inset 0 1px rgba(255,255,255,0.5), inset 0 -2px 4px rgba(0,0,0,0.3);
+  }
+
+  .auth-form-col {
+    flex: 1; min-width: 0; position: relative; display: flex; align-items: center; justify-content: center;
+    padding: 40px 40px 100px; background: var(--paper);
+  }
+  .auth-form-col::after {
+    content: ''; position: absolute; left: 0; right: 0; bottom: 26px; height: 56px; pointer-events: none;
+    background: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20390%2060'%20preserveAspectRatio='none'%3E%3Cpath%20d='M0%2030%20H96%20L108%2030%20L116%2016%20L126%2048%20L136%2024%20L144%2030%20H238%20L250%2030%20L258%208%20L270%2052%20L278%2030%20H390'%20fill='none'%20stroke='%230F5132'%20stroke-opacity='0.55'%20stroke-width='2'%20stroke-linecap='round'%20stroke-linejoin='round'%20vector-effect='non-scaling-stroke'/%3E%3C/svg%3E") 0 0 / 100% 56px no-repeat;
+  }
+  .auth-card { width: 440px; max-width: 100%; margin: 0; display: flex; flex-direction: column; position: relative; z-index: 1; }
+  #authBody { display: contents; }
+
+  #authBody > .card {
+    order: 2; position: relative; margin: 0; background: #FBF7EC; border: 0; border-radius: 6px;
+    padding: 28px 38px 20px; box-shadow: 0 14px 34px -12px rgba(32,30,27,0.4), 0 2px 6px rgba(32,30,27,0.08);
+    display: flex; flex-direction: column;
+  }
+  #authBody > .card::before, #authBody > .card::after {
+    content: ''; position: absolute; top: 16px; bottom: 16px; width: 2px;
+    background: repeating-linear-gradient(to bottom, #B9AE93 0 4px, transparent 4px 9px);
+  }
+  #authBody > .card::before { left: 12px; }
+  #authBody > .card::after { right: 12px; }
+  .auth-title { display: block; margin: 0 0 18px; font-size: 24px; font-weight: 800; color: #201E1B; letter-spacing: -0.015em; }
+  #authBody .field { margin-bottom: 16px; }
+  #authBody .field label {
+    font: 700 11px/1.2 ui-monospace, "SF Mono", Menlo, Consolas, monospace; letter-spacing: 0.12em;
+    text-transform: uppercase; color: #201E1B; margin-bottom: 6px;
+  }
+  #authBody .field input { padding: 11px 14px; font-size: 17px; border: 1.5px solid #D6CEB9; border-radius: 6px; background: #fff; color: #201E1B; }
+  #authBody .field input:focus { border-color: #0F5132; box-shadow: inset 0 0 0 1px #0F5132; }
+  #authBody .tiny { color: #201E1B; }
+  #authBody .field input::placeholder { color: var(--green-dark); opacity: 0.6; }
+  #authBody .btn.primary {
+    order: 2; height: 52px; border-radius: 6px; padding: 0 12px; color: #241A03;
+    background: linear-gradient(180deg, #D8AE3A, #B8860B); box-shadow: 0 6px 14px rgba(184,134,11,0.35);
+    font-size: 15px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase;
+  }
+  #authBody .auth-forgot { order: 1; text-align: right; margin: -2px 0 14px; }
+  #authBody .auth-forgot a { color: #7A5605; font-size: 14px; font-weight: 800; text-decoration: underline; text-underline-offset: 3px; }
+  #authBody .btn.primary + .tiny { margin-top: 0; }
+  .auth-lfoot {
+    display: flex; order: 3; justify-content: space-between; margin-top: 14px;
+    font: 600 10px/1.2 ui-monospace, "SF Mono", Menlo, Consolas, monospace; letter-spacing: 0.1em;
+    text-transform: uppercase; color: #201E1B;
+  }
+  .auth-toggle { order: 4; display: grid; gap: 12px; margin-top: 14px; }
+  .auth-toggle a {
+    display: block; padding: 13px; border-radius: 3px; text-align: center; font-size: 15px; font-weight: 600;
+    color: #201E1B; background: rgba(255,255,255,0.55); border: 1.5px solid var(--green); text-decoration: none;
+  }
+  .auth-toggle a:hover { background: #fff; }
+  .auth-toggle a b { color: var(--green); font-weight: 800; }
+  .auth-pre { display: inline; }
+  .auth-sep { display: none; }
 }

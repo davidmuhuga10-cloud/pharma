@@ -23,7 +23,7 @@ Live site: https://pharmacymngt.netlify.app
 ## Screens
 
 - **Phone (under 860px):** top bar with a hamburger that opens the left drawer; bottom bar with Home, Inventory, Sell, Expenses, Reports.
-- **Desktop (860px and up):** scrolling left sidebar listing every module the role may use (same list as the phone menu); split sign-in screen.
+- **Desktop (860px and up):** the phone menu docked open down the left (logo, pharmacy name, grouped rows, like Kodi); split sign-in screen.
 - **Customers:** credit (kopa) balances and statements, refills, SMS reminders. **Stock take** and **Controlled drugs** are reached from Inventory (and the phone menu).
 - **Plans:** every pharmacy starts a 90-day free trial; the admin marks the first payment and can add or take away days. When the plan ends the pharmacy is locked out until the admin extends or activates it.
 - **Sign-in:** phone + password log-in (every password box has a show/hide eye); new pharmacies create an account; staff with an invite code use "Have a code? Staff login". The app shows the view for the person's role.
