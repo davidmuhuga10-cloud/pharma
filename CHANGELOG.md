@@ -2,6 +2,12 @@
 
 Newest first. The detailed story for each item is in `PHARMA_PROJECT_STATUS.md`.
 
+## 2026-10-31 (later): fixed "Install Pharma app" bar on the sign-in pages
+
+- **Fixed bar:** a slim bar with a red line under it stays at the top of the sign-in, create-account and staff-login pages on phones and tablets: "Install Pharma app [Install]". It stays after "Not now" (that only hides the popup, for 3 days) and goes away once Pharma is installed. Tapping it installs in one tap on Android Chrome; on iPhone it shows the Share steps; where the browser has not offered install yet it shows the menu steps; inside WhatsApp or Facebook it offers Open in Chrome.
+- **Install progress:** after you accept the browser's install box, the card says "Installing… keep this page open" and the bar says "Installing…", so it no longer looks stuck and repeat taps are ignored. If nothing finishes within 30 seconds, the card closes and the bar goes back to "Install" so one more tap tries again. When the phone reports the install finished, the card says "Pharma is installed".
+- Changed `install.js`; `sw.js` cache is now `hodhi-shell-v2x`; `tests/install.test.js` checks the bar, the progress state and that the 3-day and phones-only rules are still there. Checked in a headless browser with Android, iPhone, WhatsApp, Firefox, desktop and installed-app user agents. Not testable here: the real install box and a real stalled install.
+
 ## 2026-10-31: security headers, and developer files no longer downloadable
 
 - **Security headers (new `_headers`):** other sites can no longer put Pharma inside their own page (clickjacking), the page may only talk to itself and your Supabase project, and the browser must trust the file types it is told. Checked in a headless browser: the sign-in page loads with no blocked items, and framing is refused.
