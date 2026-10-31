@@ -2,6 +2,12 @@
 
 Newest first. The detailed story for each item is in `PHARMA_PROJECT_STATUS.md`.
 
+## 2026-10-31: security headers, and developer files no longer downloadable
+
+- **Security headers (new `_headers`):** other sites can no longer put Pharma inside their own page (clickjacking), the page may only talk to itself and your Supabase project, and the browser must trust the file types it is told. Checked in a headless browser: the sign-in page loads with no blocked items, and framing is refused.
+- **Developer files hidden (new `_redirects`):** the site is published from the whole project folder, so `schema.sql`, `migrations/`, `supabase/`, `tests/`, `android/`, `CLAUDE.md` and similar could be downloaded by anyone. They now answer "not found". The app does not use any of them.
+- Live database re-checked on 31 Oct: all 34 tables have row locking, every function that takes a pharmacy is guarded, and anonymous visitors can run no useful function. Still to do in the Supabase dashboard: turn OFF "Allow new users to sign up" (now that sign-up goes through the code check) and turn ON leaked-password protection.
+
 ## 2026-10-30: "Install Pharma" popup, and the installed website matches the Android app
 
 - **Install popup:** a small card with a red border shows as soon as the site opens in a browser that can install it: **Install app** and **Not now** (hidden for 3 days). Phones and tablets only (nothing on a computer). Android installs in one tap, with no "unknown sources" warning. iPhone shows the two steps (Share, then Add to Home Screen). Inside WhatsApp, Facebook, Instagram and TikTok on Android it offers **Open in Chrome**; on iPhone it says to open the link in Safari. It never shows inside the installed app or the Android app. New file `install.js`; test `tests/install.test.js`.

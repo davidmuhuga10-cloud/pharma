@@ -1,0 +1,19 @@
+# The site is published straight from the project folder, so these developer
+# files would otherwise be downloadable by anyone. "404!" forces a "not found"
+# even though the file exists. None of them is used by the app.
+/schema.sql                  /404  404!
+/supabase_admin_portal.sql   /404  404!
+/migrations/*                /404  404!
+/supabase/*                  /404  404!
+/tests/*                     /404  404!
+/android/*                   /404  404!
+/netlify/*                   /404  404!
+/node_modules/*              /404  404!
+/CLAUDE.md                   /404  404!
+/README.md                   /404  404!
+/CHANGELOG.md                /404  404!
+/PHARMA_PROJECT_STATUS.md    /404  404!
+/package.json                /404  404!
+/package-lock.json           /404  404!
+/capacitor.config.json       /404  404!
+/netlify.toml                /404  404!
