@@ -2,6 +2,12 @@
 
 Newest first. The detailed story for each item is in `PHARMA_PROJECT_STATUS.md`.
 
+## 2026-10-31 (morning): no browser pop-ups, and an open app updates itself
+
+- **Reported:** a pharmacy phone showed the browser's own box "pharmacymngt.netlify.app says: Label for this held sale (optional)…". That box was replaced on 29 Oct by an in-app pop-up ("Hold this sale"); the phone was still running an old copy of the app that had stayed open and never reloaded. The live site has no browser pop-up anywhere.
+- **Fixed for good:** the app now reloads itself when a new version has been downloaded, at a safe moment only (cart empty, no pop-up or sheet open, nobody typing), and checks for a new version each time you return to the app. New test `tests/no-native-dialogs.test.js` (added to `npm test`) fails if any file ever uses `alert()`, `confirm()` or `prompt()`.
+- **On a phone still showing the old box:** close Pharma completely (swipe it away from recent apps) and open it again, once.
+
 ## 2026-10-31 (night): desktop sign-in left panel restored
 
 - **Fixed:** on a computer the sign-in's green left panel was empty. When the desktop menu was saved, an older copy of `style.css` replaced a newer one and wiped the "AUTH, desktop" styles. They are back (split screen: green hero with the cross mark, "Pharma", "Know your stock", four glass chips on the left; label card on the right).

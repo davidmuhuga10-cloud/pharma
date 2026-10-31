@@ -6,7 +6,7 @@
   "scripts": {
     "android:sync": "cap sync android",
     "android:open": "cap open android",
-    "test": "node tests/banned-colours.test.js && node tests/android-shell.test.js && node tests/native-shell.test.js && node tests/critical-css.test.js && node tests/js-split.test.js && node tests/valuation-row.test.js && node tests/sidebar.test.js && node tests/auth-desktop.test.js && node --experimental-strip-types --no-warnings tests/send-sms.test.js"
+    "test": "node tests/banned-colours.test.js && node tests/android-shell.test.js && node tests/native-shell.test.js && node tests/critical-css.test.js && node tests/js-split.test.js && node tests/valuation-row.test.js && node tests/sidebar.test.js && node tests/auth-desktop.test.js && node tests/no-native-dialogs.test.js && node --experimental-strip-types --no-warnings tests/send-sms.test.js"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.2",
