@@ -1,14 +1,22 @@
 /*
  * install.js - the "Install Pharma" bar and popup.
  *
- * Two pieces, both for phones and tablets only (nothing is shown on a computer):
+ * Two pieces:
  *
  *  1. A slim bar fixed to the top of the sign-in pages: "Install Pharma app  [Install]".
  *     It stays until Pharma is installed, even after "Not now". Tapping it installs.
+ *     Phones, tablets and computers.
  *  2. A popup card shown as soon as the browser says the site can be installed.
- *     "Not now" hides the popup for 3 days (the bar stays).
+ *     Phones and tablets only (on a computer only the bar is shown, so nothing
+ *     covers the sign-in fields). "Not now" hides the popup for 3 days (the bar stays).
  *
- * What a tap does:
+ * On a computer (Chrome, Edge, Brave, Opera, and Safari 17+ on a Mac) the bar appears
+ * once the browser says Pharma can be installed, so it is never offered when it is
+ * already installed. Tapping it runs the browser's install box; progress and the
+ * result are shown in the bar itself. Firefox on a computer cannot install apps, so
+ * nothing is shown there.
+ *
+ * What a tap does on a phone or tablet:
  *  - Android Chrome, Edge, Samsung Internet, Opera: the browser's own install
  *    prompt (beforeinstallprompt). After you accept, the card says "Installing"
  *    and waits for the browser to finish. If nothing has finished after 30
@@ -56,8 +64,14 @@
               (isAndroid && /; wv\)/.test(ua));
   // iOS: only Safari-engine browsers can "Add to Home Screen"; in-app ones cannot.
   var iosSafariLike = isIOS && !inApp;
-  // Phones and tablets only. On a computer people just use the website, so nothing is shown.
-  if (!isIOS && !isAndroid) return;
+  // Computers: Chromium browsers (Chrome, Edge, Brave, Opera) can install; so can Safari 17+ on a Mac
+  // (File > Add to Dock). Firefox and older Safari cannot, so they get nothing.
+  var isDesktop = !isIOS && !isAndroid;
+  var safariMac = isDesktop && /Macintosh/.test(ua) && /Safari\//.test(ua) &&
+                  !/Chrome|Chromium|Edg\/|OPR\/|Firefox|FxiOS/.test(ua) &&
+                  parseInt((/Version\/(\d+)/.exec(ua) || [0, 0])[1], 10) >= 17;
+  var chromiumDesktop = isDesktop && /Chrome\//.test(ua);
+  if (isDesktop && !chromiumDesktop && !safariMac) return;
 
   // ---- Remembered choices (storage can be blocked, so always guarded). ----
   function recentlyDismissed() {
@@ -83,6 +97,8 @@
   var installed = readInstalledFlag();    // finished earlier on this phone
   var popupAllowed = !recentlyDismissed();
   var slowTimer = null, doneTimer = null, styled = false;
+  var offered = false;                    // computer: the browser has said Pharma can be installed
+  var msgText = '', msgUntil = 0, doneUntil = 0;   // short messages shown inside the bar (computers)
 
   // ---- Look ----
   function addStyle() {
@@ -111,7 +127,8 @@
       '#pxBar img{width:26px;height:26px;border-radius:7px;flex:none}' +
       '#pxBarTxt{flex:1;font-size:14px;font-weight:700;line-height:1.2;min-width:0}' +
       '#pxBarBtn{flex:none;border:0;border-radius:8px;background:#0F5132;color:#fff;font:inherit;font-size:13px;font-weight:700;padding:7px 16px;cursor:pointer}' +
-      '#pxBarBtn:active{opacity:.85}';
+      '#pxBarBtn:active{opacity:.85}' +
+      'html.pxPush .auth-wrap{margin-top:44px;min-height:calc(100vh - 44px);min-height:calc(100dvh - 44px)}';
     document.head.appendChild(s);
   }
 
@@ -188,12 +205,22 @@
   // ---- The bar on the sign-in pages ----
   function onAuthScreen() { return !!document.querySelector('.auth-wrap'); }
 
+  function barVisible() {
+    if (!document.body || !onAuthScreen()) return false;
+    if (doneUntil > Date.now()) return true;
+    if (installed) return false;
+    if (isDesktop) return offered || safariMac;   // computers: only when the browser can install it now
+    return true;
+  }
+
+  function showBarMsg(text, ms) { msgText = text; msgUntil = Date.now() + ms; updateBar(); }
+
   function updateBar() {
-    var want = !installed && document.body && onAuthScreen();
-    if (!want) {
+    if (!barVisible()) {
       if (bar && bar.parentNode) bar.parentNode.removeChild(bar);
-      bar = null; return;
+      bar = null; document.documentElement.classList.remove('pxPush'); return;
     }
+    if (isDesktop) document.documentElement.classList.add('pxPush');   // computers: move the page down instead of covering its top
     if (!bar) {
       addStyle();
       bar = document.createElement('div');
@@ -202,16 +229,27 @@
       document.body.appendChild(bar);
       bar.onclick = function () { onInstallTap(); };
     }
-    document.getElementById('pxBarTxt').textContent = installing ? 'Installing…' : 'Install Pharma app';
+    var done = doneUntil > Date.now(), msg = msgUntil > Date.now();
+    var txt = done ? 'Pharma is installed. Open it from your desktop or Start menu.'
+            : msg ? msgText
+            : installing ? (isDesktop ? 'Installing\u2026 this can take a minute. Keep this tab open.' : 'Installing\u2026')
+            : (isDesktop ? 'Install Pharma app on this computer' : 'Install Pharma app');
+    document.getElementById('pxBarTxt').textContent = txt;
     var b = document.getElementById('pxBarBtn');
+    b.style.display = done ? 'none' : '';
     b.textContent = installing ? 'Wait' : 'Install';
     b.style.opacity = installing ? '.6' : '';
   }
 
   // ---- What a tap on Install does ----
   function onInstallTap() {
-    if (installing) { openCard('installing'); return; }
+    if (installing) { if (!isDesktop) openCard('installing'); return; }
     if (deferred) { startNativeInstall(); return; }
+    if (isDesktop) {                        // no install box waiting: say where to click
+      showBarMsg(safariMac ? 'Click File in the menu bar, then "Add to Dock".'
+                           : 'Click the install icon at the right end of the address bar, or open the browser menu and choose "Install Pharma".', 9000);
+      return;
+    }
     if (isIOS) { openCard(iosSafariLike ? 'ios' : 'safari'); return; }
     if (inApp) { openCard('chrome'); return; }
     openCard('menu');                       // Android browser that has not offered install (yet)
@@ -225,26 +263,27 @@
       p.prompt();
       p.userChoice.then(function (r) {
         if (r && r.outcome === 'accepted') {
-          installing = true; updateBar(); openCard('installing');
+          installing = true; updateBar(); if (!isDesktop) openCard('installing');
           clearTimeout(slowTimer);
           slowTimer = setTimeout(function () {
             if (installed || !installing) return;
             installing = false; closeCard(); updateBar();   // stalled: let the person tap Install again
           }, SLOW_MS);
         } else {
-          rememberDismissed(); closeCard(); updateBar();
+          if (!isDesktop) rememberDismissed();
+          closeCard(); updateBar();
         }
-      }, function () { closeCard(); openCard('menu'); });
-    } catch (e) { openCard('menu'); }
+      }, function () { closeCard(); onInstallTap(); });
+    } catch (e) { onInstallTap(); }
   }
 
   // ---- Wire it up. The browser announces "installable" once the page has loaded. ----
   window.addEventListener('beforeinstallprompt', function (e) {
     e.preventDefault();                     // we show our own card instead of the browser's mini-bar
-    deferred = e;
+    deferred = e; offered = true;
     if (installed) { installed = false; setInstalledFlag(false); } // it can be installed again, so it was removed
     updateBar();
-    if (popupAllowed && !installing && !card) openCard('install');
+    if (!isDesktop && popupAllowed && !installing && !card) openCard('install');
   });
 
   window.addEventListener('appinstalled', function () {
@@ -252,6 +291,7 @@
     clearTimeout(slowTimer);
     setInstalledFlag(true);
     rememberDismissed();
+    if (isDesktop) doneUntil = Date.now() + 6000;
     updateBar();
     if (card) {
       openCard('done');
@@ -263,7 +303,7 @@
   function start() {
     updateBar();
     setInterval(updateBar, 800);            // the sign-in screens are drawn by the app; follow them
-    if (installed || !popupAllowed) return;
+    if (isDesktop || installed || !popupAllowed) return;   // computers get the bar only
     if (isIOS) { openCard(iosSafariLike ? 'ios' : 'safari'); return; }
     if (isAndroid && inApp) { openCard('chrome'); return; }
     // Android browser that is not Chromium-based never announces install (e.g. Firefox).

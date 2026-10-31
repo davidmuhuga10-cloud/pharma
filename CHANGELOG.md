@@ -2,6 +2,10 @@
 
 Newest first. The detailed story for each item is in `PHARMA_PROJECT_STATUS.md`.
 
+## 2026-10-31 (evening): install bar on computers
+
+- **Computers:** the "Install Pharma app on this computer [Install]" bar now also shows on the sign-in pages in Chrome, Edge, Brave and Opera, and in Safari 17+ on a Mac. There is **no popup on a computer**, so nothing covers the sign-in fields; the page is moved down by the height of the bar instead. The bar appears once the browser says Pharma can be installed, so it is not offered when Pharma is already installed. Tap it to open the browser's install box; the bar says "Installing… this can take a minute. Keep this tab open." (and returns to "Install" after 30 seconds if nothing finishes), then "Pharma is installed. Open it from your desktop or Start menu." for 6 seconds. If you cancel the box and tap again, the bar says where to click (the install icon at the right end of the address bar, or the browser menu). Safari on a Mac says "File, then Add to Dock". Firefox on a computer cannot install apps, so nothing is shown there. Phones and tablets are unchanged. `sw.js` cache is `hodhi-shell-v2y`.
+
 ## 2026-10-31 (later): fixed "Install Pharma app" bar on the sign-in pages
 
 - **Fixed bar:** a slim bar with a red line under it stays at the top of the sign-in, create-account and staff-login pages on phones and tablets: "Install Pharma app [Install]". It stays after "Not now" (that only hides the popup, for 3 days) and goes away once Pharma is installed. Tapping it installs in one tap on Android Chrome; on iPhone it shows the Share steps; where the browser has not offered install yet it shows the menu steps; inside WhatsApp or Facebook it offers Open in Chrome.

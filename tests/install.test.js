@@ -14,7 +14,9 @@ try { new vm.Script(read('install.js'), { filename: 'install.js' }); } catch (e)
 const ij = read('install.js');
 check(ij.includes("id = 'pxBar'") && ij.includes('.auth-wrap'), 'install.js draws the bar on the sign-in screen (.auth-wrap)');
 check(ij.includes("'installing'") && ij.includes('SLOW_MS'), 'install.js shows "Installing" and lets the person retry if it stalls');
-check(/HIDE_DAYS = 3/.test(ij) && /if \(!isIOS && !isAndroid\) return;/.test(ij), 'popup hides for 3 days and is phones/tablets only');
+check(/HIDE_DAYS = 3/.test(ij) && /!isDesktop && popupAllowed/.test(ij), 'popup hides for 3 days and is not shown on a computer');
+check(/var isDesktop = !isIOS && !isAndroid;/.test(ij) && /if \(isDesktop && !chromiumDesktop && !safariMac\) return;/.test(ij), 'computers: only Chromium browsers and Safari 17+ get the bar');
+check(/html\.pxPush \.auth-wrap/.test(ij), 'computers: the page moves down instead of the bar covering it');
 check(!/'slow'/.test(ij), 'no third "Taking long?" screen');
 check(html.includes('class="auth-wrap"') || read('js/auth.js').includes('auth-wrap'), 'the sign-in markup still uses .auth-wrap');
 // Chrome only offers install when these are all present
