@@ -6,13 +6,75 @@
 // column layout (Drug, Qty, Price, Expiry...) and the "12.2027" (month.year)
 // expiry format used in real stock-take sheets.
 
+// A workbook with several sheets. A sheet is { name, rows: array of arrays, widths: [chars], hidden: [col index] }.
+function exportWorkbook(filename, sheets) {
+  var write = function () {
+    var wb = XLSX.utils.book_new();
+    sheets.forEach(function (s) {
+      var ws = XLSX.utils.aoa_to_sheet(s.rows);
+      if (s.widths) ws['!cols'] = s.widths.map(function (w, i) { var c = { wch: w }; if ((s.hidden || []).indexOf(i) !== -1) c.hidden = true; return c; });
+      XLSX.utils.book_append_sheet(wb, ws, s.name);
+    });
+    XLSX.writeFile(wb, filename);
+  };
+  if (window.XLSX) { write(); return; }
+  toast('Preparing Excel file…');
+  loadXlsx().then(write).catch(function (e) { toast(friendlyError(e), 'bad'); });
+}
+
+var IMPORT_FORMS = ['tablet', 'capsule', 'syrup', 'injection', 'cream_ointment', 'drops', 'suppository', 'inhaler', 'iv_fluid', 'other'];
+
+// The blank template: headers only (so nothing sample-like can be imported by mistake) and a
+// "How to fill" sheet that spells out every rule the upload checks.
 function downloadImportTemplate() {
-  var rows = [{
-    'Drug': 'Amoxiclav 228 susp', 'Category': 'Antibiotics/Antifungals/Amoebicides', 'Form': 'syrup',
-    'Unit': 'bottle', 'Qty': 20, 'Cost Price': 150, 'Sell Price': 200, 'Expiry': '12.2027',
-    'Batch No': '', 'Supplier': ''
-  }];
-  exportExcel('Pharma - import template.xlsx', 'Stock', rows);
+  var cats = (STATE.categoriesCache || []).map(function (c) { return c.name; });
+  exportWorkbook('Pharma - import template.xlsx', [
+    { name: 'Stock', rows: [['Drug', 'Category', 'Form', 'Unit', 'Qty', 'Cost Price', 'Sell Price', 'Expiry', 'Batch No', 'Supplier']],
+      widths: [30, 30, 16, 12, 8, 12, 12, 12, 14, 20] },
+    { name: 'How to fill', rows: [
+      ['One row per batch. Delete nothing in the header row. Upload this file in Inventory > Import.'],
+      [''],
+      ['Drug', 'Required. The drug name, e.g. Amoxiclav 228 susp. If the drug already exists, this row adds a new batch to it.'],
+      ['Category', 'Optional. Must be one of: ' + cats.join(', ')],
+      ['Form', 'Optional. One of: ' + IMPORT_FORMS.join(', ')],
+      ['Unit', 'Required. tablet, bottle, vial, tube...'],
+      ['Qty', 'Required. A whole number, 1 or more. The number of units you have now.'],
+      ['Cost Price', 'Optional. What you pay for one unit. A number.'],
+      ['Sell Price', 'Required. What you sell one unit for. A number above 0.'],
+      ['Expiry', 'Required. Month.Year like 12.2027, or a full date like 31/12/2027, or the word UNKNOWN. A date in the past is refused.'],
+      ['Batch No', 'Optional.'],
+      ['Supplier', 'Optional.'],
+      [''],
+      ['If any row is wrong, nothing is imported. You get the list of rows to fix, then upload again.']
+    ], widths: [14, 110] }
+  ]);
+}
+
+// Reads an expiry cell. Returns { date: 'YYYY-MM-DD' } | { unknown: true } | { error: '...' }.
+// Accepts: an Excel date, 12.2027 (month.year = last day of that month), 2027-12-31, 31/12/2027,
+// 31-12-2027 (day first, as in Kenya), or the word UNKNOWN. Anything else is an error, because
+// a guessed date is worse than a refused one.
+function parseStrictExpiry(val) {
+  var pad = function (n) { return String(n).padStart(2, '0'); };
+  var valid = function (y, m, d) { var t = new Date(Date.UTC(y, m - 1, d)); return y >= 2000 && y <= 2100 && t.getUTCFullYear() === y && t.getUTCMonth() === m - 1 && t.getUTCDate() === d; };
+  if (val instanceof Date && !isNaN(val)) {
+    var t = new Date(val.getTime() + 12 * 3600000);   // an Excel date can come out a few hours off; noon keeps the right day
+    return { date: t.getUTCFullYear() + '-' + pad(t.getUTCMonth() + 1) + '-' + pad(t.getUTCDate()) };
+  }
+  var s = String(val === null || val === undefined ? '' : val).trim();
+  if (!s) return { error: 'Expiry is empty (write a date, or UNKNOWN)' };
+  if (/^unknown$/i.test(s)) return { unknown: true };
+  var m = s.match(/^(\d{1,2})\.(\d{4})$/);
+  if (m) {
+    var mo = parseInt(m[1], 10), yr = parseInt(m[2], 10);
+    if (mo < 1 || mo > 12 || yr < 2000 || yr > 2100) return { error: 'Expiry "' + s + '" is not a real month.year' };
+    return { date: yr + '-' + pad(mo) + '-' + pad(new Date(Date.UTC(yr, mo, 0)).getUTCDate()) };
+  }
+  m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (m) return valid(+m[1], +m[2], +m[3]) ? { date: m[1] + '-' + pad(+m[2]) + '-' + pad(+m[3]) } : { error: 'Expiry "' + s + '" is not a real date' };
+  m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (m) return valid(+m[3], +m[2], +m[1]) ? { date: m[3] + '-' + pad(+m[2]) + '-' + pad(+m[1]) } : { error: 'Expiry "' + s + '" is not a real date (write day/month/year)' };
+  return { error: 'Expiry "' + s + '" is not a date I can read. Use 12.2027 or 31/12/2027' };
 }
 
 // Parses "12.2027" (month.year), a date string or an Excel date object.
@@ -88,128 +150,173 @@ function openImportExcel() {
   };
   input.click();
 }
+// "Nothing was changed" screen, shared by the import and the stock sheet. problems: [{ row, name, message }].
+function sheetProblemsView(title, intro, problems, again) {
+  var shown = problems.slice(0, 100);
+  var body = sheet(title, '');
+  body.innerHTML =
+    '<div class="inline-notice">' + icon('warn', 15) + '<span><b>Nothing was saved.</b> ' + esc(intro) + '</span></div>' +
+    '<div class="card" style="max-height:300px;overflow-y:auto">' +
+    shown.map(function (p) {
+      return listRow((p.row ? 'Row ' + p.row : 'Sheet') + (p.name ? ' · ' + p.name : ''), esc(p.message), '');
+    }).join('') +
+    (problems.length > shown.length ? '<div class="tiny" style="margin-top:8px">…and ' + (problems.length - shown.length) + ' more. Fix these first, then upload again to see the rest.</div>' : '') +
+    '</div>' +
+    '<button class="btn primary" onclick="closeSheet();' + again + '">Choose the fixed file</button>';
+}
+
 function readImportBuffer(buffer) {
+  var allRows, headerIdx, colMap;
   try {
     var wb = XLSX.read(new Uint8Array(buffer), { type: 'array', cellDates: true });
     var ws = wb.Sheets[wb.SheetNames[0]];
-    var allRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-    var headerIdx = findImportHeaderRow(allRows);
-    var colMap = buildImportColumnMap(allRows[headerIdx] || []);
-    var dataRows = allRows.slice(headerIdx + 1);
-    previewImport(dataRows, colMap);
+    allRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    headerIdx = findImportHeaderRow(allRows);
+    colMap = buildImportColumnMap(allRows[headerIdx] || []);
   } catch (err) {
     toast('Could not read that file — is it a valid Excel/CSV file?', 'bad');
+    return;
   }
+  var missing = [['name', 'Drug'], ['unit', 'Unit'], ['qty', 'Qty'], ['sellPrice', 'Sell Price'], ['expiry', 'Expiry']]
+    .filter(function (c) { return colMap[c[0]] === undefined; }).map(function (c) { return c[1]; });
+  if (missing.length) {
+    sheetProblemsView('Cannot import', 'The sheet has no column called ' + missing.join(', ') + '. Use the template so the headers match.',
+      missing.map(function (m) { return { row: headerIdx + 1, name: '', message: 'Column "' + m + '" not found' }; }), 'openImportExcel()');
+    return;
+  }
+  checkImportRows(allRows.slice(headerIdx + 1), colMap, headerIdx + 2);
 }
 
-function previewImport(dataRows, colMap) {
-  var parsed = [];
-  var skipped = 0;
-  var currentCategory = '';
-  dataRows.forEach(function (row) {
+// Checks every row. Any problem at all stops the import; the pharmacy fixes the sheet and uploads again.
+function checkImportRows(dataRows, colMap, firstRowNo) {
+  var problems = [], parsed = [], rowNos = [], seen = {};
+  var today = new Date().toISOString().slice(0, 10);
+  var normCat = function (s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, ''); };
+  var catByName = {};
+  (STATE.categoriesCache || []).forEach(function (c) { catByName[normCat(c.name)] = c.id; });
+  dataRows.forEach(function (row, i) {
+    var rowNo = firstRowNo + i;
     var cell = function (field) {
       var idx = colMap[field];
-      if (idx === undefined) return null;
+      if (idx === undefined) return '';
       var v = row[idx];
-      return (v === undefined || v === null || String(v).trim() === '') ? null : v;
+      return (v === undefined || v === null) ? '' : v;
     };
-    var name = cell('name');
-    var qty = parseInt(cell('qty'), 10);
-    var sellPrice = parseFloat(cell('sellPrice'));
-
-    // A row with only a drug name (often ALL CAPS, e.g. "COUGH SYRUPS") and no
-    // quantity or price is a section header: use it as the category for the rows
-    // below it.
-    if (name && qty !== qty /* NaN */ && !sellPrice) {
-      var trimmedName = String(name).trim();
-      if (trimmedName === trimmedName.toUpperCase() && /[A-Za-z]/.test(trimmedName)) {
-        currentCategory = trimmedName;
-        return;
-      }
+    var txt = function (field) { return String(cell(field)).trim(); };
+    var blank = Object.keys(colMap).every(function (f) { return txt(f) === ''; });
+    if (blank) return;                                   // an empty row is fine
+    var name = txt('name');
+    var bad = function (msg) { problems.push({ row: rowNo, name: name, message: msg }); };
+    var before = problems.length;
+    if (!name) bad('The drug name is empty');
+    else if (name.length > 120) bad('The drug name is too long (120 letters at most)');
+    var unit = txt('unit');
+    if (!unit) bad('Unit is empty (tablet, bottle, vial...)');
+    var qtyRaw = txt('qty');
+    if (!/^\d+$/.test(qtyRaw) || parseInt(qtyRaw, 10) < 1) bad('Qty must be a whole number, 1 or more' + (qtyRaw ? ' (found "' + qtyRaw + '")' : ' (it is empty)'));
+    var sellRaw = txt('sellPrice'), sell = Number(sellRaw);
+    if (sellRaw === '' || isNaN(sell) || sell <= 0) bad('Sell Price must be a number above 0' + (sellRaw ? ' (found "' + sellRaw + '")' : ' (it is empty)'));
+    var costRaw = txt('costPrice'), cost = null;
+    if (costRaw !== '') {
+      cost = Number(costRaw);
+      if (isNaN(cost) || cost < 0) { bad('Cost Price must be a number, 0 or more (found "' + costRaw + '")'); cost = null; }
+      else if (!isNaN(sell) && sell > 0 && sell < cost) bad('Sell Price (' + sell + ') is lower than Cost Price (' + cost + ')');
     }
-
-    // Only drug name and current quantity are required; everything else is
-    // optional so a messy sheet does not lose rows. A missing sell price defaults
-    // to cost price (or 0, which shows up in Inventory). A missing expiry imports
-    // as "expiry unknown" (see openUnknownExpiryList) instead of being skipped.
-    var expiryRaw = cell('expiry');
-    var expiry = parseFlexibleExpiry(expiryRaw);
-    if (!name || !qty || qty <= 0) { skipped++; return; }
-    var costPrice = parseFloat(cell('costPrice')) || null;
+    var exp = parseStrictExpiry(cell('expiry'));
+    if (exp.error) bad(exp.error);
+    else if (exp.date && exp.date < today) bad('Expiry ' + exp.date + ' is in the past. Expired stock is not imported');
+    var form = txt('form').toLowerCase().replace(/[\s\/]+/g, '_');
+    if (form && IMPORT_FORMS.indexOf(form) === -1) bad('Form "' + txt('form') + '" is not one of: ' + IMPORT_FORMS.join(', '));
+    var category = txt('category'), catId = null;
+    if (category) {
+      catId = catByName[normCat(category)] || null;
+      if (!catId) bad('Category "' + category + '" is not one of your categories');
+    }
+    if (name && exp && !exp.error) {
+      var key = name.toLowerCase() + '|' + (exp.date || 'unknown') + '|' + txt('batchNo').toLowerCase();
+      if (seen[key]) bad('Same drug, expiry and batch as row ' + seen[key] + '. If it is the same stock, remove one row');
+      else seen[key] = rowNo;
+    }
+    if (problems.length > before) return;
     parsed.push({
-      name: String(name).trim(),
-      category: cell('category') || currentCategory || '',
-      form: (cell('form') || 'other').toString().toLowerCase(),
-      unit: cell('unit') || 'unit',
-      qty: qty,
-      costPrice: costPrice,
-      sellPrice: sellPrice || costPrice || 0,
-      expiry: expiry,
-      expiryUnknown: !expiry,
-      batchNo: cell('batchNo') || null,
-      supplier: cell('supplier') || null
+      name: name, category: category, categoryId: catId, form: form || 'other', unit: unit,
+      qty: parseInt(qtyRaw, 10), costPrice: cost, sellPrice: sell, expiry: exp.unknown ? null : exp.date,
+      batchNo: txt('batchNo') || null, supplier: txt('supplier') || null
     });
+    rowNos.push(rowNo);
   });
 
-  var noPriceCount = parsed.filter(function (p) { return !p.sellPrice; }).length;
-  var noExpiryCount = parsed.filter(function (p) { return p.expiryUnknown; }).length;
-  var body = sheet('Import preview', '');
-  body.innerHTML =
-    '<div class="tiny" style="margin-bottom:10px">' + parsed.length + ' rows ready to import' +
-    (skipped ? ', ' + skipped + ' skipped (missing drug name or quantity)' : '') + '.' +
-    (noExpiryCount ? ' ' + noExpiryCount + ' with no expiry date — they\'ll import as "expiry unknown," flagged in Inventory to fix later.' : '') +
-    (noPriceCount ? ' ' + noPriceCount + ' with no price — they\'ll import at KES 0 until you set a price.' : '') +
-    '</div>' +
-    '<div class="card" style="max-height:260px;overflow-y:auto">' +
-    (parsed.length ? parsed.slice(0, 50).map(function (p) {
-      // listRow() escapes its name argument but not meta, and p.unit here is a raw
-      // cell from an uploaded spreadsheet.
-      return listRow(p.name, p.qty + ' ' + esc(p.unit) + ' · exp ' + (p.expiryUnknown ? 'unknown' : fmtDate(p.expiry)), fmt(p.sellPrice));
-    }).join('') : '<div class="empty">Nothing importable was found in that file.</div>') +
-    (parsed.length > 50 ? '<div class="tiny" style="margin-top:8px">…and ' + (parsed.length - 50) + ' more</div>' : '') +
-    '</div>' +
-    (parsed.length ? '<button class="btn primary" id="impBtn" onclick="runImport(' + "'" + btoa(encodeURIComponent(JSON.stringify(parsed))) + "'" + ')">Import ' + parsed.length + ' rows</button>' : '') +
-    '<button class="btn ghost" style="margin-top:8px" onclick="downloadImportTemplate()">Download a blank template instead</button>';
+  if (problems.length) {
+    sheetProblemsView('Cannot import yet', problems.length + (problems.length === 1 ? ' row needs' : ' rows need') + ' fixing. Fix them in Excel and upload again.', problems, 'openImportExcel()');
+    return;
+  }
+  if (!parsed.length) {
+    sheetProblemsView('Cannot import', 'No rows were found under the headers.', [{ row: 0, name: '', message: 'The sheet is empty' }], 'openImportExcel()');
+    return;
+  }
+  // The database checks the same rows without saving anything, so the pharmacy hears about every problem now.
+  toast('Checking ' + parsed.length + ' rows…');
+  dryRunImport(parsed, rowNos).then(function (dbProblems) {
+    if (dbProblems.length) {
+      sheetProblemsView('Cannot import yet', dbProblems.length + (dbProblems.length === 1 ? ' row was' : ' rows were') + ' refused when checked. Fix them in Excel and upload again.', dbProblems, 'openImportExcel()');
+      return;
+    }
+    importReady(parsed);
+  }).catch(function (e) { toast(friendlyError(e), 'bad'); });
 }
 
-var IMPORT_BLOCK = 200;   // rows sent to the database per request (it accepts up to 500)
+var IMPORT_BLOCK = 500;   // rows sent to the database per request (it accepts up to 500)
+
+function importRowsPayload(rows) {
+  return rows.map(function (r) {
+    return { name: r.name, form: r.form, unit: r.unit, category_id: r.categoryId, qty: r.qty, cost_price: r.costPrice,
+             sell_price: r.sellPrice, expiry: r.expiry, batch_no: r.batchNo, supplier: r.supplier };
+  });
+}
+
+async function dryRunImport(parsed, rowNos) {
+  var problems = [];
+  for (var i = 0; i < parsed.length; i += IMPORT_BLOCK) {
+    var res = await sb.rpc('import_stock_rows', { p_pharmacy_id: STATE.profile.pharmacy_id, p_rows: importRowsPayload(parsed.slice(i, i + IMPORT_BLOCK)), p_dry_run: true });
+    if (res.error) throw res.error;
+    (res.data.errors || []).forEach(function (e) { problems.push({ row: rowNos[i + e.row - 1], name: e.name, message: friendlyError({ message: e.message }) }); });
+  }
+  return problems;
+}
+
+function importReady(parsed) {
+  var unknownExpiry = parsed.filter(function (p) { return !p.expiry; }).length;
+  var body = sheet('Ready to import', '');
+  body.innerHTML =
+    '<div class="inline-notice">' + icon('clipboard', 15) + '<span><b>Every row passed the checks.</b> ' + parsed.length + (parsed.length === 1 ? ' row' : ' rows') + ' will be added as new stock.</span></div>' +
+    (unknownExpiry ? '<div class="tiny" style="margin-bottom:8px">' + unknownExpiry + ' with expiry UNKNOWN. They are flagged in Inventory so you can fix the date later.</div>' : '') +
+    '<div class="card" style="max-height:260px;overflow-y:auto">' +
+    parsed.slice(0, 50).map(function (p) {
+      return listRow(p.name, p.qty + ' ' + esc(p.unit) + ' · exp ' + (p.expiry ? fmtDate(p.expiry) : 'unknown'), fmt(p.sellPrice));
+    }).join('') +
+    (parsed.length > 50 ? '<div class="tiny" style="margin-top:8px">…and ' + (parsed.length - 50) + ' more</div>' : '') +
+    '</div>' +
+    '<button class="btn primary" id="impBtn" onclick="runImport(\'' + btoa(encodeURIComponent(JSON.stringify(parsed))) + '\')">Import ' + parsed.length + ' rows</button>' +
+    '<button class="btn ghost" style="margin-top:8px" onclick="downloadImportTemplate()">Download a blank template</button>';
+}
+
 async function runImport(encoded) {
   var rows = JSON.parse(decodeURIComponent(atob(encoded)));
   var btn = $('#impBtn');
   act(btn, async function () {
-    // Normalised (letters and digits only, lowercase) so "Anti-H-Pylori" matches
-    // "ANTI H PYLORI" written by hand.
-    var normCat = function (s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, ''); };
-    var catByName = {};
-    STATE.categoriesCache.forEach(function (c) { catByName[normCat(c.name)] = c.id; });
-
-    // The database imports a block of rows per request (import_stock_rows). It
-    // finds or creates each drug and restocks it by the normal restock rules. A
-    // bad row is skipped and reported; it never stops the rest.
-    var imported = 0, failed = 0, firstProblem = '';
+    // All or nothing for each request: the database undoes the whole block if any row fails.
+    var saved = 0;
     for (var i = 0; i < rows.length; i += IMPORT_BLOCK) {
-      var block = rows.slice(i, i + IMPORT_BLOCK).map(function (r) {
-        return {
-          name: r.name, form: r.form, unit: r.unit,
-          category_id: r.category ? (catByName[normCat(r.category)] || null) : null,
-          qty: r.qty, cost_price: r.costPrice, sell_price: r.sellPrice,
-          expiry: r.expiry || null, batch_no: r.batchNo, supplier: r.supplier
-        };
-      });
-      var res = await sb.rpc('import_stock_rows', { p_pharmacy_id: STATE.profile.pharmacy_id, p_rows: block });
+      var res = await sb.rpc('import_stock_rows', { p_pharmacy_id: STATE.profile.pharmacy_id, p_rows: importRowsPayload(rows.slice(i, i + IMPORT_BLOCK)), p_strict: true });
       if (res.error) {
-        failed += block.length;
-        if (!firstProblem) firstProblem = friendlyError(res.error);
-        continue;
+        var msg = friendlyError(res.error);
+        toast(saved ? 'Stopped. The first ' + saved + ' rows were saved, the rest were not: ' + msg + ' Do not upload the whole sheet again; remove the saved rows first.' : 'Nothing was imported: ' + msg, 'bad');
+        if (saved) renderInventory();
+        return;
       }
-      imported += res.data.imported;
-      failed += res.data.failed;
-      if (!firstProblem && res.data.errors && res.data.errors.length) {
-        var e0 = res.data.errors[0];
-        firstProblem = (e0.name ? e0.name + ': ' : '') + friendlyError({ message: e0.message });
-      }
+      saved += res.data.imported;
     }
-    toast('Imported ' + imported + ' rows' + (failed ? ', ' + failed + ' failed' + (firstProblem ? ' (first problem - ' + firstProblem + ')' : '') : '') + '.', failed ? 'warn' : 'good');
+    toast('Imported ' + saved + ' rows.', 'good');
     closeSheet();
     renderInventory();
   });
@@ -351,3 +458,190 @@ async function submitMasterDrugsSync() {
   });
 }
 
+// ===========================================================================
+// Count or edit in Excel: download every drug, change cells, upload.
+// Quantities you type under "Counted qty" go into a stock take that is reviewed and approved in
+// Stock Take (nothing in stock changes by itself). Names, units, reorder numbers and selling
+// prices change when you apply the sheet. If any row is wrong, nothing is applied.
+// ===========================================================================
+var SHEET_COLS = {
+  id: ['drug id'], name: ['drug', 'name', 'drug name'], unit: ['unit'],
+  counted: ['counted qty', 'counted', 'count'], price: ['sell price', 'price'], reorder: ['reorder level', 'reorder']
+};
+
+function openStockSheetMenu() {
+  var editor = can('edit_inventory');
+  var body = sheet('Count or edit in Excel', '');
+  body.innerHTML =
+    '<div class="field"><label>1. Download the stock sheet</label>' +
+    '<div class="tiny" style="margin-bottom:8px">Every drug, with what the system has now.</div>' +
+    '<button class="btn secondary" onclick="downloadStockSheet()">' + icon('download', 15) + ' Download stock sheet</button></div>' +
+    '<div class="field"><label>2. Fill it in Excel</label>' +
+    '<div class="tiny">Type the number you counted under <b>Counted qty</b>.' + (editor ? ' You can also change the drug name, unit, <b>Sell price</b> and <b>Reorder level</b>.' : '') + ' Leave a cell empty to change nothing. Do not delete the Drug ID column.</div></div>' +
+    '<div class="field"><label>3. Upload it</label>' +
+    '<div class="tiny" style="margin-bottom:8px">You see every change before anything is saved. If any row is wrong, nothing is saved and you get the list to fix.</div>' +
+    '<button class="btn primary" onclick="closeSheet();openStockSheetUpload()">' + icon('upload', 15) + ' Upload filled sheet</button></div>';
+}
+
+async function currentStockForSheet() {
+  var r = await fetchAllRows(function () { return sb.from('v_drug_stock').select('drug_id,name,unit,qty_in_stock,qty_expired,default_price,reorder_own,reorder_custom').order('name'); }, 'drug_id');
+  if (r.error) throw r.error;
+  return r.data || [];
+}
+// What the Reorder level cell shows: empty when the drug follows the days alert.
+function sheetReorderShown(d) {
+  var daysOn = !!(STATE.pharmacy && STATE.pharmacy.low_stock_days);
+  return (daysOn && !d.reorder_custom) ? '' : d.reorder_own;
+}
+
+async function downloadStockSheet() {
+  try {
+    await loadXlsx();
+    var drugs = await currentStockForSheet();
+    if (!drugs.length) { toast('There are no drugs yet. Use Import to add them first.', 'bad'); return; }
+    var daysOn = !!(STATE.pharmacy && STATE.pharmacy.low_stock_days);
+    var rows = [['Drug ID', 'Drug', 'Unit', 'Qty in system', 'Counted qty', 'Sell price', 'Reorder level']].concat(drugs.map(function (d) {
+      return [d.drug_id, d.name, d.unit, Number(d.qty_in_stock) + Number(d.qty_expired), '', d.default_price === null ? '' : Number(d.default_price), sheetReorderShown(d)];
+    }));
+    exportWorkbook((STATE.pharmacy.name || 'Pharma') + ' - stock sheet - ' + todayStr() + '.xlsx', [
+      { name: 'Stock', rows: rows, widths: [38, 34, 12, 14, 14, 12, 14], hidden: [0] },
+      { name: 'How to fill', rows: [
+        ['Fill this sheet, then upload it in Inventory > Count or edit in Excel.'],
+        [''],
+        ['Qty in system', 'What the system has now. Do not type here; it is ignored.'],
+        ['Counted qty', 'Type what you counted on the shelf. Leave empty for drugs you did not count. Counts go into a stock take that is reviewed and approved in Stock Take.'],
+        ['Drug', 'Change the name only to fix a spelling.'],
+        ['Unit', 'tablet, bottle, vial...'],
+        ['Sell price', 'The price for one unit. Changing it also changes the price on the stock now on the shelf. Past sales keep the price they were sold at.'],
+        ['Reorder level', 'Warn me when stock is at or below this number.' + (daysOn ? ' Empty means this drug follows your "' + STATE.pharmacy.low_stock_days + ' days left" setting.' : '')],
+        [''],
+        ['New drugs are not added here: use Inventory > Import. If any row is wrong, nothing is saved.']
+      ], widths: [16, 110] }
+    ]);
+  } catch (e) { toast(friendlyError(e), 'bad'); }
+}
+
+function openStockSheetUpload() {
+  var input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.xlsx,.xls,.csv';
+  input.onchange = function () {
+    if (!input.files.length) return;
+    var reader = new FileReader();
+    reader.onload = function (e) {
+      loadXlsx().then(function () { return readStockSheet(e.target.result); })
+        .catch(function (err) { toast(friendlyError(err), 'bad'); });
+    };
+    reader.readAsArrayBuffer(input.files[0]);
+  };
+  input.click();
+}
+
+async function readStockSheet(buffer) {
+  var allRows, colMap = {}, headerIdx = -1;
+  try {
+    var wb = XLSX.read(new Uint8Array(buffer), { type: 'array', cellDates: true });
+    allRows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' });
+  } catch (err) { toast('Could not read that file. Is it a valid Excel/CSV file?', 'bad'); return; }
+  for (var i = 0; i < Math.min(allRows.length, 10) && headerIdx < 0; i++) {
+    var m = {};
+    (allRows[i] || []).forEach(function (cellv, idx) {
+      var v = String(cellv || '').trim().toLowerCase();
+      Object.keys(SHEET_COLS).forEach(function (f) { if (m[f] === undefined && SHEET_COLS[f].indexOf(v) !== -1) m[f] = idx; });
+    });
+    if (m.name !== undefined || m.id !== undefined) { headerIdx = i; colMap = m; }
+  }
+  if (headerIdx < 0 || (colMap.id === undefined && colMap.name === undefined)) {
+    sheetProblemsView('Cannot read the sheet', 'This is not a stock sheet. Download one from Inventory > Count or edit in Excel.', [{ row: 0, name: '', message: 'No "Drug" or "Drug ID" column found' }], 'openStockSheetUpload()');
+    return;
+  }
+  toast('Checking the sheet…');
+  var drugs = await currentStockForSheet();
+  var byId = {}, byName = {};
+  drugs.forEach(function (d) { byId[d.drug_id] = d; byName[String(d.name).trim().toLowerCase()] = d; });
+  var editor = can('edit_inventory');
+  var problems = [], changes = [], seen = {};
+  allRows.slice(headerIdx + 1).forEach(function (row, i) {
+    var rowNo = headerIdx + 2 + i;
+    var raw = function (f) { var idx = colMap[f]; return idx === undefined || row[idx] === undefined || row[idx] === null ? '' : String(row[idx]).trim(); };
+    if (Object.keys(colMap).every(function (f) { return raw(f) === ''; })) return;
+    var sheetName = raw('name');
+    var d = raw('id') ? byId[raw('id')] : byName[sheetName.toLowerCase()];
+    var bad = function (msg) { problems.push({ row: rowNo, name: sheetName || (d && d.name) || '', message: msg }); };
+    if (!d) { bad('This drug is not in your system. New drugs are added with Import, not with this sheet'); return; }
+    if (seen[d.drug_id]) { bad('This drug is also in row ' + seen[d.drug_id]); return; }
+    seen[d.drug_id] = rowNo;
+    var ch = { drug_id: d.drug_id }, parts = [], before = problems.length;
+    if (colMap.name !== undefined && sheetName !== '' && sheetName !== d.name) {
+      if (!editor) bad('You can upload counts only'); else { ch.name = sheetName; parts.push('name "' + d.name + '" to "' + sheetName + '"'); }
+    } else if (colMap.name !== undefined && sheetName === '' && raw('id')) bad('The drug name is empty');
+    var unit = raw('unit');
+    if (colMap.unit !== undefined && unit !== '' && unit !== d.unit) {
+      if (!editor) bad('You can upload counts only'); else { ch.unit = unit; parts.push('unit ' + d.unit + ' to ' + unit); }
+    }
+    var counted = raw('counted');
+    if (counted !== '') {
+      if (!/^\d+$/.test(counted)) bad('Counted qty must be a whole number, 0 or more (found "' + counted + '")');
+      else { ch.counted = parseInt(counted, 10); var sys = Number(d.qty_in_stock) + Number(d.qty_expired); parts.push('count ' + sys + ' to ' + counted + ' (' + (ch.counted - sys >= 0 ? '+' : '') + (ch.counted - sys) + ')'); }
+    }
+    var price = raw('price');
+    if (colMap.price !== undefined && price !== '') {
+      var pn = Number(price);
+      if (isNaN(pn) || pn <= 0) bad('Sell price must be a number above 0 (found "' + price + '")');
+      else if (!editor) { if (pn !== Number(d.default_price)) bad('You can upload counts only'); }
+      else if (pn !== Number(d.default_price)) { ch.price = pn; parts.push('price ' + (d.default_price === null ? 'none' : Number(d.default_price)) + ' to ' + pn); }
+    }
+    var reorder = raw('reorder');
+    if (colMap.reorder !== undefined && reorder !== '') {
+      if (!/^\d+$/.test(reorder)) bad('Reorder level must be a whole number, 0 or more (found "' + reorder + '")');
+      else if (String(reorder) !== String(sheetReorderShown(d))) {
+        if (!editor) bad('You can upload counts only'); else { ch.reorder = parseInt(reorder, 10); parts.push('reorder level ' + (sheetReorderShown(d) === '' ? 'days alert' : d.reorder_own) + ' to ' + reorder); }
+      }
+    }
+    if (problems.length > before) return;
+    if (parts.length) changes.push({ ch: ch, name: d.name, text: parts.join(', ') });
+  });
+  if (problems.length) {
+    sheetProblemsView('Cannot apply yet', problems.length + (problems.length === 1 ? ' row needs' : ' rows need') + ' fixing. Fix them in Excel and upload again.', problems, 'openStockSheetUpload()');
+    return;
+  }
+  if (!changes.length) { toast('The sheet has no changes in it.', 'warn'); return; }
+  stockSheetPreview(changes);
+}
+
+function stockSheetPreview(changes) {
+  var counts = changes.filter(function (c) { return c.ch.counted !== undefined; }).length;
+  var body = sheet('Check the changes', '');
+  body.innerHTML =
+    '<div class="inline-notice">' + icon('clipboard', 15) + '<span><b>' + changes.length + (changes.length === 1 ? ' drug changes.' : ' drugs change.') + '</b> Nothing is saved until you press the button.' +
+    (counts ? ' ' + counts + (counts === 1 ? ' count goes' : ' counts go') + ' into a stock take for you to approve; stock does not change yet.' : '') + '</span></div>' +
+    '<div class="card" style="max-height:300px;overflow-y:auto">' +
+    changes.slice(0, 100).map(function (c) { return listRow(c.name, esc(c.text), ''); }).join('') +
+    (changes.length > 100 ? '<div class="tiny" style="margin-top:8px">…and ' + (changes.length - 100) + ' more</div>' : '') + '</div>' +
+    '<button class="btn primary" id="shBtn" onclick="applyStockSheetNow(\'' + btoa(encodeURIComponent(JSON.stringify(changes.map(function (c) { return c.ch; })))) + '\')">Apply ' + changes.length + ' changes</button>';
+}
+
+function applyStockSheetNow(encoded) {
+  var rows = JSON.parse(decodeURIComponent(atob(encoded)));
+  act($('#shBtn'), async function () {
+    var res = await sb.rpc('apply_stock_sheet', { p_pharmacy_id: STATE.profile.pharmacy_id, p_rows: rows });
+    if (res.error) { toast(friendlyError(res.error), 'bad'); return; }
+    if (!res.data.ok) {
+      closeSheet();
+      sheetProblemsView('Cannot apply yet', 'The system refused these rows. Fix them and upload again.', res.data.errors || [], 'openStockSheetUpload()');
+      return;
+    }
+    clearDashCache();
+    closeSheet();
+    renderInventory();
+    if (res.data.take_id) {
+      var body = sheet('Sheet applied', '');
+      body.innerHTML =
+        '<div class="inline-notice">' + icon('clipboard', 15) + '<span>' + res.data.counted + (res.data.counted === 1 ? ' count is' : ' counts are') + ' waiting in a new stock take. Open Stock Take to review the differences and approve. Stock changes only when you approve.</span></div>' +
+        (res.data.changed ? '<div class="tiny" style="margin-bottom:10px">' + res.data.changed + ' other change' + (res.data.changed === 1 ? '' : 's') + ' saved.</div>' : '') +
+        (can('stock_take') ? '<button class="btn primary" onclick="closeSheet();setTab(\'stocktake\')">Open Stock Take</button>' : '');
+    } else {
+      toast('Saved ' + res.data.changed + ' changes.', 'good');
+    }
+  });
+}

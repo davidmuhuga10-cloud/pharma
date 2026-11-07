@@ -29,6 +29,9 @@ function drawInventory() {
   redrawKeepingFocus(c,
     '<div class="searchbox field"><input id="invSearchInput" placeholder="Search drugs…" value="' + esc(invFilter) + '" oninput="invFilter=this.value;invPage=1;drawInventory()"></div>' +
     '<div class="toolbar-row">' +
+    (can('edit_inventory') || can('stock_take') ? '<div class="toolbar-segment">' +
+      '<button class="btn" onclick="openStockSheetMenu()">' + icon('clipboard',15) + ' Count / edit in Excel</button>' +
+      '</div>' : '') +
     (can('edit_inventory') ? '<div class="toolbar-segment">' +
       '<button class="btn" onclick="openSyncMasterDrugs()">' + icon('box',15) + ' Sync common drugs</button>' +
       '<button class="btn" onclick="openImportExcel()">' + icon('upload',15) + ' Import</button>' +

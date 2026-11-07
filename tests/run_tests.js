@@ -1426,6 +1426,76 @@ async function main() {
     const oPh = (await c.query("select bootstrap_pharmacy('Days Other', 'Other Owner', '0711000010') as id")).rows[0].id;
     const oDrug = (await c.query("insert into drugs (pharmacy_id, name, form, unit, reorder_level) values ($1,'Other Drug','tablet','tablet',6) returning id", [oPh])).rows[0].id;
     assert((await vds(oDrug)).reorder_level === 6, 'a pharmacy that did not turn the days alert on is not affected by another one doing so');
+
+    // --------------------------------------------------------------
+    console.log('\n== Excel in and out: strict import and the stock sheet ==');
+    const xOwner = (await c.query('insert into auth.users default values returning id')).rows[0].id;
+    const xTaker = (await c.query('insert into auth.users default values returning id')).rows[0].id;
+    const xOther = (await c.query('insert into auth.users default values returning id')).rows[0].id;
+    await asUser(c, xOwner);
+    const xPh = (await c.query("select bootstrap_pharmacy('Excel Test', 'Excel Owner', '0711000020') as id")).rows[0].id;
+    await c.query("insert into profiles (id, pharmacy_id, full_name, role) values ($1, $2, 'Taker', 'stock_taker')", [xTaker, xPh]);
+    await asUser(c, xOther);
+    const xPh2 = (await c.query("select bootstrap_pharmacy('Excel Other', 'Other', '0711000021') as id")).rows[0].id;
+    await asUser(c, xOwner);
+    const good = (n, q) => ({ name: n, form: 'tablet', unit: 'tablet', qty: q, cost_price: 5, sell_price: 10, expiry: '2030-01-31' });
+    const drugCount = async () => Number((await c.query('select count(*) n from drugs where pharmacy_id = $1', [xPh])).rows[0].n);
+
+    // dry run: reports every problem, writes nothing
+    const bad = { name: 'Bad Row', form: 'tablet', unit: 'tablet', qty: 5, cost_price: 5, sell_price: null, expiry: '2030-01-31' };
+    const dry = (await c.query('select import_stock_rows($1, $2::jsonb, true, false) as r', [xPh, JSON.stringify([good('Xa', 10), bad, good('Xb', 20)])])).rows[0].r;
+    assert(dry.dry_run === true && dry.errors.length === 1 && dry.errors[0].row === 2 && dry.imported === 2, 'a dry run reports the bad row (row 2) and what would be imported');
+    assert(await drugCount() === 0, 'a dry run writes nothing: no drug, no stock');
+    assert(Number((await c.query('select count(*) n from batches where pharmacy_id = $1', [xPh])).rows[0].n) === 0, 'and no batch');
+
+    // strict real import: one bad row undoes the whole block
+    await assertThrows(c.query('select import_stock_rows($1, $2::jsonb, false, true)', [xPh, JSON.stringify([good('Xa', 10), bad, good('Xb', 20)])]), 'a strict import with one bad row is refused as a whole', 'strict import should refuse');
+    assert(await drugCount() === 0, 'and nothing from that block was saved');
+    const okImp = (await c.query('select import_stock_rows($1, $2::jsonb, false, true) as r', [xPh, JSON.stringify([good('Xa', 10), good('Xb', 20), good('Xc', 30)])])).rows[0].r;
+    assert(okImp.imported === 3 && okImp.errors.length === 0 && await drugCount() === 3, 'a strict import of good rows saves all of them');
+    // the old two-argument call still works as before (a bad row is skipped and reported)
+    const old = (await c.query('select import_stock_rows($1, $2::jsonb) as r', [xPh, JSON.stringify([good('Xd', 5), bad])])).rows[0].r;
+    assert(old.imported === 1 && old.failed === 1, 'an older app calling with two arguments behaves as before');
+
+    // the stock sheet
+    const ids = {}; for (const n of ['Xa', 'Xb', 'Xc']) ids[n] = (await c.query('select id from drugs where pharmacy_id = $1 and name = $2', [xPh, n])).rows[0].id;
+    const sale = (await c.query("select record_sale($1, jsonb_build_array(jsonb_build_object('drug_id',$2::text,'quantity',2)), jsonb_build_array(jsonb_build_object('method','cash','amount',20))) as id", [xPh, ids.Xb])).rows[0].id;
+    const apply = async (rows) => (await c.query('select apply_stock_sheet($1, $2::jsonb) as r', [xPh, JSON.stringify(rows)])).rows[0].r;
+    const stockOf = async (id) => Number((await c.query('select coalesce(sum(quantity_remaining),0) q from batches where drug_id = $1', [id])).rows[0].q);
+
+    const e1 = await apply([{ drug_id: ids.Xa, counted: 'abc' }, { drug_id: '00000000-0000-0000-0000-000000000000', price: 5 }, { drug_id: ids.Xb, price: 0 }, { drug_id: ids.Xc, name: 'Xa' }, { drug_id: ids.Xc, counted: 5 }]);
+    assert(e1.ok === false && e1.errors.length === 5, 'a sheet with problems reports every one of them (' + e1.errors.length + ')');
+    assert(e1.errors.map(x => x.row).join() === '1,2,3,4,5' && /whole number/.test(e1.errors[0].message) && /not in your system/.test(e1.errors[1].message) && /above 0/.test(e1.errors[2].message) && /already named/.test(e1.errors[3].message) && /twice/.test(e1.errors[4].message), 'each problem names its row and says what is wrong');
+    assert((await c.query("select count(*) n from stock_takes where pharmacy_id = $1", [xPh])).rows[0].n === '0' && (await c.query('select count(*) n from price_changes where pharmacy_id = $1', [xPh])).rows[0].n === '0', 'a refused sheet changes nothing: no stock take, no price change');
+
+    const before = { a: await stockOf(ids.Xa), b: await stockOf(ids.Xb), c: await stockOf(ids.Xc) };
+    const e2 = await apply([{ drug_id: ids.Xa, name: 'Xa renamed', reorder: 15 }, { drug_id: ids.Xb, price: 25 }, { drug_id: ids.Xc, counted: 12 }]);
+    assert(e2.ok === true && e2.counted === 1 && e2.changed === 2 && !!e2.take_id, 'a good sheet is applied: a rename and reorder, a price, and a count');
+    const xa = (await c.query('select name, reorder_level, reorder_custom from drugs where id = $1', [ids.Xa])).rows[0];
+    assert(xa.name === 'Xa renamed' && xa.reorder_level === 15 && xa.reorder_custom === true, 'the rename and the reorder number were saved, and the number is the drug\'s own');
+    assert(Number((await c.query('select default_price from drugs where id = $1', [ids.Xb])).rows[0].default_price) === 25 && (await c.query('select distinct sell_price from batches where drug_id = $1 and quantity_remaining > 0', [ids.Xb])).rows.every(x => Number(x.sell_price) === 25), 'the new price is on the drug and on the batches still on the shelf');
+    assert(Number((await c.query('select unit_price from sale_items where sale_id = $1', [sale])).rows[0].unit_price) === 10, 'a past sale keeps the price it was sold at');
+    const pc = (await c.query('select old_price, new_price from price_changes where drug_id = $1', [ids.Xb])).rows;
+    assert(pc.length === 1 && Number(pc[0].old_price) === 10 && Number(pc[0].new_price) === 25, 'the price change is recorded with old and new price');
+    assert(await stockOf(ids.Xc) === before.c && await stockOf(ids.Xa) === before.a, 'a count does not change stock by itself');
+    const it = (await c.query('select system_qty, counted_qty from stock_take_items where take_id = $1 and drug_id = $2', [e2.take_id, ids.Xc])).rows[0];
+    assert(it && it.system_qty === 30 && it.counted_qty === 12, 'the count waits in an open stock take (system 30, counted 12) for the owner to approve');
+    const e3 = await apply([{ drug_id: ids.Xa, counted: 3 }]);
+    assert(e3.ok === false && /already open/.test(e3.errors[0].message), 'a second count is refused while a stock take is open');
+    await c.query('select approve_stock_take($1,$2,$3::jsonb)', [xPh, e2.take_id, JSON.stringify({})]).catch(() => {});
+    // staff
+    await c.query('select cancel_stock_take($1,$2)', [xPh, e2.take_id]).catch(() => {});
+    await asUser(c, xTaker);
+    const t1 = await apply([{ drug_id: ids.Xb, price: 30 }]);
+    assert(t1.ok === false && /counts only/.test(t1.errors[0].message), 'a stock taker cannot change prices from a sheet');
+    const t2 = await apply([{ drug_id: ids.Xb, counted: 8 }]);
+    assert(t2.ok === true && t2.counted === 1, 'a stock taker can upload counts');
+    // another pharmacy sees nothing
+    await asUser(c, xOther);
+    await c.query('set role authenticated');
+    assert((await c.query('select count(*) n from price_changes')).rows[0].n === '0', 'another pharmacy cannot read this pharmacy\'s price changes');
+    await assertThrows(c.query('select apply_stock_sheet($1, $2::jsonb)', [xPh, JSON.stringify([{ drug_id: ids.Xa, price: 1 }])]), 'another pharmacy cannot apply a sheet here', 'cross pharmacy sheet should be refused');
+    await c.query('reset role');
   });
 
   console.log('\n' + '='.repeat(60));

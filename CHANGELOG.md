@@ -2,6 +2,13 @@
 
 Newest first. The detailed story for each item is in `PHARMA_PROJECT_STATUS.md`.
 
+## 2026-11-07 (night, last++++++++): strict Excel, and the stock sheet
+
+- **Import is now all-or-nothing.** Every row is checked before anything is saved: drug name, unit, whole-number qty, sell price above 0, cost not above sell, a real expiry in the future (12.2027, 31/12/2027 or UNKNOWN), a known form and category, no duplicate rows. If any row is wrong nothing is imported and the pharmacy sees every row to fix (Excel row number and the reason). The database repeats the check without saving (dry run), and the real import undoes the whole block on any failure. Rows are no longer skipped quietly, a missing price no longer imports at 0, a missing expiry no longer imports as unknown (write UNKNOWN on purpose).
+- **Blank template** has the headers only (the old one had a sample drug that could be imported by mistake) plus a "How to fill" sheet.
+- **Count or edit in Excel** (Inventory): download a stock sheet of every drug, fill it, upload it. Counted quantities go into a stock take for the owner to approve (stock does not change until then). Names, units, reorder numbers and selling prices change when applied. A price change also updates the stock on the shelf, past sales keep their price, and each change is recorded in `price_changes`. Any wrong row refuses the whole sheet. Stock takers can upload counts only.
+- Database: `migrations/2026-11-07_excel_sheets.sql` (folded into schema.sql): `import_stock_rows` gains optional `p_dry_run` / `p_strict` (older app versions still work), new table `price_changes` (row-level security, indexed), new `apply_stock_sheet`. Cache `hodhi-shell-v3n`.
+
 ## 2026-11-07 (night, last+++++++): days-of-stock-left alert
 
 - Settings > Alert thresholds: new box "Warn me when a drug will last fewer than (days)". Empty = off, and it is off for every pharmacy until the owner types a number, so nothing changes for anyone today.
