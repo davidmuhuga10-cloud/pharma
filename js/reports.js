@@ -3,11 +3,11 @@
 // --- Reports ---
 
 // The hub links to Sales, Expiry Dates, Stock Valuation, Low Stock and
-// Insurance Claims. Each is a printable report with the pharmacy letterhead
+// Insurance Claims and Close the cash drawer. Each is a printable report with the pharmacy letterhead
 // and the shared print footer (printHtml / letterheadHtml). reportsView says
 // which sub-screen shows, the same in-content navigation as Suppliers'
 // list/detail (supplierDetailId / openSupplierDetail / closeSupplierDetail).
-var reportsView = 'hub'; // 'hub' | 'sales' | 'expiry' | 'valuation' | 'lowstock' | 'claims'
+var reportsView = 'hub'; // 'hub' | 'sales' | 'expiry' | 'valuation' | 'lowstock' | 'claims' | 'cash'
 var reportRange = 'today';
 var reportData = null; // last-loaded sales report, kept for export/print
 var expiryReportData = null;
@@ -20,6 +20,7 @@ async function renderReports() {
   if (reportsView === 'valuation') { await loadValuationReport(); return; }
   if (reportsView === 'lowstock') { await loadLowStockReport(); return; }
   if (reportsView === 'claims') { await loadClaims(); return; }
+  if (reportsView === 'cash') { await loadCashDrawer(); return; }
   drawReportsHub();
 }
 
@@ -31,14 +32,18 @@ var REPORT_TILES = [
   { view: 'expiry', kind: 't-amber', ico: 'warn', title: 'Expiry Dates Report', desc: 'Every batch by expiry urgency — expired, critical, soon, and unknown-expiry batches still needing a real date.' },
   { view: 'valuation', kind: 't-orange', ico: 'wallet', title: 'Stock Valuation Report', desc: 'What your current stock is worth, at cost and at retail, drug by drug.' },
   { view: 'lowstock', kind: 't-red', ico: 'clipboard', title: 'Low Stock Report', desc: 'Every drug at or below its reorder level, with a suggested order quantity.' },
-  { view: 'claims', kind: 't-violet', ico: 'reports', title: 'Insurance Claims', desc: 'Every claim raised at checkout, tracked through to paid or rejected.' }
+  { view: 'claims', kind: 't-violet', ico: 'reports', title: 'Insurance Claims', desc: 'Every claim raised at checkout, tracked through to paid or rejected.' },
+  { view: 'cash', kind: 't-green', ico: 'wallet', title: 'Close the cash drawer', desc: 'Count the cash at the end of a shift and see if it matches the system.' }
 ];
 
 function drawReportsHub() {
   var c = $('#content');
   c.innerHTML =
     '<div class="reports-grid">' +
-    REPORT_TILES.filter(function (r) { return r.view !== 'claims' || can('claims'); }).map(function (r) {
+    REPORT_TILES.filter(function (r) {
+      if (r.view === 'cash') return can('cash_close') || can('cash_review');
+      return r.view !== 'claims' || can('claims');
+    }).map(function (r) {
       return '<button class="report-tile ' + r.kind + '" onclick="openReportView(\'' + r.view + '\')">' +
         '<div class="r-ico">' + icon(r.ico, 20) + '</div>' +
         '<div><div class="r-title">' + esc(r.title) + '</div><div class="r-desc">' + esc(r.desc) + '</div></div>' +

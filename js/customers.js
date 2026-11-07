@@ -533,6 +533,8 @@ function messagesHtml() {
     (can('sms') && enabled ? '<button class="btn ' + (isOwner && w ? 'secondary' : 'primary') + '" onclick="openComposeSms()">+ New message</button>' : '') +
     (isOwner ? '<button class="btn ghost" onclick="toggleSmsEnabled(this)">' + (enabled ? 'Turn SMS off' : 'Turn SMS on') + '</button>' : '') + '</div>' +
     '<div class="tiny" style="margin-bottom:10px">Messages go out from the Pharma SMS service' + (w ? ' and cost ' + fmt(w.price_per_sms) + ' each (a message over 160 characters counts as more than one; a message that fails to send is refunded)' : '') + '. Every message is listed here with who sent it. Customers marked "never text" are skipped.</div>' +
+    eveningSummaryHtml() +
+    '<div class="section-title">Message history</div>' +
     '<div class="card">' + (smsLogCache.length ? smsLogCache.map(function (m) {
       var badge = m.status === 'sent' ? '<span class="badge good">Sent</span>' : m.status === 'failed' ? '<span class="badge bad">Failed</span>' : '<span class="badge warn">Waiting</span>';
       var who = (m.customers && m.customers.name) || showPhone(m.to_phone);
@@ -542,6 +544,74 @@ function messagesHtml() {
         '<div class="right">' + badge + '</div></div>';
     }).join('') : '<div class="empty">No messages yet.</div>') + '</div>';
 }
+// --- Evening summary ---
+// A short SMS at the end of the day: today's sales, whether the cash drawer was closed, and
+// what is low or expiring. Off until the owner turns it on; every part can be switched off on
+// its own, so nobody gets a message they did not ask for.
+
+var EVENING_SECTIONS = [['sales', "Today's sales"], ['cash', 'Cash drawer status'], ['stock', 'Low & expiring stock']];
+
+function eveningSummaryHtml() {
+  var p = STATE.pharmacy || {};
+  var isOwner = STATE.profile.role === 'owner' || STATE.profile.role === 'co_owner';
+  var on = !!p.evening_summary_enabled;
+  var sections = p.evening_summary_sections || ['sales', 'cash', 'stock'];
+  if (!isOwner && !on) return '';   // nothing to show a non-owner when it is off
+  return '<div class="section-title">Evening summary</div>' +
+    '<div class="card" style="padding:14px;margin-bottom:14px">' +
+    '<div class="tiny" style="margin-bottom:10px">A short message at the end of the day with only the parts you choose below. Off until you turn it on.</div>' +
+    (isOwner ?
+      '<label style="display:flex;gap:8px;align-items:center;margin-bottom:10px"><input type="checkbox" id="evOn"' + (on ? ' checked' : '') + ' onchange="evToggleFields()"> <b>Send an evening summary</b></label>' +
+      '<div id="evFields" style="display:' + (on ? 'block' : 'none') + '">' +
+      '<div class="field"><label>Phone number to send it to</label><input id="evPhone" type="tel" inputmode="tel" placeholder="07XX XXX XXX" value="' + esc(showPhone(p.evening_summary_phone) || '') + '"></div>' +
+      '<div style="margin-bottom:10px">' + EVENING_SECTIONS.map(function (s) {
+        return '<label style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><input type="checkbox" id="evSec_' + s[0] + '"' + (sections.indexOf(s[0]) !== -1 ? ' checked' : '') + '> ' + esc(s[1]) + '</label>';
+      }).join('') + '</div>' +
+      '<button class="btn primary small" onclick="saveEveningSummary(this)">Save</button> ' +
+      '<button class="btn secondary small" onclick="sendEveningSummaryNow(this)">Send a test now</button>' +
+      '</div>'
+      : (on ? '<div class="tiny">On — sent each evening to ' + esc(showPhone(p.evening_summary_phone)) + '. Only the owner can change this.</div>' : '')) +
+    '</div>';
+}
+
+function evToggleFields() {
+  var on = $('#evOn').checked;
+  $('#evFields').style.display = on ? 'block' : 'none';
+}
+
+function saveEveningSummary(btn) {
+  act(btn, async function () {
+    var on = $('#evOn').checked;
+    var payload = { evening_summary_enabled: on };
+    if (on) {
+      var phone = $('#evPhone').value.trim();
+      if (!phone) { toast('Add a phone number to send the summary to.', 'bad'); return; }
+      var sections = EVENING_SECTIONS.map(function (s) { return s[0]; }).filter(function (k) { return $('#evSec_' + k).checked; });
+      if (!sections.length) { toast('Choose at least one thing to include, or turn the summary off.', 'bad'); return; }
+      payload.evening_summary_phone = phone;
+      payload.evening_summary_sections = sections;
+    }
+    var { error } = await sb.from('pharmacies').update(payload).eq('id', STATE.profile.pharmacy_id);
+    if (error) { toast(friendlyError(error), 'bad'); return; }
+    STATE.pharmacy = Object.assign({}, STATE.pharmacy, payload);
+    saveProfileCache();
+    toast('Saved.', 'good');
+    redrawMessages();
+  });
+}
+
+function sendEveningSummaryNow(btn) {
+  act(btn, async function () {
+    var r = await sb.functions.invoke('send-sms', { body: { pharmacy_id: STATE.profile.pharmacy_id, mode: 'evening_summary' } });
+    if (r.error) { toast('Could not reach the SMS service. Check your connection and try again.', 'bad'); return; }
+    var d = r.data || {};
+    if (!d.ok) { toast(d.message || 'Could not send the message.', 'bad'); return; }
+    toast('Sent.', 'good');
+    await loadSmsLog();
+    redrawMessages();
+  });
+}
+
 // --- Buy SMS with M-Pesa ---
 // The Netlify function sms-topup sends the PIN prompt. The wallet is credited by
 // Safaricom's result, never by this screen, which only watches until the

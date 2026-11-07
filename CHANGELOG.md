@@ -2,6 +2,62 @@
 
 Newest first. The detailed story for each item is in `PHARMA_PROJECT_STATUS.md`.
 
+## 2026-11-07 (night, latest): Everything applied live
+
+- All 6 pending database migrations applied to the live project, in order: price history, cash drawer, supplier returns (enum + table), evening summary, barcode.
+- Both Edge Functions deployed: send-sms (updated) and send-queued-summaries (new). CRON_SHARED_SECRET set in Edge Function secrets, matched by pharma_cron_shared_secret / pharma_cron_sender_url in the database Vault — the automatic nightly summary send is now fully wired up, not just built.
+- Small hardening fix: the 3 new database functions from this round were missing the `search_path` lock every other function already has. Added it — no behaviour change, just closes a security-advisor warning.
+- Full SQL test suite re-run against the exact schema now live: 509 passed, 0 failed.
+
+## 2026-11-07 (night, later): 80mm receipt printing
+
+- New: the sale receipt (the 'Print receipt' button after Checkout) now prints sized for an 80mm thermal till roll — narrow, one line per drug with its quantity and price underneath, dashed section rules instead of a wide table. It still prints through the browser's normal print dialog, so a pharmacy with an ordinary A4/letter printer is not broken by it; the 80mm size is only a hint the printer can still be changed, same as any other print job.
+- Every other report (Inventory, Sales, Low Stock, supplier statements and so on) is unaffected — only the sale receipt uses the narrow layout.
+
+## 2026-11-07 (night, later): Barcode scanning
+
+- New: a drug can have a barcode. Scanning it on Sell or Inventory (camera, via a Scan button, or a USB barcode scanner, which types the number fast and presses Enter for you) finds the drug straight away instead of typing its name. Add/Edit drug gained an optional Barcode field with the same Scan button. Typing or scanning works everywhere; nothing is forced on a drug that has none.
+- Camera scanning uses the phone's own browser feature (BarcodeDetector) — nothing new was downloaded or installed, and where a browser doesn't support it the Scan button simply does not appear (typing and USB scanners still work there).
+- Two drugs in the same pharmacy cannot share a barcode — the same rule, and the same 'bring the hidden one back instead' message, that already applied to a drug's name.
+
+## 2026-11-07 (night, later): The evening summary SMS
+
+- New: Messages > Evening summary. A short SMS at the end of the day — today's sales, whether the cash drawer was closed, and what is low or expiring. Off for every pharmacy until the owner turns it on; each part (sales, cash drawer, stock) can be switched off on its own. Nothing is forced on anyone.
+- The owner picks the phone number it goes to and can press 'Send a test now' to see it right away, the same way refill reminders already work.
+- Once turned on, it also sends itself automatically each evening (about 18:30), through the database's own scheduler — no one needs to be in the app. It respects the same daily SMS limit and on/off switch as every other message, and sends at most one summary a day.
+- Migration (applied live): pharmacies.evening_summary_enabled / evening_summary_phone / evening_summary_sections; evening_summary_text(), queue_evening_summary_now() and queue_evening_summaries(); a new scheduled job 'pharma-evening-summary'. A typed phone number that is not real is cleared instead of saved.
+- New Edge Function send-queued-summaries, cron-triggered only (checked by a shared secret, not a login), reusing the same sending code as send-sms so a summary goes out exactly the way a person's own message does.
+- What I could not test here: the automatic nightly send reaches outside the database (through pg_net and a shared secret that still need to be set up on the live project), so it cannot be rehearsed offline. Turn it on for one pharmacy first and check the message arrives before telling others. The message-building and queuing rules themselves are fully tested (26 SQL checks).
+
+## 2026-11-07 (night, later): Ordering from a supplier by WhatsApp
+
+- New button on the Low Stock report: Order by WhatsApp. Pick a supplier, tick the drugs (drugs last bought from that supplier are ticked first), check the quantities, and a WhatsApp chat opens with the order message already typed.
+- Nothing is sent by the app and nothing is saved — it only opens WhatsApp with the message ready, the same way customer reminders already work. The person sends it themselves, from their own WhatsApp.
+- A supplier with no usable phone number, or no drugs ticked, is told so instead of a broken link. The message can also be copied, for a supplier reached another way.
+- Service worker cache bumped to hodhi-shell-v3r.
+
+## 2026-11-07 (night, later): Returning stock to a supplier
+
+- New button on every batch: Return to supplier. Pick the quantity, the credit (starts as quantity x cost, can be changed; a batch with no cost needs it typed) and a reason. Stock leaves the batch, the stock audit trail records it as 'Returned to supplier', and the credit lowers what the supplier is owed.
+- The supplier statement shows the credit line, a Credit total, and a Credit column in Excel and Print. The Suppliers list and the dashboard 'Debt owed' follow. A supplier with no returns is worked out exactly as before.
+- Controlled drugs returned to a supplier are on the controlled register as 'Returned to supplier'.
+- Owner, co-owner and pharmacist only; accountants can read the records. New table supplier_returns (row-level security, indexed). Existing data is untouched.
+- Not included: undoing a return. A wrong return is corrected by restocking and a note on the statement.
+- Service worker cache bumped to hodhi-shell-v3q.
+
+## 2026-11-07 (night, later): Closing the cash drawer
+
+- New screen in Reports: Close the cash drawer. At the end of a shift the person counts the cash; the app works out what should be there (cash sales and cash customer payments, less cash refunds, cash expenses and cash supplier payments, plus the float left last time) and records the difference.
+- A seller counts blind: the expected figure is hidden until the closing is saved. Owners, co-owners and pharmacists see the figures first. Owners, co-owners, pharmacists and accountants read the history. Stock takers have no cash drawer.
+- A count that does not match needs a short reason. The refusal does not say short or over.
+- New table cash_closings (row-level security, indexed by pharmacy). Two people closing together are queued, so a period is never counted twice. Existing data is untouched.
+- Service worker cache bumped to hodhi-shell-v3p.
+
+## 2026-11-07 (night, later): price history
+
+- Drug screen: new Price history list (old price to new price, when, who, and whether it came from a restock or an Excel sheet), last 10 changes.
+- Database: `migrations/2026-11-07_price_history.sql` (folded into schema.sql): a trigger on drugs records every change of the selling price into `price_changes`, from any path (restock, sheet, edit). A first price is not a change. The stock sheet no longer writes its own record (no double entries). No existing row is edited.
+
 ## 2026-11-07 (night, last++++++++): strict Excel, and the stock sheet
 
 - **Import is now all-or-nothing.** Every row is checked before anything is saved: drug name, unit, whole-number qty, sell price above 0, cost not above sell, a real expiry in the future (12.2027, 31/12/2027 or UNKNOWN), a known form and category, no duplicate rows. If any row is wrong nothing is imported and the pharmacy sees every row to fix (Excel row number and the reason). The database repeats the check without saving (dry run), and the real import undoes the whole block on any failure. Rows are no longer skipped quietly, a missing price no longer imports at 0, a missing expiry no longer imports as unknown (write UNKNOWN on purpose).

@@ -19,15 +19,43 @@ async function renderInventory() {
 var invPage = 1;
 var INV_PAGE_SIZE = 50;
 
+// Enter in the search box: if what's typed is exactly one drug's barcode, open
+// that drug straight away (typed by hand, or a USB scanner typing it for you).
+function invSearchKeydown(e) {
+  if (e.key !== 'Enter') return;
+  var raw = invFilter.trim();
+  if (!raw) return;
+  var d = STATE.drugsCache.find(function (x) { return x.barcode === raw; });
+  if (!d) return;
+  e.preventDefault();
+  openDrugDetail(d.drug_id);
+}
+
+function invScanBarcode() {
+  openBarcodeScan(function (code) {
+    var d = STATE.drugsCache.find(function (x) { return x.barcode === code; });
+    if (d) { openDrugDetail(d.drug_id); return; }
+    invFilter = code;
+    var input = $('#invSearchInput');
+    if (input) input.value = code;
+    invPage = 1;
+    drawInventory();
+    toast('No drug matches that barcode.', 'bad');
+  });
+}
+
 function drawInventory() {
   var c = $('#content');
-  var q = invFilter.toLowerCase();
-  var allRows = STATE.drugsCache.filter(function (d) { return d.name.toLowerCase().indexOf(q) !== -1; });
+  var raw = invFilter.trim(), q = raw.toLowerCase();
+  var allRows = STATE.drugsCache.filter(function (d) { return d.name.toLowerCase().indexOf(q) !== -1 || (d.barcode && d.barcode.indexOf(raw) !== -1); });
   var rows = allRows.slice(0, invPage * INV_PAGE_SIZE);
   var reorderCount = STATE.drugsCache.filter(function (d) { return d.qty_in_stock <= d.reorder_level; }).length;
   var unknownExpiryCount = STATE.drugsCache.filter(function (d) { return d.has_unknown_expiry; }).length;
   redrawKeepingFocus(c,
-    '<div class="searchbox field"><input id="invSearchInput" placeholder="Search drugs…" value="' + esc(invFilter) + '" oninput="invFilter=this.value;invPage=1;drawInventory()"></div>' +
+    '<div class="searchbox field" style="display:flex;gap:8px;align-items:center">' +
+    '<input id="invSearchInput" placeholder="Search drugs, or scan a barcode…" value="' + esc(invFilter) + '" oninput="invFilter=this.value;invPage=1;drawInventory()" onkeydown="invSearchKeydown(event)" style="flex:1">' +
+    (barcodeCameraSupported() ? '<button class="btn secondary" title="Scan barcode" aria-label="Scan barcode" onclick="invScanBarcode()">' + icon('barcode', 18) + '</button>' : '') +
+    '</div>' +
     '<div class="toolbar-row">' +
     (can('edit_inventory') || can('stock_take') ? '<div class="toolbar-segment">' +
       '<button class="btn" onclick="openStockSheetMenu()">' + icon('clipboard',15) + ' Count / edit in Excel</button>' +

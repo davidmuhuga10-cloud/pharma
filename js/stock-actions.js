@@ -124,6 +124,9 @@ function openAddDrug() {
     '<div class="field"><label>Pack size (optional)</label><input id="dPackSize" type="number" placeholder="e.g. 100"></div>' +
     '<div class="field"><label>Pack label (optional)</label><input id="dPackLabel" placeholder="e.g. box"></div></div>' +
     '<div class="tiny" style="margin-bottom:10px">Pack size just speeds up restocking later — e.g. "100" + "box" lets you enter "3 boxes" instead of typing 300.</div>' +
+    '<div class="field"><label>Barcode (optional)</label><div style="display:flex;gap:8px"><input id="dBarcode" placeholder="Scan, or type it in" style="flex:1">' +
+    (barcodeCameraSupported() ? '<button type="button" class="btn secondary" title="Scan barcode" aria-label="Scan barcode" onclick="openBarcodeScan(function(c){document.getElementById(\'dBarcode\').value=c;})">' + icon('barcode', 18) + '</button>' : '') + '</div></div>' +
+    '<div class="tiny" style="margin-bottom:10px">Lets Sell and Inventory find this drug by scanning it. Leave empty if it has none - nothing changes for it.</div>' +
     '<button class="btn primary" id="dSaveBtn" onclick="saveNewDrug()">Save drug</button>' +
     '<div class="tiny" style="margin-top:10px">Add its first batch (quantity, price, expiry) right after saving.</div>';
 }
@@ -144,12 +147,15 @@ async function saveNewDrug() {
       reorder_custom: (parseInt($('#dReorder').value, 10) || 5) !== (STATE.pharmacy.low_stock_default || 5),
       is_prescription: $('#dRx').value === 'true',
       pack_size: parseInt($('#dPackSize').value, 10) || null,
-      pack_label: $('#dPackLabel').value.trim() || null
+      pack_label: $('#dPackLabel').value.trim() || null,
+      barcode: $('#dBarcode').value.trim() || null
     };
     var { data, error } = await sb.from('drugs').insert(payload).select().single();
     if (error) {
-      // The name is taken: by a drug in the list, or by one that was stopped (hidden).
-      if (error.code === '23505' || /duplicate key|unique constraint/i.test(error.message || '')) {
+      if (error.code === '23505' && /barcode/i.test(error.message || '')) {
+        toast('Another drug already uses that barcode.', 'bad');
+      } else if (error.code === '23505' || /duplicate key|unique constraint/i.test(error.message || '')) {
+        // The name is taken: by a drug in the list, or by one that was stopped (hidden).
         toast('A drug with that name already exists. If you stopped selling it, bring it back from Hidden drugs on the Inventory screen.', 'bad');
       } else toast(friendlyError(error), 'bad');
       return;
@@ -204,6 +210,8 @@ function openEditDrug(encodedDrug) {
     '<div class="row-2">' +
     '<div class="field"><label>Pack size (optional)</label><input id="ePackSize" type="number" min="1" value="' + (drug.pack_size || '') + '"></div>' +
     '<div class="field"><label>Pack label (optional)</label><input id="ePackLabel" value="' + esc(drug.pack_label || '') + '"></div></div>' +
+    '<div class="field"><label>Barcode (optional)</label><div style="display:flex;gap:8px"><input id="eBarcode" value="' + esc(drug.barcode || '') + '" placeholder="Scan, or type it in" style="flex:1">' +
+    (barcodeCameraSupported() ? '<button type="button" class="btn secondary" title="Scan barcode" aria-label="Scan barcode" onclick="openBarcodeScan(function(c){document.getElementById(\'eBarcode\').value=c;})">' + icon('barcode', 18) + '</button>' : '') + '</div></div>' +
     '<button class="btn primary" id="eSaveBtn" onclick="saveEditedDrug(\'' + drug.id + '\')">Save changes</button>' +
     '<div class="tiny" style="margin-top:10px">Stock and past sales are not touched. Past sales and reports will show the new name.</div>';
 }
@@ -237,7 +245,8 @@ function saveEditedDrug(drugId) {
       p_reorder_custom: custom,
       p_is_prescription: $('#eRx').value === 'true',
       p_pack_size: parseInt($('#ePackSize').value, 10) || null,
-      p_pack_label: $('#ePackLabel').value.trim() || null
+      p_pack_label: $('#ePackLabel').value.trim() || null,
+      p_barcode: $('#eBarcode').value.trim() || null
     });
     toast('Drug updated.', 'good');
     clearDashCache();
@@ -326,7 +335,8 @@ async function openDrugDetail(drugId) {
   var detail = await Promise.all([
     sb.from('drugs').select('*').eq('id', drugId).single(),
     sb.from('batches').select('*').eq('drug_id', drugId).gt('quantity_remaining', 0).order('expiry_date').limit(300),
-    sb.from('batches').select('*').eq('drug_id', drugId).eq('quantity_remaining', 0).order('received_at', { ascending: false }).order('created_at', { ascending: false }).limit(DONE_BATCHES_SHOWN)
+    sb.from('batches').select('*').eq('drug_id', drugId).eq('quantity_remaining', 0).order('received_at', { ascending: false }).order('created_at', { ascending: false }).limit(DONE_BATCHES_SHOWN),
+    sb.from('price_changes').select('old_price,new_price,changed_at,source,profiles(full_name)').eq('drug_id', drugId).order('changed_at', { ascending: false }).limit(10)
   ]);
   var drugRow = detail[0].data;
   var batches = (detail[1].data || []).concat(detail[2].data || []).sort(function (a, b) { return String(a.expiry_date) < String(b.expiry_date) ? -1 : 1; });
@@ -357,6 +367,7 @@ async function openDrugDetail(drugId) {
           // "Correct count" is record_correction, which has its own permission
           // (correct_stock), separate from write_off. A stock_taker can correct but not
           // write off.
+          (can('suppliers') ? '<button class="btn ghost small" onclick="openSupplierReturn(\'' + b.id + '\',\'' + esc(d.name).replace(/'/g, "\\'") + '\',' + b.quantity_remaining + ',' + (b.cost_price == null ? 'null' : Number(b.cost_price)) + ',\'' + (b.supplier_id || '') + '\')">Return to supplier</button>' : '') +
           (can('correct_stock') ? '<button class="btn ghost small" onclick="openCorrection(\'' + b.id + '\',\'' + esc(d.name).replace(/'/g, "\\'") + '\',' + b.quantity_remaining + ')">Correct count</button>' : '') +
           (can('discount') ? '<button class="btn ghost small" onclick="openDiscount(\'' + b.id + '\',\'' + esc(d.name).replace(/'/g, "\\'") + '\',' + b.discount_percent + ')">Mark down</button>' : '') +
           // Owner only: fixes a batch with a real but wrong expiry date (e.g. already
@@ -364,7 +375,19 @@ async function openDrugDetail(drugId) {
           (can('edit_expiry') ? '<button class="btn ghost small" onclick="openEditExpiry(\'' + b.id + '\',\'' + esc(d.name).replace(/'/g, "\\'") + '\',\'' + (b.expiry_unknown ? '' : b.expiry_date) + '\')">Edit expiry</button>' : '') +
           '</div>' : '') +
         '</div>';
-    }).join('') + usedUpNote : '<div class="empty">No batches yet.</div>');
+    }).join('') + usedUpNote : '<div class="empty">No batches yet.</div>') +
+    priceHistoryHtml(detail[3].data);
+}
+
+// The last price changes of a drug: old price, new price, when, who, and where it came from.
+function priceHistoryHtml(rows) {
+  if (!rows || !rows.length) return '';
+  var how = { sheet: 'Excel sheet', restock: 'Restock' };
+  return '<div class="section-title">Price history</div><div class="card">' + rows.map(function (r) {
+    var who = r.profiles && r.profiles.full_name ? ' · ' + esc(r.profiles.full_name) : '';
+    return '<div class="list-row"><div><div class="name">' + fmt(r.old_price) + ' to ' + fmt(r.new_price) + '</div>' +
+      '<div class="meta">' + fmtDateTime(r.changed_at) + who + ' · ' + esc(how[r.source] || 'Edit') + '</div></div></div>';
+  }).join('') + '</div>';
 }
 
 function openRestock(encodedDrug) {
@@ -448,6 +471,74 @@ async function saveWriteOff(batchId) {
     });
     if (error) { toast(friendlyError(error), 'bad'); return; }
     toast('Recorded.', 'good');
+    closeSheet();
+    renderInventory();
+  });
+}
+
+// --- Return stock to a supplier ---
+// Sends part or all of a batch back and records the credit, which lowers what the supplier is owed.
+// The credit starts as quantity x the batch's cost price and can be changed (the supplier may
+// give less, or more). The checks that matter run again in record_supplier_return.
+
+// quantity x cost, to 2 places; null when the cost was never recorded or the quantity is not valid
+function supplierReturnCredit(qty, cost) {
+  var q = Number(qty);
+  if (cost == null || cost === '' || !(q > 0) || isNaN(Number(cost))) return null;
+  return Math.round(q * Number(cost) * 100) / 100;
+}
+
+function openSupplierReturn(batchId, drugName, maxQty, cost, supplierId) {
+  var sups = STATE.suppliersCache || [];
+  var fixed = supplierId ? sups.filter(function (s) { return s.id === supplierId; }) : sups;
+  var body = sheet('Return to supplier: ' + drugName, '');
+  if (!fixed.length) {
+    body.innerHTML = '<div class="empty">Add this supplier under Suppliers first, then come back to return the stock.</div>';
+    return;
+  }
+  body.innerHTML =
+    '<div class="tiny" style="margin-bottom:10px">' + maxQty + ' left in this batch.</div>' +
+    '<div class="field"><label>Supplier</label><select id="srSupplier"' + (supplierId ? ' disabled' : '') + '>' +
+    (supplierId ? '' : '<option value="">Choose the supplier</option>') +
+    fixed.map(function (s) { return '<option value="' + esc(s.id) + '"' + (supplierId ? ' selected' : '') + '>' + esc(s.name) + '</option>'; }).join('') +
+    '</select></div>' +
+    '<div class="row-2">' +
+    '<div class="field"><label>Quantity</label><input id="srQty" type="number" min="1" max="' + maxQty + '" oninput="srRefreshCredit(' + (cost == null ? 'null' : Number(cost)) + ')"></div>' +
+    '<div class="field"><label>Credit (KES)</label><input id="srCredit" type="number" min="0" step="0.01" placeholder="' + (cost == null ? 'Type the credit' : 'Quantity x cost') + '" oninput="this.dataset.touched=1"></div>' +
+    '</div>' +
+    '<div class="field"><label>Reason (required)</label><textarea id="srReason" rows="2" placeholder="e.g. expired, damaged, wrong item delivered"></textarea></div>' +
+    '<button class="btn primary" id="srSaveBtn" onclick="saveSupplierReturn(\'' + batchId + '\',' + maxQty + ',' + (cost == null ? 'null' : Number(cost)) + ')">Return stock</button>';
+}
+
+function srRefreshCredit(cost) {
+  var el = $('#srCredit');
+  if (!el || el.dataset.touched) return;
+  var v = supplierReturnCredit($('#srQty').value, cost);
+  el.value = v == null ? '' : v;
+}
+
+async function saveSupplierReturn(batchId, maxQty, cost) {
+  var btn = $('#srSaveBtn');
+  act(btn, async function () {
+    var supplierId = $('#srSupplier').value;
+    var qty = parseInt($('#srQty').value, 10);
+    var reason = $('#srReason').value.trim();
+    var creditText = $('#srCredit').value.trim();
+    if (!supplierId) { toast('Choose the supplier.', 'bad'); return; }
+    if (!qty || qty <= 0) { toast('Enter a valid quantity.', 'bad'); return; }
+    if (qty > maxQty) { toast('Only ' + maxQty + ' left in this batch.', 'bad'); return; }
+    if (!reason) { toast('Give a reason. It goes on the stock audit trail.', 'bad'); return; }
+    if (creditText === '' && cost == null) { toast('This batch has no cost price. Type the credit (0 if none).', 'bad'); return; }
+    var credit = creditText === '' ? null : Number(creditText);
+    if (credit != null && (isNaN(credit) || credit < 0)) { toast('The credit must be 0 or more.', 'bad'); return; }
+    var shown = credit == null ? supplierReturnCredit(qty, cost) : credit;
+    if (!(await askConfirm('Return stock', 'Return ' + qty + ' unit(s) for a credit of ' + fmt(shown) + '? This cannot be undone.', 'Return stock', true))) return;
+    var { error } = await sb.rpc('record_supplier_return', {
+      p_pharmacy_id: STATE.profile.pharmacy_id, p_supplier_id: supplierId, p_batch_id: batchId,
+      p_quantity: qty, p_reason: reason, p_credit_amount: credit
+    });
+    if (error) { toast(friendlyError(error), 'bad'); return; }
+    toast('Returned. The supplier balance is updated.', 'good');
     closeSheet();
     renderInventory();
   });

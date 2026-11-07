@@ -6,7 +6,7 @@
 var CONTROL_LABEL = { dda: 'DDA', psy: 'Psychotropic', none: 'Not controlled' };
 var CONTROL_LONG = { dda: 'Dangerous drug (DDA)', psy: 'Psychotropic substance', none: 'Not controlled' };
 var LEDGER_KIND = { opening: 'Opening balance', restock: 'Received', sale: 'Sold', 'return': 'Returned', 'void': 'Sale voided',
-  correction: 'Count corrected', write_off: 'Written off', expired_disposal: 'Expired, disposed', stock_take: 'Stock take' };
+  correction: 'Count corrected', write_off: 'Written off', expired_disposal: 'Expired, disposed', stock_take: 'Stock take', supplier_return: 'Returned to supplier' };
 var controlledCache = [];
 var controlledDetailId = null;
 var controlledLedger = null;   // { drug, rows }

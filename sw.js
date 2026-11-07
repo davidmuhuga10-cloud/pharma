@@ -4,13 +4,14 @@
 // available, since a stale "in stock" answer at the counter is worse than a slow
 // one. Bump CACHE_NAME on every deploy so returning users get the new shell.
 
-const CACHE_NAME = 'hodhi-shell-v3n';
+const CACHE_NAME = 'hodhi-shell-v3u';
 // The vendored libraries must be listed here, or a first-ever offline open
 // fails: index.html comes from the cache but vendor-supabase.js does not.
 const SHELL_FILES = [
   './', './index.html', './style.css', './nativeShell.js', './install.js', './config.js', './manifest.json',
   './vendor-supabase.js',
   './js/core.js',
+  './js/barcode.js',
   './js/shell.js',
   './js/profile.js',
   './js/export.js',
@@ -24,9 +25,11 @@ const SHELL_FILES = [
   './js/reports-stock.js',
   './js/claims-settings.js',
   './js/suppliers.js',
+  './js/supplier-order.js',
   './js/expenses.js',
   './js/customers.js',
   './js/controlled-stocktake.js',
+  './js/cash-drawer.js',
   './js/main.js'
   // vendor-xlsx.js (880 KB) is deliberately not pre-cached. Only Excel
   // import/export needs it; the app loads it after the first screen and the fetch

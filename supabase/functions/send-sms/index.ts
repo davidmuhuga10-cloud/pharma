@@ -49,6 +49,8 @@ Deno.serve(async (req: Request) => {
     const out = await handle(body, {
       queue: (pharmacyId, messages) =>
         asUser.rpc("sms_queue", { p_pharmacy_id: pharmacyId, p_messages: messages }) as any,
+      queueSummary: (pharmacyId) =>
+        asUser.rpc("queue_evening_summary_now", { p_pharmacy_id: pharmacyId }) as any,
       loadConfig: async () => {
         const { data } = await admin.from("sms_platform_config").select("*").eq("id", 1).maybeSingle();
         return data || null;

@@ -1496,6 +1496,349 @@ async function main() {
     assert((await c.query('select count(*) n from price_changes')).rows[0].n === '0', 'another pharmacy cannot read this pharmacy\'s price changes');
     await assertThrows(c.query('select apply_stock_sheet($1, $2::jsonb)', [xPh, JSON.stringify([{ drug_id: ids.Xa, price: 1 }])]), 'another pharmacy cannot apply a sheet here', 'cross pharmacy sheet should be refused');
     await c.query('reset role');
+
+    // --------------------------------------------------------------
+    console.log('\n== Price history: every selling-price change is recorded ==');
+    await asUser(c, xOwner);
+    const phist = async (id) => (await c.query('select old_price, new_price, source from price_changes where drug_id = $1 order by changed_at, id', [id])).rows;
+    assert((await phist(ids.Xa)).length === 0, 'the first price a drug gets is not recorded as a change');
+    await c.query("select record_restock($1,$2,5,5,15,(current_date + interval '300 days')::date,'PH1','S')", [xPh, ids.Xc]);
+    let h = await phist(ids.Xc);
+    assert(h.length === 1 && Number(h[0].old_price) === 10 && Number(h[0].new_price) === 15 && h[0].source === 'restock', 'a restock at a new price is recorded (10 to 15, from a restock)');
+    await c.query("select record_restock($1,$2,5,5,15,(current_date + interval '300 days')::date,'PH2','S')", [xPh, ids.Xc]);
+    assert((await phist(ids.Xc)).length === 1, 'a restock at the same price records nothing');
+    const hb = await phist(ids.Xb);
+    assert(hb.length === 1 && hb[0].source === 'sheet', 'a price changed from a stock sheet is recorded once, marked as from a sheet');
+    const who = (await c.query('select changed_by from price_changes where drug_id = $1', [ids.Xb])).rows[0].changed_by;
+    assert(!!who, 'and records who made the change');
+
+    // --------------------------------------------------------------
+    console.log('\n== Closing the cash drawer ==');
+    const kOwner = (await c.query('insert into auth.users default values returning id')).rows[0].id;
+    const kSeller = (await c.query('insert into auth.users default values returning id')).rows[0].id;
+    const kTaker = (await c.query('insert into auth.users default values returning id')).rows[0].id;
+    const kOther = (await c.query('insert into auth.users default values returning id')).rows[0].id;
+    await asUser(c, kOwner);
+    const kPh = (await c.query("select bootstrap_pharmacy('Cash Test', 'Cash Owner', '0711000030') as id")).rows[0].id;
+    await c.query("insert into profiles (id, pharmacy_id, full_name, role) values ($1,$2,'Seller','attendant'), ($3,$2,'Taker','stock_taker')", [kSeller, kPh, kTaker]);
+    await asUser(c, kOther);
+    const kPh2 = (await c.query("select bootstrap_pharmacy('Cash Other', 'Other', '0711000031') as id")).rows[0].id;
+    await asUser(c, kOwner);
+    const kDrug = (await c.query("insert into drugs (pharmacy_id, name, form, unit) values ($1,'Cash Drug','tablet','tablet') returning id", [kPh])).rows[0].id;
+    await c.query("select record_restock($1,$2,500,5,10,(current_date + interval '300 days')::date,'C1','S')", [kPh, kDrug]);
+    const kSale = async (q, pays) => (await c.query("select record_sale($1, jsonb_build_array(jsonb_build_object('drug_id',$2::text,'quantity',$3::int)), $4::jsonb) as id", [kPh, kDrug, q, JSON.stringify(pays)])).rows[0].id;
+    const cashSale = await kSale(10, [{ method: 'cash', amount: 100 }]);            // 100 cash
+    await kSale(5, [{ method: 'mpesa', amount: 50 }]);                                // not cash
+    await kSale(5, [{ method: 'cash', amount: 30 }, { method: 'mpesa', amount: 20 }]); // 30 cash
+    const voided = await kSale(4, [{ method: 'cash', amount: 40 }]);
+    await c.query("select void_sale($1,$2,'test')", [kPh, voided]);                   // a voided sale is not cash taken
+    const item = (await c.query('select id from sale_items where sale_id = $1', [cashSale])).rows[0].id;
+    await c.query("select record_return($1,$2,2,'test')", [kPh, item]);               // refund 20 from a cash sale
+    await c.query("insert into expenses (pharmacy_id, category, description, amount, method) values ($1,'other','Tea',20,'cash'), ($1,'other','Bank fee',99,'bank')", [kPh]);
+    const kSup = (await c.query("insert into suppliers (pharmacy_id, name) values ($1,'Sup') returning id", [kPh])).rows[0].id;
+    await c.query("insert into supplier_payments (pharmacy_id, supplier_id, amount, method) values ($1,$2,10,'cash'), ($1,$2,500,'mpesa')", [kPh, kSup]);
+    const kCust = (await c.query("insert into customers (pharmacy_id, name) values ($1,'Kopa') returning id", [kPh])).rows[0].id;
+    await c.query("insert into customer_payments (pharmacy_id, customer_id, kind, amount, method) values ($1,$2,'payment',15,'cash'), ($1,$2,'payment',70,'mpesa')", [kPh, kCust]);
+
+    const sum1 = (await c.query('select cash_drawer_summary($1) as s', [kPh])).rows[0].s;
+    assert(Number(sum1.cash_sales) === 130 && Number(sum1.customer_payments) === 15 && Number(sum1.refunds) === 20 && Number(sum1.expenses) === 20 && Number(sum1.supplier_payments) === 10, 'the drawer figures count only cash: sales 130, customer payments 15, refund 20, expenses 20, suppliers 10');
+    assert(Number(sum1.expected) === 95 && sum1.blind === false, 'expected cash = 130 + 15 - 20 - 20 - 10 = 95 (voided and non-cash money left out)');
+
+    await asUser(c, kSeller);
+    const blind = (await c.query('select cash_drawer_summary($1) as s', [kPh])).rows[0].s;
+    assert(blind.blind === true && blind.expected === undefined && blind.cash_sales === undefined, 'a seller gets a blind count: no expected figure and no totals');
+    await asUser(c, kTaker);
+    await assertThrows(c.query('select cash_drawer_summary($1)', [kPh]), 'a stock taker cannot use the cash drawer', 'stock taker should be refused');
+    await asUser(c, kOther);
+    await assertThrows(c.query('select cash_drawer_summary($1)', [kPh]), 'another pharmacy cannot read this drawer', 'cross pharmacy should be refused');
+
+    await asUser(c, kSeller);
+    await assertThrows(c.query('select close_cash_drawer($1, 90, 50, null)', [kPh]), 'the count does not match', 'a difference without a reason should be refused');
+    await assertThrows(c.query('select close_cash_drawer($1, 90, 95, $2)', [kPh, 'x']), 'cash kept cannot exceed cash counted', 'kept above counted should be refused');
+    await assertThrows(c.query('select close_cash_drawer($1, -5, 0, $2)', [kPh, 'x']), 'a negative count is refused', 'negative should be refused');
+    const closed = (await c.query("select close_cash_drawer($1, 90, 50, 'Gave change from my pocket') as r", [kPh])).rows[0].r;
+    assert(Number(closed.expected) === 95 && Number(closed.difference) === -5, 'the seller closes: expected 95, counted 90, difference -5 (short)');
+    await asUser(c, kOwner);
+    const row = (await c.query('select * from cash_closings where pharmacy_id = $1', [kPh])).rows;
+    assert(row.length === 1 && Number(row[0].kept) === 50 && row[0].note === 'Gave change from my pocket' && row[0].closed_by === kSeller, 'the closing is saved with who closed it, the float kept and the reason');
+
+    // next period starts from the float kept
+    const sum2 = (await c.query('select cash_drawer_summary($1) as s', [kPh])).rows[0].s;
+    assert(Number(sum2.opening) === 50 && Number(sum2.cash_sales) === 0 && Number(sum2.expected) === 50, 'after closing, the next period opens with the 50 kept and no old sales');
+    await kSale(3, [{ method: 'cash', amount: 30 }]);
+    assert(Number((await c.query('select cash_drawer_summary($1) as s', [kPh])).rows[0].s.expected) === 80, 'a sale after closing counts in the new period (50 + 30)');
+    const exact = (await c.query('select close_cash_drawer($1, 80, 0, null) as r', [kPh])).rows[0].r;
+    assert(Number(exact.difference) === 0, 'an exact count needs no reason');
+
+    // who can read the history
+    await asUser(c, kSeller);
+    await c.query('set role authenticated');
+    assert((await c.query('select count(*) n from cash_closings')).rows[0].n === '0', 'a seller cannot read the closings history (so cannot work out the figures)');
+    await c.query('reset role');
+    await asUser(c, kOwner);
+    await c.query('set role authenticated');
+    assert((await c.query('select count(*) n from cash_closings')).rows[0].n === '2', 'the owner reads the history');
+    await assertThrows(c.query("insert into cash_closings (pharmacy_id, period_start, opening, cash_sales, customer_payments, refunds, expenses, supplier_payments, expected, counted, kept, difference) values ($1, now(), 0,0,0,0,0,0,0,0,0,0)", [kPh]), 'the app cannot write closings directly', 'direct insert should be refused');
+    await c.query('reset role');
+    await asUser(c, kOther);
+    await c.query('set role authenticated');
+    assert((await c.query('select count(*) n from cash_closings')).rows[0].n === '0', 'another pharmacy cannot read these closings');
+    await c.query('reset role');
+
+    // --------------------------------------------------------------
+    console.log('\n== Returning stock to a supplier ==');
+    const rOwner = (await c.query('insert into auth.users default values returning id')).rows[0].id;
+    const rPharm = (await c.query('insert into auth.users default values returning id')).rows[0].id;
+    const rSeller = (await c.query('insert into auth.users default values returning id')).rows[0].id;
+    const rAcct = (await c.query('insert into auth.users default values returning id')).rows[0].id;
+    const rOther = (await c.query('insert into auth.users default values returning id')).rows[0].id;
+    await asUser(c, rOwner);
+    const rPh = (await c.query("select bootstrap_pharmacy('Return Test', 'Return Owner', '0711000040') as id")).rows[0].id;
+    await c.query("insert into profiles (id, pharmacy_id, full_name, role) values ($1,$2,'Pharm','pharmacist'), ($3,$2,'Seller','attendant'), ($4,$2,'Acct','accountant')", [rPharm, rPh, rSeller, rAcct]);
+    await asUser(c, rOther);
+    const rPh2 = (await c.query("select bootstrap_pharmacy('Return Other', 'Other', '0711000041') as id")).rows[0].id;
+    await c.query("insert into suppliers (pharmacy_id, name) values ($1,'Foreign Sup')", [rPh2]);
+    const rForeignSup = (await c.query('select id from suppliers where pharmacy_id = $1', [rPh2])).rows[0].id;
+    await asUser(c, rOwner);
+    const rSupA = (await c.query("insert into suppliers (pharmacy_id, name) values ($1,'Sup A') returning id", [rPh])).rows[0].id;
+    const rSupB = (await c.query("insert into suppliers (pharmacy_id, name) values ($1,'Sup B') returning id", [rPh])).rows[0].id;
+    const rDrug = (await c.query("insert into drugs (pharmacy_id, name, form, unit) values ($1,'Return Drug','tablet','tablet') returning id", [rPh])).rows[0].id;
+    const rCtl = (await c.query("insert into drugs (pharmacy_id, name, form, unit) values ($1,'Return Controlled','tablet','tablet') returning id", [rPh])).rows[0].id;
+    const exp = "(current_date + interval '300 days')::date";
+    const bA = (await c.query(`select record_restock($1,$2,100,6,10,${exp},'R1','Sup A',$3) as id`, [rPh, rDrug, rSupA])).rows[0].id;
+    const bNoCost = (await c.query(`select record_restock($1,$2,100,6,10,${exp},'R2','Sup A',$3) as id`, [rPh, rDrug, rSupA])).rows[0].id;
+    const bB = (await c.query(`select record_restock($1,$2,50,4,10,${exp},'R3','Sup B',$3) as id`, [rPh, rDrug, rSupB])).rows[0].id;
+    const bCtl = (await c.query(`select record_restock($1,$2,20,3,10,${exp},'R4','Sup A',$3) as id`, [rPh, rCtl, rSupA])).rows[0].id;
+    await c.query("select set_drug_control($1,$2,'dda')", [rPh, rCtl]);
+    await c.query('reset role');
+    await c.query('update batches set cost_price = null where id = $1', [bNoCost]);   // a batch whose cost was never recorded
+    await c.query("insert into supplier_lpos (pharmacy_id, supplier_id, lpo_number, total_amount) values ($1,$2,'LPO-T1',1000), ($1,$3,'LPO-T2',500)", [rPh, rSupA, rSupB]);
+    await c.query("insert into supplier_payments (pharmacy_id, supplier_id, amount) values ($1,$2,200)", [rPh, rSupA]);
+    const rBal = async (sup) => { await asUser(c, rOwner); return Number((await c.query('select balance from supplier_balances($1) where supplier_id = $2', [rPh, sup])).rows[0].balance); };
+    assert((await rBal(rSupA)) === 800 && (await rBal(rSupB)) === 500, 'before any return the balances are as before: 1000 - 200 = 800 and 500');
+
+    await asUser(c, rSeller);
+    await assertThrows(c.query("select record_supplier_return($1,$2,$3,5,'damaged')", [rPh, rSupA, bA]), 'a seller cannot return stock to a supplier', 'a seller should be refused');
+    await asUser(c, rAcct);
+    await assertThrows(c.query("select record_supplier_return($1,$2,$3,5,'damaged')", [rPh, rSupA, bA]), 'an accountant cannot return stock to a supplier', 'an accountant should be refused');
+    await asUser(c, rOther);
+    await assertThrows(c.query("select record_supplier_return($1,$2,$3,5,'damaged')", [rPh, rSupA, bA]), 'another pharmacy cannot return this pharmacy\'s stock', 'another pharmacy should be refused');
+    await asUser(c, rOwner);
+    await assertThrows(c.query("select record_supplier_return($1,$2,$3,0,'damaged')", [rPh, rSupA, bA]), 'a quantity of zero is refused', 'zero should be refused');
+    await assertThrows(c.query("select record_supplier_return($1,$2,$3,5,'  ')", [rPh, rSupA, bA]), 'a return needs a reason', 'no reason should be refused');
+    await assertThrows(c.query("select record_supplier_return($1,$2,$3,101,'damaged')", [rPh, rSupA, bA]), 'cannot return more than the batch holds', 'too many should be refused');
+    await assertThrows(c.query("select record_supplier_return($1,$2,$3,5,'damaged')", [rPh, rSupB, bA]), 'a batch from Sup A cannot be returned to Sup B', 'a different supplier should be refused');
+    await assertThrows(c.query("select record_supplier_return($1,$2,$3,5,'damaged')", [rPh, rForeignSup, bA]), 'a supplier of another pharmacy is refused', 'a foreign supplier should be refused');
+    await assertThrows(c.query("select record_supplier_return($1,$2,$3,5,'damaged')", [rPh, rSupA, bNoCost]), 'a batch with no cost needs the credit typed', 'no cost and no credit should be refused');
+    await assertThrows(c.query("select record_supplier_return($1,$2,$3,5,'damaged',-1)", [rPh, rSupA, bA]), 'a negative credit is refused', 'a negative credit should be refused');
+    assert(Number((await c.query('select quantity_remaining q from batches where id = $1', [bA])).rows[0].q) === 100, 'none of the refused returns touched the stock');
+
+    const r1 = (await c.query("select record_supplier_return($1,$2,$3,30,'expired on shelf') as r", [rPh, rSupA, bA])).rows[0].r;
+    assert(Number(r1.credit_amount) === 180, 'returning 30 at cost 6 gives a credit of 180');
+    assert(Number((await c.query('select quantity_remaining q from batches where id = $1', [bA])).rows[0].q) === 70, 'the batch drops from 100 to 70');
+    const adj = (await c.query("select type, quantity_delta, reason from stock_adjustments where batch_id = $1 and type::text = 'supplier_return'", [bA])).rows;
+    assert(adj.length === 1 && adj[0].quantity_delta === -30 && /Returned to Sup A: expired on shelf/.test(adj[0].reason), 'the stock audit trail says: returned to Sup A, with the reason');
+    assert((await rBal(rSupA)) === 620, 'Sup A is now owed 800 - 180 = 620');
+    assert((await rBal(rSupB)) === 500, 'Sup B (no returns) is unchanged');
+    const owed = (await c.query('select owed, owed_count from supplier_owed_summary($1)', [rPh])).rows[0];
+    assert(Number(owed.owed) === 1120 && owed.owed_count === 2, 'the dashboard debt follows: 620 + 500 = 1120 across 2 suppliers');
+    const vs = (await c.query('select qty_in_stock from v_drug_stock where drug_id = $1', [rDrug])).rows[0];
+    assert(Number(vs.qty_in_stock) === 70 + 100 + 50, 'stock levels follow (70 + 100 + 50)');
+
+    await c.query("select record_supplier_return($1,$2,$3,10,'no cost recorded',25)", [rPh, rSupA, bNoCost]);
+    await c.query("select record_supplier_return($1,$2,$3,5,'no credit given',0)", [rPh, rSupA, bNoCost]);
+    assert((await rBal(rSupA)) === 595, 'a typed credit of 25 is used, and a credit of 0 is allowed (620 - 25)');
+    await asUser(c, rPharm);
+    const rp = (await c.query("select record_supplier_return($1,$2,$3,50,'whole batch recalled') as r", [rPh, rSupB, bB])).rows[0].r;
+    assert(Number(rp.credit_amount) === 200, 'a pharmacist can return stock; the whole batch can go (50 x 4 = 200)');
+    assert(Number((await c.query('select quantity_remaining q from batches where id = $1', [bB])).rows[0].q) === 0, 'and the batch is empty');
+    assert((await rBal(rSupB)) === 300, 'Sup B is owed 500 - 200 = 300');
+
+    await asUser(c, rOwner);
+    await c.query("select record_supplier_return($1,$2,$3,5,'expired')", [rPh, rSupA, bCtl]);
+    const led = (await c.query("select kind, quantity_delta, balance_after, note from controlled_ledger where drug_id = $1 order by seq desc limit 1", [rCtl])).rows[0];
+    assert(led.kind === 'supplier_return' && led.quantity_delta === -5 && led.balance_after === 15, 'a controlled drug returned to a supplier is on the controlled register (-5, 15 left)');
+
+    await c.query('set role authenticated');
+    assert((await c.query('select count(*)::int n from supplier_returns where pharmacy_id = $1', [rPh])).rows[0].n === 5, 'the owner reads all 5 return records');
+    await c.query('reset role');
+    await asUser(c, rAcct);
+    await c.query('set role authenticated');
+    assert((await c.query('select count(*)::int n from supplier_returns where pharmacy_id = $1', [rPh])).rows[0].n === 5, 'an accountant can read the return records');
+    await c.query('reset role');
+    await asUser(c, rSeller);
+    await c.query('set role authenticated');
+    assert((await c.query('select count(*)::int n from supplier_returns where pharmacy_id = $1', [rPh])).rows[0].n === 0, 'a seller cannot read them');
+    await c.query('reset role');
+    await asUser(c, rOther);
+    await c.query('set role authenticated');
+    assert((await c.query('select count(*)::int n from supplier_returns where pharmacy_id = $1', [rPh])).rows[0].n === 0, 'another pharmacy cannot read them');
+    await c.query('reset role');
+    await asUser(c, rOwner);
+    await c.query('set role authenticated');
+    await assertThrows(c.query("insert into supplier_returns (pharmacy_id, supplier_id, drug_id, quantity, credit_amount, reason) values ($1,$2,$3,1,1,'x')", [rPh, rSupA, rDrug]), 'the app cannot write return records directly', 'direct insert should be refused');
+    await assertThrows(c.query("delete from supplier_returns where pharmacy_id = $1", [rPh]), 'the app cannot delete return records', 'direct delete should be refused');
+    await c.query('reset role');
+
+    // --------------------------------------------------------------
+    console.log('\n== The evening summary SMS ==');
+    const veOwner = (await c.query('insert into auth.users default values returning id')).rows[0].id;
+    const vePharm = (await c.query('insert into auth.users default values returning id')).rows[0].id;
+    const veSeller = (await c.query('insert into auth.users default values returning id')).rows[0].id;
+    await asUser(c, veOwner);
+    const vePh = (await c.query("select bootstrap_pharmacy('Evening Test', 'Eve Owner', '0711000050') as id")).rows[0].id;
+    await c.query("insert into profiles (id, pharmacy_id, full_name, role) values ($1,$2,'Pharm','pharmacist'), ($3,$2,'Seller','attendant')", [vePharm, vePh, veSeller]);
+
+    assert((await c.query('select evening_summary_text($1) as t', [vePh])).rows[0].t === null, 'a quiet pharmacy with nothing to report gets no message');
+    assert((await c.query("select queue_evening_summaries() as n")).rows[0].n === 0, 'and the nightly sweep queues nothing for it');
+
+    await asUser(c, veSeller);
+    await assertThrows(c.query("select queue_evening_summary_now($1)", [vePh]), 'a seller cannot send the evening summary', 'a seller should be refused');
+    await asUser(c, veOwner);
+    await assertThrows(c.query("select queue_evening_summary_now($1)", [vePh]), 'no phone number yet, so there is nothing to send to', 'no phone should be refused');
+    await c.query('reset role');
+    await c.query("update pharmacies set evening_summary_phone = '0712340099' where id = $1", [vePh]);
+    await asUser(c, veOwner);
+    await assertThrows(c.query("select queue_evening_summary_now($1)", [vePh]), 'still nothing to report (no sales, no cash closing, no low stock)', 'nothing to report should be refused');
+
+    const veDrug = (await c.query("insert into drugs (pharmacy_id, name, form, unit, reorder_level) values ($1,'Eve Drug','tablet','tablet',50) returning id", [vePh])).rows[0].id;
+    await c.query("select record_restock($1,$2,10,5,20,(current_date + interval '300 days')::date,'E1','S')", [vePh, veDrug]);  // 10 in stock, reorder 50: low stock
+    await c.query("select record_sale($1, jsonb_build_array(jsonb_build_object('drug_id',$2::text,'quantity',2)), '[{\"method\":\"cash\",\"amount\":40}]'::jsonb)", [vePh, veDrug]);
+
+    const veT1 = (await c.query('select evening_summary_text($1) as t', [vePh])).rows[0].t;
+    assert(/1 sale, KES 40/.test(veT1) && /Cash drawer not closed yet/.test(veT1) && /1 low on stock/.test(veT1), 'the message names today\'s sales, that the drawer is not closed, and what is low (' + veT1 + ')');
+
+    await c.query("update pharmacies set evening_summary_sections = array['sales'] where id = $1", [vePh]);
+    const veT2 = (await c.query('select evening_summary_text($1) as t', [vePh])).rows[0].t;
+    assert(/1 sale/.test(veT2) && !/Cash drawer/.test(veT2) && !/low on stock/.test(veT2), 'turning off a section leaves it out of the message');
+    await c.query("update pharmacies set evening_summary_sections = array['sales','cash','stock'] where id = $1", [vePh]);
+
+    // the daily limit and the SMS on/off switch, tested before any summary is actually sent today
+    // (once one is sent, "already sent today" would hide these checks instead)
+    await c.query("select set_config('app.current_user_id', '', false)");
+    await c.query("update pharmacies set sms_daily_cap = 0 where id = $1", [vePh]);
+    await asUser(c, veOwner);
+    await assertThrows(c.query("select queue_evening_summary_now($1)", [vePh]), 'Daily SMS limit reached', 'over the daily cap should be refused');
+    await c.query("select set_config('app.current_user_id', '', false)");
+    await c.query("update pharmacies set sms_daily_cap = 30 where id = $1", [vePh]);
+    await c.query("update pharmacies set sms_enabled = false where id = $1", [vePh]);
+    await asUser(c, veOwner);
+    await assertThrows(c.query("select queue_evening_summary_now($1)", [vePh]), 'SMS is switched off', 'SMS switched off should be refused');
+    await c.query("select set_config('app.current_user_id', '', false)");
+    await c.query("update pharmacies set sms_enabled = true where id = $1", [vePh]);
+
+    await asUser(c, veOwner);
+    const veR1 = (await c.query('select queue_evening_summary_now($1) as r', [vePh])).rows[0].r;
+    assert(veR1.queued.length === 1 && veR1.queued[0].to === '254712340099' && /1 sale, KES 40/.test(veR1.queued[0].body), 'the owner\'s "send a test now" queues the message to the saved phone');
+    const veRow1 = (await c.query("select kind, to_phone, status from sms_log where pharmacy_id = $1 and kind = 'summary'", [vePh])).rows[0];
+    assert(veRow1.kind === 'summary' && veRow1.to_phone === '254712340099' && veRow1.status === 'queued', 'it is logged with kind summary, waiting to be sent');
+    await assertThrows(c.query("select queue_evening_summary_now($1)", [vePh]), 'today\'s summary was already sent', 'a second one the same day should be refused');
+
+    // the automatic nightly sweep, across several pharmacies at once
+    const veWOwner = (await c.query('insert into auth.users default values returning id')).rows[0].id;
+    const veXOwner = (await c.query('insert into auth.users default values returning id')).rows[0].id;
+    const veYOwner = (await c.query('insert into auth.users default values returning id')).rows[0].id;
+    await asUser(c, veWOwner);
+    const veWPh = (await c.query("select bootstrap_pharmacy('Evening Off', 'Off Owner', '0711000051') as id")).rows[0].id;
+    await asUser(c, veXOwner);
+    const veXPh = (await c.query("select bootstrap_pharmacy('Evening NoPhone', 'NoPhone Owner', '0711000052') as id")).rows[0].id;
+    await asUser(c, veYOwner);
+    const veYPh = (await c.query("select bootstrap_pharmacy('Evening Two', 'Two Owner', '0711000053') as id")).rows[0].id;
+    const veYDrug = (await c.query("insert into drugs (pharmacy_id, name, form, unit, reorder_level) values ($1,'Eve Drug 2','tablet','tablet',1) returning id", [veYPh])).rows[0].id;
+    await c.query("select record_restock($1,$2,100,5,20,(current_date + interval '300 days')::date,'E2','S')", [veYPh, veYDrug]);
+    await c.query("select record_sale($1, jsonb_build_array(jsonb_build_object('drug_id',$2::text,'quantity',1)), '[{\"method\":\"cash\",\"amount\":20}]'::jsonb)", [veYPh, veYDrug]);
+    await c.query('reset role');
+    // veWPh: left off (default) - never queued, even with evening_summary_phone set
+    await c.query("update pharmacies set evening_summary_phone = '0712340098' where id = $1", [veWPh]);
+    // veXPh: turned on but no phone - never queued
+    await c.query("update pharmacies set evening_summary_enabled = true where id = $1", [veXPh]);
+    // veYPh: turned on, phone set, has something to report - queued
+    await c.query("update pharmacies set evening_summary_enabled = true, evening_summary_phone = '0712340097' where id = $1", [veYPh]);
+    const veN1 = (await c.query('select queue_evening_summaries() as n')).rows[0].n;
+    assert(veN1 === 1, 'the nightly sweep queues exactly the one pharmacy that is on, has a phone and has something to report (' + veN1 + ')');
+    const veYRow = (await c.query("select to_phone, status from sms_log where pharmacy_id = $1 and kind = 'summary'", [veYPh])).rows[0];
+    assert(veYRow.to_phone === '254712340097' && veYRow.status === 'queued', 'queued for the right phone, waiting to be sent');
+    assert(Number((await c.query("select count(*)::int n from sms_log where pharmacy_id = $1 and kind = 'summary'", [veWPh])).rows[0].n) === 0, 'the pharmacy that left it off gets nothing');
+    assert(Number((await c.query("select count(*)::int n from sms_log where pharmacy_id = $1 and kind = 'summary'", [veXPh])).rows[0].n) === 0, 'the pharmacy with no phone gets nothing');
+    const veN2 = (await c.query('select queue_evening_summaries() as n')).rows[0].n;
+    assert(veN2 === 0, 'running the sweep again the same day queues nothing more (already sent)');
+
+    // phone numbers accepted and refused
+    const veWaPhoneFn = async (v) => (await c.query('select evening_summary_normalize_phone($1) as p', [v])).rows[0].p;
+    assert(await veWaPhoneFn('0712345678') === '254712345678', 'a local 07 number is understood');
+    assert(await veWaPhoneFn('0112345678') === '254112345678', 'a local 01 number is understood');
+    assert(await veWaPhoneFn('+254 712 345 678') === '254712345678', 'spaces and a plus sign are stripped');
+    assert(await veWaPhoneFn('0202211334') === null, 'a landline is not accepted');
+    assert(await veWaPhoneFn('') === null && await veWaPhoneFn(null) === null, 'an empty value gives no number');
+    await asUser(c, veOwner);
+    await c.query("update pharmacies set evening_summary_phone = '+254 712 999 000' where id = $1", [vePh]);
+    assert((await c.query('select evening_summary_phone p from pharmacies where id = $1', [vePh])).rows[0].p === '254712999000', 'a typed number is cleaned up and stored ready to use');
+    const veBadPhone = (await c.query("update pharmacies set evening_summary_phone = 'abc' where id = $1 returning evening_summary_phone", [vePh])).rows[0].evening_summary_phone;
+    assert(veBadPhone === null, 'typing something that is not a phone number is cleared instead of saving junk');
+
+    // who may change the settings
+    await c.query('reset role');
+    await c.query('set role authenticated');
+    await asUser(c, vePharm);
+    await assertThrows(c.query("update pharmacies set evening_summary_enabled = true where id = $1", [vePh]), 'a pharmacist cannot change the evening summary settings', 'only the owner should be able to');
+    await c.query('reset role');
+
+    // sms_log accepts the new kind
+    await asUser(c, veOwner);
+    assert((await c.query("select 'summary'::text = any(array['refill','credit','custom','summary']) as ok")).rows[0].ok === true, 'sanity: the kind list includes summary');
+
+    console.log('\n== Barcode scanning ==');
+    const bkOwner = (await c.query('insert into auth.users default values returning id')).rows[0].id;
+    const bkOwner2 = (await c.query('insert into auth.users default values returning id')).rows[0].id;
+    const bkSeller = (await c.query('insert into auth.users default values returning id')).rows[0].id;
+    await asUser(c, bkOwner);
+    const bkPh = (await c.query("select bootstrap_pharmacy('Barcode Test', 'Bk Owner', '0711000060') as id")).rows[0].id;
+    await asUser(c, bkOwner2);
+    const bkPh2 = (await c.query("select bootstrap_pharmacy('Barcode Test 2', 'Bk Owner 2', '0711000061') as id")).rows[0].id;
+    await asUser(c, bkOwner);
+    await c.query("insert into profiles (id, pharmacy_id, full_name, role) values ($1,$2,'Seller','attendant')", [bkSeller, bkPh]);
+    const bkDrug1 = (await c.query("insert into drugs (pharmacy_id, name, form, unit, reorder_level) values ($1,'Bk Drug 1','tablet','tablet',5) returning id", [bkPh])).rows[0].id;
+    const bkDrug2 = (await c.query("insert into drugs (pharmacy_id, name, form, unit, reorder_level) values ($1,'Bk Drug 2','tablet','tablet',5) returning id", [bkPh])).rows[0].id;
+
+    await c.query("select edit_drug($1,$2,'Bk Drug 1',null,'tablet','tablet',5,false,null,null,null,'6001234567890')", [bkPh, bkDrug1]);
+    const bkStock1 = (await c.query('select barcode from v_drug_stock where drug_id = $1', [bkDrug1])).rows[0];
+    assert(bkStock1.barcode === '6001234567890', 'a saved barcode shows up in v_drug_stock for Sell and Inventory to match against');
+
+    await assertThrows(c.query("select edit_drug($1,$2,'Bk Drug 2',null,'tablet','tablet',5,false,null,null,null,'6001234567890')", [bkPh, bkDrug2]),
+      'That barcode is already used by "Bk Drug 1"', 'two drugs in the same pharmacy sharing a barcode should be refused');
+
+    // whitespace-only / empty clears the barcode rather than storing ''
+    await c.query("select edit_drug($1,$2,'Bk Drug 1',null,'tablet','tablet',5,false,null,null,null,'   ')", [bkPh, bkDrug1]);
+    assert((await c.query('select barcode from drugs where id = $1', [bkDrug1])).rows[0].barcode === null, 'a blank barcode is stored as nothing, not a blank string');
+
+    // a direct insert (as Add Drug does) is normalized and checked the same way
+    await c.query('set role authenticated');
+    await asUser(c, bkOwner);
+    await c.query("update drugs set barcode = '7001112223334' where id = $1", [bkDrug1]);
+    await assertThrows(c.query("insert into drugs (pharmacy_id, name, form, unit, reorder_level, barcode) values ($1,'Bk Drug 3','tablet','tablet',5,'7001112223334')", [bkPh]),
+      'duplicate key', 'a direct insert reusing a barcode already on another drug should be refused');
+    const bkIns = (await c.query("insert into drugs (pharmacy_id, name, form, unit, reorder_level, barcode) values ($1,'Bk Drug 4','tablet','tablet',5,'  ') returning barcode", [bkPh])).rows[0];
+    assert(bkIns.barcode === null, 'a direct insert with a blank barcode is also normalized to nothing');
+    await c.query('reset role');
+
+    // stopping a drug (hiding it) keeps its barcode reserved - the same rule as its name
+    await asUser(c, bkOwner);
+    await c.query("select set_drug_active($1,$2,false)", [bkPh, bkDrug1]);
+    await assertThrows(c.query("select edit_drug($1,$2,'Bk Drug 2',null,'tablet','tablet',5,false,null,null,null,'7001112223334')", [bkPh, bkDrug2]),
+      'Bring that one back from Hidden drugs', 'a hidden drug\'s barcode still blocks reuse, same as its name does');
+    await c.query("select set_drug_active($1,$2,true)", [bkPh, bkDrug1]);
+
+    // a barcode is only unique within its own pharmacy
+    await asUser(c, bkOwner2);
+    const bkDrugOther = (await c.query("insert into drugs (pharmacy_id, name, form, unit, reorder_level) values ($1,'Bk Other Drug','tablet','tablet',5) returning id", [bkPh2])).rows[0].id;
+    await c.query("select edit_drug($1,$2,'Bk Other Drug',null,'tablet','tablet',5,false,null,null,null,'7001112223334')", [bkPh2, bkDrugOther]);
+    assert((await c.query('select barcode from drugs where id = $1', [bkDrugOther])).rows[0].barcode === '7001112223334', 'another pharmacy can use the exact same barcode on its own drug');
+
+    // role enforcement matches every other drug edit
+    await asUser(c, bkSeller);
+    await assertThrows(c.query("select edit_drug($1,$2,'Bk Drug 1',null,'tablet','tablet',5,false,null,null,null,'9009998887776')", [bkPh, bkDrug1]),
+      'a seller cannot set a barcode', 'only the owner or pharmacist should be able to change it');
+
   });
 
   console.log('\n' + '='.repeat(60));

@@ -33,7 +33,7 @@ function sellRowHtml(d) {
 var SELL_ROW_CAP = 100;
 function sellListsHtml() {
   var raw = sellFilter.trim(), q = raw.toLowerCase();
-  var rows = STATE.drugsCache.filter(function (d) { return d.name.toLowerCase().indexOf(q) !== -1; });
+  var rows = STATE.drugsCache.filter(function (d) { return d.name.toLowerCase().indexOf(q) !== -1 || (d.barcode && d.barcode.indexOf(raw) !== -1); });
   // Only the first SELL_ROW_CAP rows are drawn, so thousands of products do not
   // build thousands of rows on every redraw. Typing narrows the list.
   var shown = rows.length > SELL_ROW_CAP ? rows.slice(0, SELL_ROW_CAP) : rows;
@@ -55,7 +55,10 @@ function drawSell() {
   var r = sellListsHtml();
   redrawKeepingFocus(c,
     (heldSalesCache.length ? heldSalesCard() : '') +
-    '<div class="searchbox field"><input id="sellSearchInput" type="search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" placeholder="Search a drug to sell…" value="' + esc(sellFilter) + '" oninput="sellFilter=this.value;refreshSellLists()"></div>' +
+    '<div class="searchbox field" style="display:flex;gap:8px;align-items:center">' +
+    '<input id="sellSearchInput" type="search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" placeholder="Search a drug, or scan its barcode…" value="' + esc(sellFilter) + '" oninput="sellFilter=this.value;refreshSellLists()" onkeydown="sellSearchKeydown(event)" style="flex:1">' +
+    (barcodeCameraSupported() ? '<button class="btn secondary" title="Scan barcode" aria-label="Scan barcode" onclick="sellScanBarcode()">' + icon('barcode', 18) + '</button>' : '') +
+    '</div>' +
     '<div id="sellMatches">' + (r.searching ? r.html : '') + '</div>' +
     (STATE.cart.length ? cartSummaryCard() : '') +
     '<div id="sellAll">' + (r.searching ? '' : r.html) + '</div>');
@@ -119,6 +122,39 @@ function cartSummaryCard() {
     }).join('') +
     '<div class="list-row"><div class="name">Total</div><div class="name">' + fmt(total) + '</div></div>' +
     '<div class="toolbar-row" style="margin-top:10px"><button class="btn ghost" onclick="holdSale(this)">Hold sale</button><button class="btn primary" onclick="openCheckout()">Checkout</button></div></div>';
+}
+
+// Enter in the search box: if what's typed is exactly one drug's barcode (typed
+// by hand, or a USB scanner typing fast and pressing Enter for you), add it
+// straight to the cart and clear the box for the next item.
+function sellSearchKeydown(e) {
+  if (e.key !== 'Enter') return;
+  var raw = sellFilter.trim();
+  if (!raw) return;
+  var d = STATE.drugsCache.find(function (x) { return x.barcode === raw; });
+  if (!d) return; // not a recognised barcode - leave the normal name search showing
+  e.preventDefault();
+  addToCart(d.drug_id);
+  sellFilter = '';
+  var input = $('#sellSearchInput');
+  if (input) input.value = '';
+  refreshSellLists();
+}
+
+function sellScanBarcode() {
+  openBarcodeScan(function (code) {
+    var d = STATE.drugsCache.find(function (x) { return x.barcode === code; });
+    if (d) {
+      addToCart(d.drug_id);
+      toast(d.name + ' added.', 'good');
+    } else {
+      sellFilter = code;
+      var input = $('#sellSearchInput');
+      if (input) input.value = code;
+      refreshSellLists();
+      toast('No drug in stock has that barcode.', 'bad');
+    }
+  });
 }
 
 function addToCart(drugId) {
@@ -417,21 +453,28 @@ function showReceipt(items, payments, customer, invoiceNo, chargedTotal) {
     '<button class="btn ghost" style="margin-top:8px" onclick="closeSheet()">Done</button>';
 }
 
+// Printed narrow, for an 80mm thermal till roll (see style.css) - one line per
+// drug, qty × price under its name, running totals instead of a wide table.
+// The browser's own print dialog still lets anyone print it on an ordinary
+// printer instead, so nothing here needs a setting of its own.
 function printReceipt() {
   var d = pendingReceipt;
   if (!d) return;
-  var rows = d.items.map(function (it) { return [it.name + (it.patient_name ? ' (' + it.patient_name + ')' : ''), it.qty, fmt(it.price), fmt(it.qty * it.price)]; });
   var extra = [];
   if (d.invoiceNo) extra.push('Invoice: ' + esc(d.invoiceNo));
   if (d.customer) extra.push('Customer: ' + esc(d.customer));
-  // extra[] goes straight into the print area's HTML, so every piece must be
-  // escaped. The payment reference is free text typed at checkout.
-  extra.push('Payment: ' + d.payments.map(function (p) {
-    return esc(payLabel(p.method)) + (p.reference ? ' (' + esc(p.reference) + ')' : '') + ' ' + fmt(p.amount);
-  }).join(', '));
-  printHtml('Receipt', new Date().toLocaleString('en-GB'),
-    '<p style="margin:4px 0">' + extra.join(' · ') + '</p>' +
-    tableHtml(['Item', 'Qty', 'Unit price', 'Line total'], rows) +
-    '<p style="text-align:right;font-weight:700;margin-top:10px">Total: ' + fmt(d.total) + '</p>');
+  var itemsHtml = d.items.map(function (it) {
+    return '<div class="r80-row"><div class="r80-name">' + esc(it.name + (it.patient_name ? ' (' + it.patient_name + ')' : '')) + '</div>' +
+      '<div class="r80-sub"><span>' + it.qty + ' x ' + fmt(it.price) + '</span><span>' + fmt(it.qty * it.price) + '</span></div></div>';
+  }).join('');
+  var payHtml = d.payments.map(function (p) {
+    return '<div class="r80-sub"><span>' + esc(payLabel(p.method)) + (p.reference ? ' (' + esc(p.reference) + ')' : '') + '</span><span>' + fmt(p.amount) + '</span></div>';
+  }).join('');
+  var body =
+    (extra.length ? '<div class="r80-meta">' + extra.join(' · ') + '</div>' : '') +
+    '<div class="r80-rule"></div>' + itemsHtml + '<div class="r80-rule"></div>' +
+    '<div class="r80-row r80-total r80-sub"><span>Total</span><span>' + fmt(d.total) + '</span></div>' +
+    '<div class="r80-rule"></div>' + payHtml;
+  printHtml('Receipt', '', body, null, { receipt: true });
 }
 

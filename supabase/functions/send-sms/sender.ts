@@ -17,6 +17,9 @@ export type SendResult = { id: string; status: "sent" | "failed"; provider_id?: 
 export type Deps = {
   // calls sms_queue(p_pharmacy_id, p_messages) as the signed-in user
   queue: (pharmacyId: string, messages: unknown[]) => Promise<{ data: any; error: { message: string } | null }>;
+  // calls queue_evening_summary_now(p_pharmacy_id) as the signed-in user: the "send a test now"
+  // button on the evening summary. Only present when the caller supports that mode.
+  queueSummary?: (pharmacyId: string) => Promise<{ data: any; error: { message: string } | null }>;
   loadConfig: () => Promise<SmsConfig | null>;
   // marks one log row (service role)
   mark: (id: string, patch: Record<string, unknown>) => Promise<void>;
@@ -77,10 +80,17 @@ export async function sendOne(cfg: SmsConfig, q: Queued, fetchFn: Deps["fetchFn"
 
 export async function handle(body: any, deps: Deps) {
   const pharmacyId = body && typeof body.pharmacy_id === "string" ? body.pharmacy_id : "";
-  const messages = body && Array.isArray(body.messages) ? body.messages : [];
-  if (!pharmacyId || !messages.length) return { ok: false, message: "There is nothing to send." };
+  const evening = !!(body && body.mode === "evening_summary");
 
-  const { data, error } = await deps.queue(pharmacyId, messages);
+  let data: any, error: { message: string } | null;
+  if (evening) {
+    if (!pharmacyId || !deps.queueSummary) return { ok: false, message: "There is nothing to send." };
+    ({ data, error } = await deps.queueSummary(pharmacyId));
+  } else {
+    const messages = body && Array.isArray(body.messages) ? body.messages : [];
+    if (!pharmacyId || !messages.length) return { ok: false, message: "There is nothing to send." };
+    ({ data, error } = await deps.queue(pharmacyId, messages));
+  }
   if (error) return { ok: false, message: error.message };
 
   const queued: Queued[] = (data && data.queued) || [];

@@ -353,6 +353,7 @@ function drawLowStockReportBody() {
     '<div class="kpi-grid" style="margin-bottom:14px">' +
     kpi('Need reordering', rows.length, rows.length ? 't-red' : 't-neutral') +
     '</div>' +
+    (rows.length && can('suppliers') ? '<button class="btn primary small" style="margin-bottom:10px" onclick="openSupplierOrder()">' + icon('wallet', 15) + ' Order by WhatsApp</button>' : '') +
     '<div class="card">' + (rows.length ? rows.map(function (n) {
       return listRow(n.name, 'Have ' + n.current + ' ' + esc(n.unit) + ' · reorder level ' + n.reorderLevel, '<b>Order ' + n.suggested + '</b>');
     }).join('') : '<div class="empty">Nothing needs reordering right now.</div>') + '</div>';

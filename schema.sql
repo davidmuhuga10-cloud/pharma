@@ -8341,3 +8341,957 @@ $$;
 
 revoke all on function public.apply_stock_sheet(uuid, jsonb) from public, anon;
 grant execute on function public.apply_stock_sheet(uuid, jsonb) to authenticated;
+
+-- Folded in from migrations/2026-11-07_price_history.sql
+-- 2026-11-07 (night, later still): price history for every price change.
+--
+-- Every change of a drug's selling price is now recorded in price_changes (old price, new price,
+-- who, when, and where it came from), whether it came from a restock, a stock sheet or an edit.
+-- A trigger does the recording, so no price change can be missed. The first price a drug ever
+-- gets is not a "change" and is not recorded. apply_stock_sheet() no longer writes the record
+-- itself (the trigger does), otherwise each sheet change would be listed twice.
+-- No existing row is edited.
+
+create or replace function public.record_price_change()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if old.default_price is not null and new.default_price is not null
+     and old.default_price is distinct from new.default_price then
+    insert into price_changes (pharmacy_id, drug_id, old_price, new_price, source, changed_by)
+    values (new.pharmacy_id, new.id, old.default_price, new.default_price,
+            coalesce(nullif(current_setting('pharma.price_source', true), ''), 'restock'), auth.uid());
+  end if;
+  return new;
+end;
+$$;
+revoke all on function public.record_price_change() from public, anon, authenticated;
+
+drop trigger if exists trg_record_price_change on public.drugs;
+create trigger trg_record_price_change
+  after update of default_price on public.drugs
+  for each row execute function public.record_price_change();
+
+create or replace function public.apply_stock_sheet(p_pharmacy_id uuid, p_rows jsonb)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  r          jsonb;
+  v_i        integer := 0;
+  v_id       uuid;
+  v_drug     drugs%rowtype;
+  v_seen     uuid[] := '{}';
+  v_names    text[] := '{}';
+  v_errors   jsonb := '[]'::jsonb;
+  v_role     text := my_role();
+  v_take     uuid;
+  v_changed  integer := 0;
+  v_counted  integer := 0;
+  v_price    numeric;
+  v_nm       text;
+  v_has_count boolean := false;
+  v_msg      text;
+begin
+  if p_pharmacy_id is distinct from my_pharmacy_id() then
+    raise exception 'Not authorized for this pharmacy';
+  end if;
+  if v_role not in ('owner', 'co_owner', 'pharmacist', 'stock_taker') then
+    raise exception 'Only the owner, a pharmacist, or a stock taker can upload a stock sheet';
+  end if;
+  if p_rows is null or jsonb_typeof(p_rows) <> 'array' or jsonb_array_length(p_rows) = 0 then
+    raise exception 'Nothing to apply';
+  end if;
+  if jsonb_array_length(p_rows) > 3000 then
+    raise exception 'A sheet can change at most 3000 drugs at a time';
+  end if;
+
+  -- Pass 1: check every row, write nothing.
+  for r in select * from jsonb_array_elements(p_rows) loop
+    v_i := v_i + 1;
+    v_msg := null;
+    v_id := null;
+    begin
+      v_id := nullif(r->>'drug_id', '')::uuid;
+    exception when others then v_id := null;
+    end;
+    select * into v_drug from drugs where id = v_id and pharmacy_id = p_pharmacy_id;
+    if v_id is null or not found then
+      v_msg := 'This drug is not in your system. New drugs are added with Import, not with this sheet';
+    elsif not v_drug.active then
+      v_msg := 'This drug is hidden. Bring it back from Hidden drugs first';
+    elsif v_id = any (v_seen) then
+      v_msg := 'This drug appears twice in the sheet';
+    elsif v_role = 'stock_taker' and (r ? 'name' or r ? 'unit' or r ? 'price' or r ? 'reorder') then
+      v_msg := 'A stock taker can upload counts only';
+    else
+      v_seen := v_seen || v_id;
+      if r ? 'name' then
+        v_nm := btrim(coalesce(r->>'name', ''));
+        if v_nm = '' then v_msg := 'The drug name is empty';
+        elsif exists (select 1 from drugs where pharmacy_id = p_pharmacy_id and id <> v_id and lower(name) = lower(v_nm)) or lower(v_nm) = any (v_names) then
+          v_msg := 'Another drug is already named "' || v_nm || '"';
+        else v_names := v_names || lower(v_nm); end if;
+      end if;
+      if v_msg is null and r ? 'unit' and btrim(coalesce(r->>'unit', '')) = '' then v_msg := 'The unit is empty'; end if;
+      if v_msg is null and r ? 'counted' then
+        if coalesce(r->>'counted', '') !~ '^[0-9]+$' then v_msg := 'Counted qty must be a whole number, 0 or more';
+        else v_has_count := true; end if;
+      end if;
+      if v_msg is null and r ? 'price' then
+        if coalesce(r->>'price', '') !~ '^[0-9]+(\.[0-9]{1,2})?$' or (r->>'price')::numeric <= 0 then
+          v_msg := 'Sell price must be a number above 0 (at most 2 decimals)';
+        end if;
+      end if;
+      if v_msg is null and r ? 'reorder' and coalesce(r->>'reorder', '') !~ '^[0-9]+$' then
+        v_msg := 'Reorder level must be a whole number, 0 or more';
+      end if;
+    end if;
+    if v_msg is not null and jsonb_array_length(v_errors) < 50 then   -- the first 50 are enough to fix a sheet
+      v_errors := v_errors || jsonb_build_array(jsonb_build_object(
+        'row', v_i, 'name', left(coalesce(r->>'name', v_drug.name, ''), 80), 'message', v_msg));
+    end if;
+  end loop;
+
+  if jsonb_array_length(v_errors) > 0 then
+    return jsonb_build_object('ok', false, 'errors', v_errors);
+  end if;
+  if v_has_count and exists (select 1 from stock_takes where pharmacy_id = p_pharmacy_id and status = 'open') then
+    return jsonb_build_object('ok', false, 'errors', jsonb_build_array(jsonb_build_object(
+      'row', 0, 'name', '', 'message', 'A stock take is already open. Approve or cancel it in Stock Take first, then upload again')));
+  end if;
+
+  -- Pass 2: apply everything. Any failure here undoes the whole sheet.
+  if v_has_count then
+    v_take := start_stock_take(p_pharmacy_id, 'Excel count ' || to_char(today_ke(), 'DD Mon YYYY'));
+  end if;
+
+  for r in select * from jsonb_array_elements(p_rows) loop
+    v_id := (r->>'drug_id')::uuid;
+    select * into v_drug from drugs where id = v_id and pharmacy_id = p_pharmacy_id for update;
+
+    if r ? 'name' or r ? 'unit' or r ? 'reorder' then
+      update drugs set
+        name = coalesce(nullif(btrim(r->>'name'), ''), name),
+        unit = coalesce(nullif(btrim(r->>'unit'), ''), unit),
+        reorder_level = case when r ? 'reorder' then (r->>'reorder')::integer else reorder_level end,
+        reorder_custom = case when r ? 'reorder' then true else reorder_custom end
+      where id = v_id and pharmacy_id = p_pharmacy_id;
+      v_changed := v_changed + 1;
+    end if;
+
+    if r ? 'price' then
+      v_price := (r->>'price')::numeric;
+      if v_drug.default_price is distinct from v_price then
+        perform set_config('pharma.price_source', 'sheet', true);   -- the trigger below records the change
+        update drugs set default_price = v_price where id = v_id and pharmacy_id = p_pharmacy_id;
+        perform set_config('pharma.price_source', '', true);
+        update batches set sell_price = v_price
+         where drug_id = v_id and pharmacy_id = p_pharmacy_id and quantity_remaining > 0;
+        v_changed := v_changed + 1;
+      end if;
+    end if;
+
+    if r ? 'counted' then
+      perform stock_take_count(p_pharmacy_id, v_take, v_id, (r->>'counted')::integer);
+      v_counted := v_counted + 1;
+    end if;
+  end loop;
+
+  return jsonb_build_object('ok', true, 'changed', v_changed, 'counted', v_counted, 'take_id', v_take);
+end;
+$$;
+
+revoke all on function public.apply_stock_sheet(uuid, jsonb) from public, anon;
+grant execute on function public.apply_stock_sheet(uuid, jsonb) to authenticated;
+
+-- ============================================================
+-- Folded in from migrations/2026-11-07_cash_drawer.sql
+-- ============================================================
+-- 2026-11-07 (night, later still): closing the cash drawer.
+--
+-- At the end of a shift the person counts the cash in the drawer. The app works out how much
+-- should be there (cash sales, cash customer payments, less cash refunds, cash expenses and
+-- cash supplier payments since the last closing, plus the float left last time), and records the
+-- difference. A seller does a BLIND count: they type what they counted before seeing the
+-- expected figure. Owners, co-owners and pharmacists see the figures first and can read the
+-- history. If counted and expected differ, a short reason is required.
+--
+-- What is new (no existing row is edited):
+--   * cash_closings: one row per closing (row-level security on, indexed by pharmacy).
+--   * cash_drawer_summary(): the live figures for the open period.
+--   * close_cash_drawer(): records a closing. Two people closing at the same moment are queued
+--     (the pharmacy row is locked), so a period can never be counted twice.
+
+create table if not exists public.cash_closings (
+  id                uuid primary key default gen_random_uuid(),
+  pharmacy_id       uuid not null references public.pharmacies(id) on delete cascade,
+  closed_by         uuid references public.profiles(id),
+  closed_at         timestamptz not null default now(),
+  period_start      timestamptz not null,
+  opening           numeric(12,2) not null,
+  cash_sales        numeric(12,2) not null,
+  customer_payments numeric(12,2) not null,
+  refunds           numeric(12,2) not null,
+  expenses          numeric(12,2) not null,
+  supplier_payments numeric(12,2) not null,
+  expected          numeric(12,2) not null,
+  counted           numeric(12,2) not null check (counted >= 0),
+  kept              numeric(12,2) not null check (kept >= 0),
+  difference        numeric(12,2) not null,
+  note              text
+);
+create index if not exists cash_closings_pharmacy_idx on public.cash_closings (pharmacy_id, closed_at desc);
+create index if not exists cash_closings_closed_by_idx on public.cash_closings (closed_by);
+alter table public.cash_closings enable row level security;
+drop policy if exists "reviewers read cash_closings" on public.cash_closings;
+create policy "reviewers read cash_closings" on public.cash_closings for select
+  using (pharmacy_id = my_pharmacy_id() and my_role() in ('owner', 'co_owner', 'pharmacist', 'accountant'));
+revoke all on public.cash_closings from anon, authenticated;
+grant select on public.cash_closings to authenticated;
+grant select, insert, update, delete on public.cash_closings to service_role;
+
+-- The figures for the period that started at the last closing (or at the start of today, Nairobi
+-- time, when the drawer was never closed). Used by the two functions below; not callable by the app.
+create or replace function public.cash_drawer_figures(p_pharmacy_id uuid)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_start    timestamptz;
+  v_opening  numeric := 0;
+  v_sales    numeric;
+  v_cust     numeric;
+  v_refunds  numeric;
+  v_exp      numeric;
+  v_supp     numeric;
+  v_last     record;
+begin
+  select * into v_last from cash_closings where pharmacy_id = p_pharmacy_id order by closed_at desc limit 1;
+  if found then
+    v_start := v_last.closed_at;
+    v_opening := v_last.kept;
+  else
+    v_start := (today_ke()::timestamp at time zone 'Africa/Nairobi');
+  end if;
+
+  select coalesce(sum(sp.amount), 0) into v_sales
+    from sales_payments sp join sales s on s.id = sp.sale_id
+   where sp.pharmacy_id = p_pharmacy_id and sp.method = 'cash' and not s.voided and s.sold_at >= v_start;
+
+  select coalesce(sum(amount), 0) into v_cust
+    from customer_payments
+   where pharmacy_id = p_pharmacy_id and kind = 'payment' and method = 'cash' and not voided and paid_at >= v_start;
+
+  -- a refund counts as cash only when the original sale was paid at least partly in cash
+  select coalesce(sum(r.refund_amount), 0) into v_refunds
+    from returns r
+    join sale_items si on si.id = r.sale_item_id
+   where r.pharmacy_id = p_pharmacy_id and r.created_at >= v_start
+     and exists (select 1 from sales_payments sp where sp.sale_id = si.sale_id and sp.method = 'cash');
+
+  select coalesce(sum(amount), 0) into v_exp
+    from expenses where pharmacy_id = p_pharmacy_id and method = 'cash' and not voided and created_at >= v_start;
+
+  select coalesce(sum(amount), 0) into v_supp
+    from supplier_payments where pharmacy_id = p_pharmacy_id and method = 'cash' and created_at >= v_start;
+
+  return jsonb_build_object(
+    'period_start', v_start, 'opening', v_opening, 'cash_sales', v_sales, 'customer_payments', v_cust,
+    'refunds', v_refunds, 'expenses', v_exp, 'supplier_payments', v_supp,
+    'expected', v_opening + v_sales + v_cust - v_refunds - v_exp - v_supp);
+end;
+$$;
+revoke all on function public.cash_drawer_figures(uuid) from public, anon, authenticated;
+
+create or replace function public.cash_drawer_summary(p_pharmacy_id uuid)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_role text := my_role();
+  v_f    jsonb;
+begin
+  if p_pharmacy_id is distinct from my_pharmacy_id() then
+    raise exception 'Not authorized for this pharmacy';
+  end if;
+  if v_role not in ('owner', 'co_owner', 'pharmacist', 'attendant') then
+    raise exception 'You cannot close the cash drawer';
+  end if;
+  v_f := cash_drawer_figures(p_pharmacy_id);
+  if v_role = 'attendant' then
+    -- a blind count: the seller does not see what the drawer should hold
+    return jsonb_build_object('blind', true, 'period_start', v_f->'period_start');
+  end if;
+  return v_f || jsonb_build_object('blind', false);
+end;
+$$;
+revoke all on function public.cash_drawer_summary(uuid) from public, anon;
+grant execute on function public.cash_drawer_summary(uuid) to authenticated;
+
+create or replace function public.close_cash_drawer(
+  p_pharmacy_id uuid,
+  p_counted     numeric,
+  p_kept        numeric,
+  p_note        text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_role text := my_role();
+  v_f    jsonb;
+  v_diff numeric;
+  v_note text := nullif(btrim(coalesce(p_note, '')), '');
+  v_id   uuid;
+begin
+  if p_pharmacy_id is distinct from my_pharmacy_id() then
+    raise exception 'Not authorized for this pharmacy';
+  end if;
+  if v_role not in ('owner', 'co_owner', 'pharmacist', 'attendant') then
+    raise exception 'You cannot close the cash drawer';
+  end if;
+  if p_counted is null or p_counted < 0 or p_counted > 100000000 then
+    raise exception 'Enter the cash you counted, 0 or more';
+  end if;
+  if p_kept is null or p_kept < 0 or p_kept > p_counted then
+    raise exception 'The cash left in the drawer cannot be more than you counted';
+  end if;
+  perform 1 from pharmacies where id = p_pharmacy_id for update;   -- one closing at a time
+  v_f := cash_drawer_figures(p_pharmacy_id);
+  v_diff := p_counted - (v_f->>'expected')::numeric;
+  if v_diff <> 0 and v_note is null then
+    -- the message does not say short or over, so a blind count cannot be probed
+    raise exception 'The count does not match what the system expects. Write a short reason.';
+  end if;
+  insert into cash_closings (pharmacy_id, closed_by, period_start, opening, cash_sales, customer_payments,
+                             refunds, expenses, supplier_payments, expected, counted, kept, difference, note)
+  values (p_pharmacy_id, auth.uid(), (v_f->>'period_start')::timestamptz, (v_f->>'opening')::numeric,
+          (v_f->>'cash_sales')::numeric, (v_f->>'customer_payments')::numeric, (v_f->>'refunds')::numeric,
+          (v_f->>'expenses')::numeric, (v_f->>'supplier_payments')::numeric, (v_f->>'expected')::numeric,
+          p_counted, p_kept, v_diff, v_note)
+  returning id into v_id;
+  return jsonb_build_object('id', v_id, 'expected', (v_f->>'expected')::numeric, 'counted', p_counted, 'difference', v_diff);
+end;
+$$;
+revoke all on function public.close_cash_drawer(uuid, numeric, numeric, text) from public, anon;
+grant execute on function public.close_cash_drawer(uuid, numeric, numeric, text) to authenticated;
+
+-- ============================================================
+-- Folded in from migrations/2026-11-07_supplier_returns_a_enum.sql
+-- ============================================================
+-- 2026-11-07 (night, later still): returning stock to a supplier - step 1 of 2.
+-- A new kind of stock movement, kept in its own file because Postgres only lets a new
+-- value be used after the change that adds it is saved. Run this file first, then
+-- 2026-11-07_supplier_returns.sql. Safe to run twice. Nothing existing changes.
+
+alter type adjustment_type add value if not exists 'supplier_return';
+
+-- ============================================================
+-- Folded in from migrations/2026-11-07_supplier_returns.sql
+-- ============================================================
+-- 2026-11-07 (night, later still): returning stock to a supplier - step 2 of 2.
+-- Run 2026-11-07_supplier_returns_a_enum.sql first.
+--
+-- A pharmacy sends expired, damaged or wrongly delivered stock back to the supplier and gets
+-- a credit. Until now the only way to remove that stock was a write-off, which hid the
+-- credit and left the supplier balance too high.
+--
+-- What is new (no existing row is edited):
+--   * supplier_returns: one row per return (drug, batch, quantity, credit, reason, who).
+--     Row-level security on, indexed by pharmacy. The app cannot write to it directly.
+--   * record_supplier_return(): takes the quantity off the batch, writes the stock audit
+--     trail entry (kind 'supplier_return'), and records the credit, all in one step.
+--     Owner, co-owner and pharmacist only.
+--   * supplier_balances() and supplier_owed_summary() now take the credits off what a
+--     supplier is owed, so the Suppliers list and the dashboard "Debt owed" agree with the
+--     statement. A supplier with no returns gives exactly the same balance as before.
+--   * The controlled drugs register accepts the new movement, so returning a controlled
+--     drug is on the register as "Returned to supplier".
+
+-- 1. controlled drugs register: allow the new kind --------------------------------------
+alter table public.controlled_ledger drop constraint if exists controlled_ledger_kind_check;
+alter table public.controlled_ledger add constraint controlled_ledger_kind_check
+  check (kind in ('opening', 'restock', 'sale', 'return', 'void', 'correction',
+                  'write_off', 'expired_disposal', 'stock_take', 'supplier_return'));
+
+-- 2. the table -----------------------------------------------------------------------------
+create table if not exists public.supplier_returns (
+  id            uuid primary key default gen_random_uuid(),
+  pharmacy_id   uuid not null references public.pharmacies(id) on delete cascade,
+  supplier_id   uuid not null references public.suppliers(id) on delete cascade,
+  drug_id       uuid not null references public.drugs(id),
+  batch_id      uuid references public.batches(id) on delete set null,
+  quantity      integer not null check (quantity > 0),
+  unit_cost     numeric(10,2),
+  credit_amount numeric(10,2) not null check (credit_amount >= 0),
+  reason        text not null,
+  returned_at   date not null default current_date,
+  created_by    uuid references public.profiles(id),
+  created_at    timestamptz not null default now()
+);
+create index if not exists supplier_returns_pharmacy_idx on public.supplier_returns (pharmacy_id, supplier_id, returned_at desc);
+create index if not exists supplier_returns_supplier_id_idx on public.supplier_returns (supplier_id);
+create index if not exists supplier_returns_drug_id_idx on public.supplier_returns (drug_id);
+create index if not exists supplier_returns_batch_id_idx on public.supplier_returns (batch_id);
+create index if not exists supplier_returns_created_by_idx on public.supplier_returns (created_by);
+
+alter table public.supplier_returns enable row level security;
+drop policy if exists "reviewers read supplier_returns" on public.supplier_returns;
+create policy "reviewers read supplier_returns" on public.supplier_returns for select
+  using (pharmacy_id = my_pharmacy_id() and my_role() in ('owner', 'co_owner', 'pharmacist', 'accountant'));
+revoke all on public.supplier_returns from anon, authenticated;
+grant select on public.supplier_returns to authenticated;
+grant select, insert, update, delete on public.supplier_returns to service_role;
+
+-- 3. the function -------------------------------------------------------------------------
+-- p_credit_amount empty = quantity x the batch's cost price. If the batch has no cost price
+-- the person must type the credit (0 if the supplier gives none).
+create or replace function public.record_supplier_return(
+  p_pharmacy_id   uuid,
+  p_supplier_id   uuid,
+  p_batch_id      uuid,
+  p_quantity      integer,
+  p_reason        text,
+  p_credit_amount numeric default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_reason   text := nullif(btrim(coalesce(p_reason, '')), '');
+  v_batch    record;
+  v_supplier record;
+  v_credit   numeric;
+  v_id       uuid;
+begin
+  if p_pharmacy_id is distinct from my_pharmacy_id() then
+    raise exception 'Not authorized for this pharmacy';
+  end if;
+  if my_role() not in ('owner', 'co_owner', 'pharmacist') then
+    raise exception 'Only the owner or a pharmacist can return stock to a supplier';
+  end if;
+  if p_quantity is null or p_quantity <= 0 then
+    raise exception 'Return quantity must be greater than zero';
+  end if;
+  if v_reason is null then
+    raise exception 'Give a reason for the return. It goes on the stock audit trail';
+  end if;
+
+  select id, name into v_supplier from suppliers where id = p_supplier_id and pharmacy_id = p_pharmacy_id;
+  if not found then
+    raise exception 'Supplier not found';
+  end if;
+
+  select * into v_batch from batches where id = p_batch_id and pharmacy_id = p_pharmacy_id for update;
+  if not found then
+    raise exception 'Batch not found';
+  end if;
+  if v_batch.supplier_id is not null and v_batch.supplier_id <> p_supplier_id then
+    raise exception 'This batch came from a different supplier';
+  end if;
+  if p_quantity > v_batch.quantity_remaining then
+    raise exception 'Only % left in this batch', v_batch.quantity_remaining;
+  end if;
+
+  if p_credit_amount is null then
+    if v_batch.cost_price is null then
+      raise exception 'This batch has no cost price. Type the credit the supplier gives (0 if none)';
+    end if;
+    v_credit := round(p_quantity * v_batch.cost_price, 2);
+  else
+    v_credit := p_credit_amount;
+  end if;
+  if v_credit < 0 or v_credit > 100000000 then
+    raise exception 'The credit must be 0 or more';
+  end if;
+
+  update batches set quantity_remaining = quantity_remaining - p_quantity where id = p_batch_id;
+
+  insert into stock_adjustments (pharmacy_id, drug_id, batch_id, type, quantity_delta, reason, created_by)
+  values (p_pharmacy_id, v_batch.drug_id, p_batch_id, 'supplier_return', -p_quantity,
+          'Returned to ' || v_supplier.name || ': ' || v_reason, auth.uid());
+
+  insert into supplier_returns (pharmacy_id, supplier_id, drug_id, batch_id, quantity, unit_cost, credit_amount, reason, created_by)
+  values (p_pharmacy_id, p_supplier_id, v_batch.drug_id, p_batch_id, p_quantity, v_batch.cost_price, v_credit, v_reason, auth.uid())
+  returning id into v_id;
+
+  return jsonb_build_object('id', v_id, 'credit_amount', v_credit);
+end;
+$$;
+revoke all on function public.record_supplier_return(uuid, uuid, uuid, integer, text, numeric) from public, anon;
+grant execute on function public.record_supplier_return(uuid, uuid, uuid, integer, text, numeric) to authenticated;
+
+-- 4. what a supplier is owed now also takes off the credits -----------------------------------
+--   balance = opening balance + deliveries - payments - credits for returned stock
+create or replace function public.supplier_balances(p_pharmacy_id uuid)
+returns table (supplier_id uuid, balance numeric)
+language sql
+stable
+security invoker
+set search_path = public
+as $$
+  select s.id,
+         s.opening_balance
+           + coalesce((select sum(l.total_amount) from supplier_lpos l
+                        where l.supplier_id = s.id and l.pharmacy_id = p_pharmacy_id), 0)
+           - coalesce((select sum(p.amount) from supplier_payments p
+                        where p.supplier_id = s.id and p.pharmacy_id = p_pharmacy_id), 0)
+           - coalesce((select sum(r.credit_amount) from supplier_returns r
+                        where r.supplier_id = s.id and r.pharmacy_id = p_pharmacy_id), 0)
+    from suppliers s
+   where s.pharmacy_id = p_pharmacy_id
+$$;
+revoke all on function public.supplier_balances(uuid) from public, anon;
+grant execute on function public.supplier_balances(uuid) to authenticated;
+
+create or replace function public.supplier_owed_summary(p_pharmacy_id uuid)
+returns table (owed numeric, owed_count integer)
+language sql
+stable
+security invoker
+set search_path = public
+as $$
+  with bal as (
+    select s.opening_balance
+           + coalesce((select sum(l.total_amount) from supplier_lpos l
+                        where l.supplier_id = s.id and l.pharmacy_id = p_pharmacy_id), 0)
+           - coalesce((select sum(p.amount) from supplier_payments p
+                        where p.supplier_id = s.id and p.pharmacy_id = p_pharmacy_id), 0)
+           - coalesce((select sum(r.credit_amount) from supplier_returns r
+                        where r.supplier_id = s.id and r.pharmacy_id = p_pharmacy_id), 0) as b
+      from suppliers s
+     where s.pharmacy_id = p_pharmacy_id
+  )
+  select coalesce(sum(b) filter (where b > 0.5), 0)::numeric,
+         (count(*) filter (where b > 0.5))::integer
+    from bal
+$$;
+revoke all on function public.supplier_owed_summary(uuid) from public, anon;
+grant execute on function public.supplier_owed_summary(uuid) to authenticated;
+
+-- ============================================================
+-- Folded in from migrations/2026-11-07_evening_summary.sql
+-- ============================================================
+-- 2026-11-07 (night, later still): the evening summary SMS.
+--
+-- A short text at the end of the day: today's sales, whether the cash drawer was closed and by
+-- how much, and how much stock is low or expiring. Off for every pharmacy until the owner turns
+-- it on, sets a phone number, and picks which parts to include - nothing is forced on anyone.
+--
+-- What is new (no existing row is edited):
+--   * pharmacies.evening_summary_enabled, evening_summary_phone, evening_summary_sections: off,
+--     empty, and all three parts selected, for every pharmacy, old and new.
+--   * evening_summary_text(): builds the message from only the parts chosen.
+--   * queue_evening_summary_now(): the owner's "Send a test now" button. Same checks as every
+--     other message (SMS must be on, the daily limit, one summary a day).
+--   * queue_evening_summaries(): the automatic nightly sweep, run once a day by the database's
+--     own scheduler (pg_cron) at 18:30 Nairobi time. It only queues the message; sending it is
+--     a best-effort nudge to the SMS sender (see note below) wrapped so a missing or broken
+--     nudge never stops the message being queued correctly.
+--   * sms_log accepts the new kind 'summary'.
+--
+-- A note on the automatic send: the nightly sweep queues the message in the same table and the
+-- same way a person sending a message does, then asks the SMS sender to go look for new messages
+-- (through pg_net, Postgres's own way of making a web request, only if that extension is
+-- available). This part reaches outside the database, so unlike everything else in this file it
+-- cannot be rehearsed here - the first real evening is the real test. Turn it on for one
+-- pharmacy first and check the message arrives before telling others about it.
+
+alter table public.pharmacies add column if not exists evening_summary_enabled boolean not null default false;
+alter table public.pharmacies add column if not exists evening_summary_phone text;
+alter table public.pharmacies add column if not exists evening_summary_sections text[] not null default array['sales', 'cash', 'stock'];
+
+alter table public.sms_log drop constraint if exists sms_log_kind_check;
+alter table public.sms_log add constraint sms_log_kind_check check (kind in ('refill', 'credit', 'custom', 'summary'));
+
+grant update (evening_summary_enabled, evening_summary_phone, evening_summary_sections) on public.pharmacies to authenticated;
+
+-- A phone number as typed in Settings, turned into the digits an SMS provider wants
+-- (2547XXXXXXXX / 2541XXXXXXXX). null when it does not look like a real number.
+create or replace function public.evening_summary_normalize_phone(p_phone text)
+returns text
+language plpgsql
+immutable
+set search_path = public
+as $$
+declare
+  d text := regexp_replace(coalesce(p_phone, ''), '\D', '', 'g');
+begin
+  if d = '' then return null; end if;
+  if left(d, 1) = '0' and length(d) = 10 and left(d, 2) in ('07', '01') then return '254' || substring(d from 2); end if;
+  if left(d, 3) = '254' and length(d) = 12 then return d; end if;
+  if length(d) = 9 and left(d, 1) in ('7', '1') then return '254' || d; end if;
+  return null;
+end;
+$$;
+
+-- Keep only a usable phone number; a typo or an empty field turns the feature off rather than
+-- queuing a message nobody can receive.
+create or replace function public.evening_summary_guard_phone()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if NEW.evening_summary_phone is not null then
+    NEW.evening_summary_phone := evening_summary_normalize_phone(NEW.evening_summary_phone);
+  end if;
+  return NEW;
+end;
+$$;
+drop trigger if exists trg_evening_summary_guard_phone on public.pharmacies;
+create trigger trg_evening_summary_guard_phone
+  before insert or update of evening_summary_phone on public.pharmacies
+  for each row execute function evening_summary_guard_phone();
+
+-- Builds today's message from only the sections the pharmacy picked. Returns null when there is
+-- nothing to say (every chosen section is empty), so an empty message is never sent.
+create or replace function public.evening_summary_text(p_pharmacy_id uuid)
+returns text
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_sections text[];
+  v_start timestamptz := (today_ke()::timestamp at time zone 'Africa/Nairobi');
+  v_sale_count integer; v_sale_total numeric;
+  v_closing record;
+  v_low integer; v_expiring integer;
+  v_parts text[] := '{}';
+begin
+  select evening_summary_sections into v_sections from pharmacies where id = p_pharmacy_id;
+  if v_sections is null then v_sections := array['sales', 'cash', 'stock']; end if;
+
+  -- worked out regardless of which sections are chosen: the cash section below uses it too,
+  -- to decide whether a drawer that was never closed today is worth mentioning
+  select count(*), coalesce(sum(total_amount), 0) into v_sale_count, v_sale_total
+    from sales where pharmacy_id = p_pharmacy_id and not voided and sold_at >= v_start;
+
+  if 'sales' = any(v_sections) and v_sale_count > 0 then
+    v_parts := array_append(v_parts, v_sale_count || (case when v_sale_count = 1 then ' sale, ' else ' sales, ' end) || 'KES ' || trim(to_char(v_sale_total, '999,999,999')));
+  end if;
+
+  if 'cash' = any(v_sections) then
+    select * into v_closing from cash_closings where pharmacy_id = p_pharmacy_id and closed_at >= v_start order by closed_at desc limit 1;
+    if found then
+      v_parts := array_append(v_parts, 'Cash drawer closed, ' || (case when abs(v_closing.difference) < 0.005 then 'exact' when v_closing.difference < 0 then 'short KES ' || trim(to_char(abs(v_closing.difference), '999,999,999')) else 'over KES ' || trim(to_char(v_closing.difference, '999,999,999')) end));
+    elsif v_sale_count > 0 then
+      -- only worth flagging when someone actually sold something today and never closed the
+      -- drawer; a quiet day with no sales and no closing is not something to report
+      v_parts := array_append(v_parts, 'Cash drawer not closed yet');
+    end if;
+  end if;
+
+  if 'stock' = any(v_sections) then
+    select count(*) filter (where qty_in_stock <= reorder_level), count(*) filter (where soonest_expiry is not null and soonest_expiry <= current_date + 30)
+      into v_low, v_expiring
+      from v_drug_stock where pharmacy_id = p_pharmacy_id;
+    if coalesce(v_low, 0) > 0 or coalesce(v_expiring, 0) > 0 then
+      v_parts := array_append(v_parts, coalesce(v_low, 0) || ' low on stock, ' || coalesce(v_expiring, 0) || ' expiring within 30 days');
+    end if;
+  end if;
+
+  if array_length(v_parts, 1) is null then return null; end if;
+  return (select name from pharmacies where id = p_pharmacy_id) || ' - end of day: ' || array_to_string(v_parts, '. ') || '.';
+end;
+$$;
+revoke all on function public.evening_summary_text(uuid) from public, anon;
+grant execute on function public.evening_summary_text(uuid) to authenticated;
+
+-- One pharmacy, right now: the daily cap, "already sent today" and the usual kind check, then one
+-- row in sms_log. Returns the same shape as sms_queue() so the app and the send-sms Edge Function
+-- handle it exactly the same way.
+create or replace function public.queue_evening_summary_now(p_pharmacy_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_enabled boolean; v_cap integer; v_used integer; v_phone text; v_since timestamptz := (today_ke()::timestamp at time zone 'Africa/Nairobi');
+  v_body text; v_id uuid;
+begin
+  if p_pharmacy_id is distinct from my_pharmacy_id() then
+    raise exception 'Not authorized for this pharmacy';
+  end if;
+  if my_role() not in ('owner', 'co_owner', 'pharmacist') then
+    raise exception 'Only the owner or a pharmacist can send the evening summary';
+  end if;
+  select sms_enabled, sms_daily_cap, evening_summary_phone into v_enabled, v_cap, v_phone from pharmacies where id = p_pharmacy_id for update;
+  if not v_enabled then
+    raise exception 'SMS is switched off for this pharmacy (Customers > Messages)';
+  end if;
+  if v_phone is null then
+    raise exception 'Add a phone number for the evening summary first';
+  end if;
+  if exists (select 1 from sms_log where pharmacy_id = p_pharmacy_id and kind = 'summary' and created_at >= v_since and status <> 'failed') then
+    raise exception 'Today''s summary was already sent';
+  end if;
+  select count(*) into v_used from sms_log where pharmacy_id = p_pharmacy_id and created_at >= v_since and status <> 'failed';
+  if v_used >= v_cap then
+    raise exception 'Daily SMS limit reached (% a day). Try again tomorrow.', v_cap;
+  end if;
+  v_body := evening_summary_text(p_pharmacy_id);
+  if v_body is null then
+    raise exception 'There is nothing to report yet today';
+  end if;
+  insert into sms_log (pharmacy_id, customer_id, to_phone, body, kind, created_by)
+  values (p_pharmacy_id, null, v_phone, v_body, 'summary', auth.uid())
+  returning id into v_id;
+  return jsonb_build_object('queued', jsonb_build_array(jsonb_build_object('id', v_id, 'to', v_phone, 'body', v_body)),
+                            'skipped', '[]'::jsonb, 'used_today', v_used + 1, 'daily_cap', v_cap);
+end;
+$$;
+revoke all on function public.queue_evening_summary_now(uuid) from public, anon;
+grant execute on function public.queue_evening_summary_now(uuid) to authenticated;
+
+-- Every pharmacy that turned the summary on, once a day, run by pg_cron (see below). Only the
+-- database's own scheduler may call it - nobody signed in to the app can. Any one pharmacy's
+-- problem (a bad phone, SMS off, over the cap) is skipped, never stops the others.
+create or replace function public.queue_evening_summaries()
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_since timestamptz := (today_ke()::timestamp at time zone 'Africa/Nairobi');
+  v_ph record; v_used integer; v_body text; v_count integer := 0;
+  v_url text; v_secret text;
+begin
+  for v_ph in select id, sms_daily_cap, evening_summary_phone from pharmacies
+               where evening_summary_enabled and sms_enabled and evening_summary_phone is not null
+  loop
+    continue when exists (select 1 from sms_log where pharmacy_id = v_ph.id and kind = 'summary' and created_at >= v_since and status <> 'failed');
+    select count(*) into v_used from sms_log where pharmacy_id = v_ph.id and created_at >= v_since and status <> 'failed';
+    continue when v_used >= v_ph.sms_daily_cap;
+    v_body := evening_summary_text(v_ph.id);
+    continue when v_body is null;
+    insert into sms_log (pharmacy_id, customer_id, to_phone, body, kind) values (v_ph.id, null, v_ph.evening_summary_phone, v_body, 'summary');
+    v_count := v_count + 1;
+  end loop;
+
+  -- Best-effort nudge to the sender. A missing extension, a missing secret, or any error here
+  -- never stops the queuing above - the messages above are already safely queued either way.
+  if v_count > 0 then
+    begin
+      select decrypted_secret into v_url from vault.decrypted_secrets where name = 'pharma_cron_sender_url';
+      select decrypted_secret into v_secret from vault.decrypted_secrets where name = 'pharma_cron_shared_secret';
+      if v_url is not null and v_secret is not null then
+        perform net.http_post(url := v_url, headers := jsonb_build_object('content-type', 'application/json', 'x-cron-secret', v_secret), body := '{}'::jsonb);
+      end if;
+    exception when others then
+      null; -- queuing already succeeded; the nightly cron will try the nudge again next time
+    end;
+  end if;
+  return v_count;
+end;
+$$;
+revoke all on function public.queue_evening_summaries() from public, anon, authenticated;
+
+do $$
+begin
+  if exists (select 1 from pg_available_extensions where name = 'pg_cron') then
+    create extension if not exists pg_cron;
+    perform cron.unschedule(jobid) from cron.job where jobname = 'pharma-evening-summary';
+    perform cron.schedule('pharma-evening-summary', '30 15 * * *', 'select public.queue_evening_summaries()');  -- 18:30 Nairobi time
+  end if;
+end
+$$;
+
+-- Folded in from migrations/2026-11-07_barcode.sql
+-- 2026-11-07 (night, later still): barcode scanning.
+--
+-- A drug can have a barcode. Once it does, scanning it (camera, or a USB scanner, which just
+-- types very fast and presses Enter) finds that drug straight away on Sell and Inventory,
+-- instead of typing the name. A drug with no barcode works exactly as before.
+--
+-- What is new (no existing row is edited):
+--   * drugs.barcode: empty for every drug, old and new, until someone scans or types one in.
+--     Two drugs in the same pharmacy cannot share a barcode - the same rule, and the same
+--     "bring the hidden one back instead" message, that already applies to a drug's name.
+--   * v_drug_stock carries the barcode, so Sell and Inventory can match against it without
+--     a second query.
+--   * edit_drug() takes one more, optional argument: p_barcode. Old callers still work and
+--     leave the barcode as it is (the app always sends the current value, same as pack_label).
+
+alter table public.drugs add column if not exists barcode text;
+
+-- trimmed, and empty counts as none - never a row storing ''.
+create or replace function public.barcode_guard()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  NEW.barcode := nullif(trim(coalesce(NEW.barcode, '')), '');
+  return NEW;
+end;
+$$;
+drop trigger if exists trg_barcode_guard on public.drugs;
+create trigger trg_barcode_guard
+  before insert or update of barcode on public.drugs
+  for each row execute function barcode_guard();
+
+create unique index if not exists drugs_pharmacy_barcode_idx on public.drugs (pharmacy_id, barcode) where barcode is not null;
+
+create or replace view public.v_drug_stock with (security_invoker = true) as
+ select d.id as drug_id,
+    d.pharmacy_id,
+    d.name,
+    d.unit,
+    (case when p.low_stock_days is not null and not d.reorder_custom and rt.units > 0
+          then ceil(rt.units::numeric / rt.span * p.low_stock_days)::integer
+          else d.reorder_level end) as reorder_level,
+    d.default_price,
+    d.is_prescription,
+    d.pack_size,
+    d.pack_label,
+    coalesce(sum(b.quantity_remaining) filter (where (b.expiry_date >= current_date)), (0)::bigint) as qty_in_stock,
+    coalesce(sum(b.quantity_remaining) filter (where (b.expiry_date < current_date)), (0)::bigint) as qty_expired,
+    min(b.expiry_date) filter (where ((b.quantity_remaining > 0) and (b.expiry_date >= current_date))) as soonest_expiry,
+    coalesce(sum(((b.quantity_remaining)::numeric * b.cost_price)) filter (where (b.expiry_date >= current_date)), (0)::numeric) as stock_value_cost,
+    coalesce(sum(((b.quantity_remaining)::numeric * b.sell_price)) filter (where (b.expiry_date >= current_date)), (0)::numeric) as stock_value_retail,
+    coalesce(bool_or(b.expiry_unknown) filter (where (b.quantity_remaining > 0)), false) as has_unknown_expiry,
+    d.control_class,
+    d.reorder_level as reorder_own,
+    d.reorder_custom,
+    (case when rt.units > 0 then round(rt.units::numeric / rt.span, 3) end) as daily_rate,
+    (case when rt.units > 0
+          then round(coalesce(sum(b.quantity_remaining) filter (where (b.expiry_date >= current_date)), 0)::numeric
+                     / (rt.units::numeric / rt.span), 1) end) as days_left,
+    d.barcode
+   from public.drugs d
+     join public.pharmacies p on p.id = d.pharmacy_id
+     left join public.batches b on (((b.drug_id = d.id) and (b.quantity_remaining > 0)))
+     left join lateral (
+       select greatest(
+                coalesce((select sum(si.quantity) from public.sale_items si
+                            join public.sales s on s.id = si.sale_id
+                           where si.drug_id = d.id and not s.voided
+                             and s.sold_at >= now() - interval '30 days'), 0)
+              - coalesce((select sum(r.quantity) from public.returns r
+                           where r.drug_id = d.id and r.created_at >= now() - interval '30 days'), 0), 0) as units,
+              greatest(7, least(30, ceil(extract(epoch from (now() - d.created_at)) / 86400)))::integer as span
+        where p.low_stock_days is not null
+     ) rt on true
+  where d.active
+  group by d.id, p.id, rt.units, rt.span;
+
+drop function if exists public.edit_drug(uuid, uuid, text, uuid, drug_form, text, integer, boolean, integer, text, boolean);
+create or replace function public.edit_drug(
+  p_pharmacy_id uuid,
+  p_drug_id uuid,
+  p_name text,
+  p_category_id uuid,
+  p_form drug_form,
+  p_unit text,
+  p_reorder_level integer,
+  p_is_prescription boolean,
+  p_pack_size integer,
+  p_pack_label text,
+  p_reorder_custom boolean default null,
+  p_barcode text default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_name text := trim(coalesce(p_name, ''));
+  v_barcode text := nullif(trim(coalesce(p_barcode, '')), '');
+  v_clash record;
+begin
+  if p_pharmacy_id is distinct from my_pharmacy_id() then
+    raise exception 'Not authorized for this pharmacy';
+  end if;
+  if my_role() not in ('owner', 'co_owner', 'pharmacist') then
+    raise exception 'Only the owner or a pharmacist can change a drug';
+  end if;
+  if v_name = '' then
+    raise exception 'Give the drug a name';
+  end if;
+  if (p_reorder_custom is distinct from false) and (p_reorder_level is null or p_reorder_level < 0) then
+    raise exception 'Reorder level must be zero or more';
+  end if;
+  if p_reorder_level is not null and p_reorder_level < 0 then
+    raise exception 'Reorder level must be zero or more';
+  end if;
+  if p_pack_size is not null and p_pack_size <= 0 then
+    raise exception 'Pack size must be more than zero';
+  end if;
+  perform 1 from drugs where id = p_drug_id and pharmacy_id = p_pharmacy_id for update;
+  if not found then
+    raise exception 'Drug not found';
+  end if;
+  if p_category_id is not null
+     and not exists (select 1 from drug_categories where id = p_category_id and pharmacy_id = p_pharmacy_id) then
+    raise exception 'Category not found';
+  end if;
+
+  select id, active into v_clash
+    from drugs
+   where pharmacy_id = p_pharmacy_id and id <> p_drug_id and lower(name) = lower(v_name)
+   limit 1;
+  if found then
+    if v_clash.active then
+      raise exception 'Another drug is already named "%". Pick a different name.', v_name;
+    else
+      raise exception 'A hidden drug is already named "%". Bring that one back from Hidden drugs instead.', v_name;
+    end if;
+  end if;
+
+  if v_barcode is not null then
+    select name, active into v_clash
+      from drugs
+     where pharmacy_id = p_pharmacy_id and id <> p_drug_id and barcode = v_barcode
+     limit 1;
+    if found then
+      if v_clash.active then
+        raise exception 'That barcode is already used by "%".', v_clash.name;
+      else
+        raise exception 'That barcode is already used by "%", a hidden drug. Bring that one back from Hidden drugs instead.', v_clash.name;
+      end if;
+    end if;
+  end if;
+
+  begin
+    update drugs set
+      name = v_name,
+      category_id = p_category_id,
+      form = coalesce(p_form, form),
+      unit = coalesce(nullif(trim(coalesce(p_unit, '')), ''), unit),
+      reorder_level = coalesce(p_reorder_level, reorder_level),
+      reorder_custom = coalesce(p_reorder_custom, reorder_custom),
+      is_prescription = coalesce(p_is_prescription, is_prescription),
+      pack_size = p_pack_size,
+      pack_label = nullif(trim(coalesce(p_pack_label, '')), ''),
+      barcode = v_barcode
+    where id = p_drug_id and pharmacy_id = p_pharmacy_id;
+  exception when unique_violation then
+    raise exception 'Another drug is already named "%", or already uses that barcode.', v_name;
+  end;
+end;
+$$;
+
+revoke all on function public.edit_drug(uuid, uuid, text, uuid, drug_form, text, integer, boolean, integer, text, boolean, text) from public, anon;
+grant execute on function public.edit_drug(uuid, uuid, text, uuid, drug_form, text, integer, boolean, integer, text, boolean, text) to authenticated;

@@ -74,7 +74,9 @@ async function openSupplierDetail(supplierId) {
     if (lErr) throw lErr;
     var { data: pays, error: pErr } = await sb.from('supplier_payments').select('*').eq('supplier_id', supplierId).order('paid_at');
     if (pErr) throw pErr;
-    STATE.currentSupplierDetail = { supplier: supplier, lpos: lpos || [], payments: pays || [] };
+    var { data: rets, error: rErr } = await sb.from('supplier_returns').select('*, drugs(name, unit)').eq('supplier_id', supplierId).order('returned_at');
+    if (rErr) throw rErr;
+    STATE.currentSupplierDetail = { supplier: supplier, lpos: lpos || [], payments: pays || [], returns: rets || [] };
   } catch (e) {
     errorCard(c, friendlyError(e), 'retrySupplierDetail');
     return;
@@ -119,6 +121,16 @@ function buildSupplierLedger(detail) {
       delivered: 0, paid: Number(p.amount || 0)
     });
   });
+  // Stock sent back to the supplier is a credit: it lowers what is owed.
+  (detail.returns || []).forEach(function (r) {
+    var dn = (r.drugs && r.drugs.name) || 'item';
+    entries.push({
+      date: r.returned_at, sortKey: r.returned_at + 'T00:00:03',
+      label: 'Returned stock · Credit',
+      detailText: dn + ' ×' + r.quantity + (r.reason ? ' — ' + r.reason : ''),
+      delivered: 0, paid: 0, credit: Number(r.credit_amount || 0)
+    });
+  });
   entries.sort(function (a, b) { return a.sortKey < b.sortKey ? -1 : (a.sortKey > b.sortKey ? 1 : 0); });
 
   var opening = Number(supplier.opening_balance || 0);
@@ -131,12 +143,13 @@ function buildSupplierLedger(detail) {
   var running = 0;
   entries.forEach(function (e) {
     if (e.openingValue != null) running = e.openingValue;
-    else running += e.delivered - e.paid;
+    else running += e.delivered - e.paid - (e.credit || 0);
     e.runningBalance = running;
   });
   var totalDelivered = (detail.lpos || []).reduce(function (a, l) { return a + Number(l.total_amount || 0); }, 0);
   var totalPaid = (detail.payments || []).reduce(function (a, p) { return a + Number(p.amount || 0); }, 0);
-  return { entries: entries, totalDelivered: totalDelivered, totalPaid: totalPaid, opening: opening, balance: running };
+  var totalCredit = (detail.returns || []).reduce(function (a, r) { return a + Number(r.credit_amount || 0); }, 0);
+  return { entries: entries, totalDelivered: totalDelivered, totalPaid: totalPaid, totalCredit: totalCredit, opening: opening, balance: running };
 }
 
 function drawSupplierDetail() {
@@ -157,6 +170,7 @@ function drawSupplierDetail() {
     kpi('Opening balance', fmt(ledger.opening), 't-violet') +
     kpi('Total delivered', fmt(ledger.totalDelivered), 't-orange') +
     kpi('Total paid', fmt(ledger.totalPaid), 't-sales') +
+    (ledger.totalCredit > 0 ? kpi('Credit for returns', fmt(ledger.totalCredit), 't-green') : '') +
     kpi('Balance owed', fmt(ledger.balance), balanceKind) +
     '</div>' +
     '<div class="toolbar-row"><div class="toolbar-segment">' +
@@ -175,10 +189,11 @@ function drawSupplierDetail() {
       var right = '';
       if (e.delivered) right += '<div>+' + fmt(e.delivered) + '</div>';
       if (e.paid) right += '<div style="color:var(--green)">−' + fmt(e.paid) + '</div>';
+      if (e.credit) right += '<div style="color:var(--green)">−' + fmt(e.credit) + '</div>';
       right += '<div class="tiny">Bal ' + fmt(e.runningBalance) + '</div>';
       return '<div class="list-row"><div><div class="name">' + esc(e.label) + '</div><div class="meta">' + esc(metaBits.join(' · ')) + '</div></div>' +
         '<div class="right">' + right + '</div></div>';
-    }).join('') : '<div class="empty">No deliveries or payments recorded yet.</div>') +
+    }).join('') : '<div class="empty">No deliveries, payments or returns recorded yet.</div>') +
     '</div>';
 }
 
@@ -193,6 +208,7 @@ function exportSupplierStatement() {
       'Detail': e.detailText || '',
       'Delivered': e.delivered || '',
       'Paid': e.paid || '',
+      'Credit': e.credit || '',
       'Balance': e.runningBalance
     };
   });
@@ -204,9 +220,9 @@ function printSupplierStatement() {
   var ledger = STATE.currentSupplierLedger;
   if (!detail || !ledger) return;
   var rows = ledger.entries.map(function (e) {
-    return [e.date ? fmtDate(e.date) : '—', e.label, e.detailText || '—', e.delivered ? fmt(e.delivered) : '—', e.paid ? fmt(e.paid) : '—', fmt(e.runningBalance)];
+    return [e.date ? fmtDate(e.date) : '—', e.label, e.detailText || '—', e.delivered ? fmt(e.delivered) : '—', e.paid ? fmt(e.paid) : '—', e.credit ? fmt(e.credit) : '—', fmt(e.runningBalance)];
   });
-  printHtml('Supplier Statement', detail.supplier.name, tableHtml(['Date', 'Entry', 'Detail', 'Delivered', 'Paid', 'Balance'], rows), 'Balance owed: ' + fmt(ledger.balance));
+  printHtml('Supplier Statement', detail.supplier.name, tableHtml(['Date', 'Entry', 'Detail', 'Delivered', 'Paid', 'Credit', 'Balance'], rows), 'Balance owed: ' + fmt(ledger.balance));
 }
 
 // --- New LPO ---

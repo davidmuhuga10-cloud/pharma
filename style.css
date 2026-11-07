@@ -154,6 +154,8 @@ input, select, textarea { font: inherit; }
 .report-tile.t-amber .r-ico   { color: #8a6408; }
 .report-tile.t-red     { background: var(--red-light); border-color: var(--red); }
 .report-tile.t-red .r-ico     { color: var(--red); }
+.report-tile.t-green   { background: var(--green-light); border-color: var(--green); }
+.report-tile.t-green .r-ico   { color: var(--green); }
 
 h1, h2, h3 { margin: 0 0 10px; }
 h2 { font-size: 16px; }
@@ -483,7 +485,26 @@ h2 { font-size: 16px; }
   .print-table th, .print-table td { border: 1px solid #999; padding: 5px 7px; text-align: left; }
   .print-table th { background: #eee; }
   .print-footer { margin-top: 16px; font-size: 11px; color: #000; }
+
+  /* A sale receipt, sized for an 80mm thermal till roll. This is just a hint:
+     the browser's own print dialog still lets anyone pick a different
+     printer or paper size, so a shop with an ordinary A4 printer is not
+     broken by it - it only narrows the content when a paper size this
+     small is actually chosen. */
+  #printArea.print-receipt { page: receipt80; width: 72mm; font-family: 'Courier New', Courier, monospace; }
+  #printArea.print-receipt .print-letterhead { border-bottom: 1px dashed #000; padding-bottom: 6px; margin-bottom: 8px; }
+  #printArea.print-receipt .print-letterhead .pname { font-size: 15px; }
+  #printArea.print-receipt .print-letterhead .pmeta { font-size: 10px; }
+  #printArea.print-receipt .print-title { font-size: 11px; margin: 6px 0; text-align: center; }
+  #printArea.print-receipt .print-footer { margin-top: 10px; font-size: 9px; text-align: center; border-top: 1px dashed #000; padding-top: 6px; }
+  .r80-meta { font-size: 10px; margin-bottom: 6px; }
+  .r80-rule { border-top: 1px dashed #000; margin: 6px 0; }
+  .r80-row { margin-bottom: 4px; font-size: 11px; }
+  .r80-name { font-weight: 700; }
+  .r80-sub { display: flex; justify-content: space-between; gap: 8px; }
+  .r80-total { font-weight: 800; font-size: 13px; }
 }
+@page receipt80 { size: 80mm auto; margin: 2mm 4mm; }
 
 /* ---- UI polish (Oct 2026) ---- */
 /* Cart lines: price line was rendering at full body size, same as the name */
