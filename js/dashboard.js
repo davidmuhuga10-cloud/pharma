@@ -470,6 +470,15 @@ function dashRushGraphHtml(d) {
 
 // Stat tiles: 2 across (4 on desktop). Sales and Profit first, then Stock value
 // and Supplier debt. Each tile is tinted in its own colour.
+// Each tile taps through to the detailed, printable/Excel-able screen that already
+// covers it. Profit has no report of its own (nothing breaks profit out sale by
+// sale yet), so it goes to the same Sales Report as Sales - the closest real detail
+// there is. Debt owed goes to the Suppliers list (not under Reports), the same
+// balances already shown there, not a date-range report.
+function dashGoSales() { goReport('sales'); }
+function dashGoStockValue() { goReport('valuation'); }
+function dashGoDebtOwed() { if (!veilBusy) setTab('suppliers'); }
+
 function dashStatGridHtml(d, snap) {
   snap = snap || {};
   var salesTotal = d ? Number(d.sales_total || 0) : 0;
@@ -478,17 +487,17 @@ function dashStatGridHtml(d, snap) {
   var marginPct = salesTotal > 0 ? Math.round((profitTotal / salesTotal) * 100) : null;
 
   var stats = [
-    { label: 'Sales', value: fmt(salesTotal), color: DCOLOR.sales, bg: DCOLOR.salesLight,
+    { label: 'Sales', value: fmt(salesTotal), color: DCOLOR.sales, bg: DCOLOR.salesLight, click: 'dashGoSales',
       sub: dashDeltaText(salesTotal, d ? d.sales_prev_total : 0, DASH_VS_LABEL[dashRange]) || DASH_PERIOD_LABEL[dashRange] },
-    { label: 'Profit', value: fmt(profitTotal), color: DCOLOR.sales, bg: DCOLOR.salesLight,
+    { label: 'Profit', value: fmt(profitTotal), color: DCOLOR.sales, bg: DCOLOR.salesLight, click: 'dashGoSales',
       sub: marginPct === null ? 'No sales yet' : (dashDeltaText(profitTotal, profitPrev, DASH_VS_LABEL[dashRange]) || (marginPct + '% margin')) },
-    { label: 'Stock value', value: fmt(snap.stockValue || 0), color: DCOLOR.orange, bg: DCOLOR.orangeLight,
+    { label: 'Stock value', value: fmt(snap.stockValue || 0), color: DCOLOR.orange, bg: DCOLOR.orangeLight, click: 'dashGoStockValue',
       sub: (snap.drugCount || 0) + ' drugs tracked' },
-    { label: 'Debt owed', value: fmt(snap.supplierOwed || 0), color: DCOLOR.magenta, bg: DCOLOR.magentaLight,
+    { label: 'Debt owed', value: fmt(snap.supplierOwed || 0), color: DCOLOR.magenta, bg: DCOLOR.magentaLight, click: 'dashGoDebtOwed',
       sub: (snap.suppliersOwedCount || 0) + ((snap.suppliersOwedCount || 0) === 1 ? ' supplier' : ' suppliers') }
   ];
   return stats.map(function (p) {
-    return '<div class="dash-stat" style="background:' + p.bg + ';border-color:' + p.color + '">' +
+    return '<div class="dash-stat clickable" style="background:' + p.bg + ';border-color:' + p.color + '" onclick="' + p.click + '()" role="button" tabindex="0">' +
       '<div class="lab" style="color:' + p.color + '">' + esc(p.label) + '</div>' +
       '<div class="val">' + p.value + '</div>' +
       '<div class="sub">' + esc(p.sub) + '</div>' +

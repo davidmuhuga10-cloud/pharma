@@ -2,6 +2,10 @@
 
 Newest first. The detailed story for each item is in `PHARMA_PROJECT_STATUS.md`.
 
+## 2026-11-07 (night, later): Dashboard tiles tap through to detail
+
+- New: the 4 dashboard tiles (Sales, Profit, Stock value, Debt owed) are now clickable/tappable, each landing on the detailed, printable/Excel-able screen that already covers it: Sales and Profit both open the Sales Report (profit is not broken out sale by sale anywhere yet, so this is the closest real detail there is); Stock value opens the Stock Valuation Report; Debt owed opens the Suppliers list. Nothing new to build for the detail screens themselves - they already existed, with Excel export and Print (the browser's own print dialog, where 'Save as PDF' is one of the destinations, same as every other report in the app). No database change.
+
 ## 2026-11-07 (night, latest): Everything applied live
 
 - All 6 pending database migrations applied to the live project, in order: price history, cash drawer, supplier returns (enum + table), evening summary, barcode.

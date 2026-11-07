@@ -52,6 +52,7 @@ node tests/supplier-order.test.js        # ordering from a supplier by WhatsApp:
 node tests/evening-summary.test.js       # evening summary: settings card, on/off per part, edge-function wiring
 node tests/barcode.test.js               # barcode scanning: BarcodeDetector feature-detection, Sell/Inventory wiring (no network, no real camera)
 node tests/receipt-print.test.js         # 80mm thermal receipt printing: page size, class toggle, receipt body (no browser, no real printer)
+node tests/dash-tile-links.test.js       # dashboard tiles tap through to the matching detailed report (Sales/Profit, Stock value, Debt owed)
 node tests/admin-shell.test.js           # admin console: email sign-in, reset, eye icons, side menu routes
 node tests/valuation-row.test.js         # stock valuation row wording and per-unit maths
 node tests/sidebar.test.js               # desktop sidebar: every module present, phone bar unchanged, one lit row

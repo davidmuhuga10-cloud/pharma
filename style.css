@@ -439,6 +439,9 @@ h2 { font-size: 16px; }
 .dash-stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
 @media (min-width: 860px) { .dash-stat-grid { grid-template-columns: repeat(4, 1fr); } }
 .dash-stat { border: 1px solid transparent; border-left: 4px solid transparent; border-right: 4px solid transparent; border-radius: var(--radius); padding: 12px 14px; }
+.dash-stat.clickable { cursor: pointer; transition: box-shadow 0.15s, transform 0.15s; }
+.dash-stat.clickable:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+.dash-stat.clickable:active { transform: scale(0.98); }
 .dash-stat .lab { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; }
 .dash-stat .val { font-size: 16px; font-weight: 800; color: var(--ink); margin-top: 3px; }
 .dash-stat .sub { font-size: 10px; font-weight: 700; color: var(--ink-soft); margin-top: 2px; }
