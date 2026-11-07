@@ -1,8 +1,6 @@
-// js/sell.js - The Sell screen: search, cart, checkout, receipts, held sales.
-// (One of the files app.js was split into. All of them share one global scope, so
-// order in index.html matters: see the list there.)
-// SELL
-// ---------------------------------------------------------------------------
+// js/sell.js - the Sell screen: search, cart, checkout, receipts, held sales.
+//
+// --- Sell ---
 
 var sellFilter = '';
 var heldSalesCache = [];
@@ -12,7 +10,7 @@ async function renderSell() {
   if (!can('sell')) { c.innerHTML = '<div class="card empty">You do not have access to Sell.</div>'; return; }
   c.innerHTML = '<div class="empty">Loading drugs…</div>';
   try {
-    var { data: stock } = await sb.from('v_drug_stock').select('*').gt('qty_in_stock', 0).order('name');
+    var { data: stock } = await fetchAllRows(function () { return sb.from('v_drug_stock').select('*').gt('qty_in_stock', 0).order('name'); }, 'drug_id');
     STATE.drugsCache = stock || [];
     var { data: held } = await sb.from('held_sales').select('*').order('created_at', { ascending: false });
     heldSalesCache = held || [];
@@ -23,11 +21,10 @@ async function renderSell() {
   drawSell();
 }
 
-// The search box is drawn once and never rebuilt while typing: typing only
-// refreshes the result lists beneath it (rebuilding the box on every key press
-// confuses phone keyboards and can drop letters). While a search is active the
-// matches sit directly under the box, above the cart, so they are always in
-// view; with an empty box the full stock list sits below the cart as before.
+// The search box is drawn once and never rebuilt while typing (rebuilding it
+// confuses phone keyboards). Typing only refreshes the lists below it. While
+// searching, matches sit directly under the box; with an empty box the full
+// stock list sits below the cart.
 function sellRowHtml(d) {
   return '<div class="list-row" onclick="addToCart(\'' + d.drug_id + '\')" style="cursor:pointer">' +
     '<div><div class="name">' + esc(d.name) + (isControlledDrug(d) ? ' <span class="badge bad">' + CONTROL_LABEL[d.control_class] + '</span>' : d.is_prescription ? ' <span class="badge warn">Rx</span>' : '') + '</div><div class="meta">' + esc(qtyUnit(d.qty_in_stock, d.unit)) + ' available' + (d.default_price ? ' · ' + fmt(d.default_price) : '') + '</div></div>' +
@@ -37,9 +34,8 @@ var SELL_ROW_CAP = 100;
 function sellListsHtml() {
   var raw = sellFilter.trim(), q = raw.toLowerCase();
   var rows = STATE.drugsCache.filter(function (d) { return d.name.toLowerCase().indexOf(q) !== -1; });
-  // Only the first SELL_ROW_CAP rows are drawn: a pharmacy with thousands of
-  // products would otherwise build thousands of rows on every redraw. Typing
-  // narrows the list, so nothing is out of reach.
+  // Only the first SELL_ROW_CAP rows are drawn, so thousands of products do not
+  // build thousands of rows on every redraw. Typing narrows the list.
   var shown = rows.length > SELL_ROW_CAP ? rows.slice(0, SELL_ROW_CAP) : rows;
   var inner = rows.length ? shown.map(sellRowHtml).join('') +
       (rows.length > shown.length ? '<div class="empty">Showing ' + shown.length + ' of ' + rows.length + '. Type in the search box to find the rest.</div>' : '')
@@ -165,12 +161,9 @@ function confirmRxCapture(drugId) {
   drawSell();
 }
 
-// addToCart caps at available stock, but the cart's own "+" button did not —
-// so a seller could push a line past what is on the shelf and only find out at
-// Confirm, when record_sale refused the whole sale. Cap it here too, against
-// the live figure rather than the one cached when the item was added. Two
-// lines for the same drug (two prescriptions of one drug, say) draw on the
-// same stock, so they are counted together.
+// Cap the cart's "+" at live stock, like addToCart does, so a seller cannot go
+// past the shelf and have record_sale refuse the whole sale at Confirm. Lines
+// for the same drug (e.g. two prescriptions) share stock and are counted together.
 function changeQty(i, delta) {
   var item = STATE.cart[i];
   if (delta > 0) {
@@ -188,21 +181,17 @@ function changeQty(i, delta) {
 }
 
 var checkoutPayments = [];
-// The server's own pricing of the current cart — see openCheckout below.
+// The server's own price for the current cart (see openCheckout).
 var lastQuote = null;
 
-// The Sell screen prices a cart from drugs.default_price, which record_restock
-// overwrites with the LATEST restock price. record_sale charges something
-// different: whatever the batch FEFO lands on costs, with that batch's
-// markdown (batches.discount_percent) applied. Those two agree only while a
-// drug has exactly one batch at the current price. The moment an older batch
-// is still on the shelf at a different price, or any batch is marked down, the
-// client asked for payments summing to the wrong number and record_sale
-// rejected the entire sale with "Payments (x) do not add up to the sale total
-// (y)" — which made the markdown feature unusable and broke the ordinary
-// restock-at-a-new-price case too. So: ask the database what this cart
-// actually comes to (quote_sale, same FEFO loop, read-only) and collect money
-// against THAT. The cart's own figure stays as the indicative shelf price.
+// The cart is priced from drugs.default_price, which record_restock sets to the
+// LATEST restock price. record_sale instead charges what the batch it takes
+// from (FEFO) costs, minus that batch's markdown. These differ when an older
+// batch at another price is still on the shelf, or a batch is marked down, and
+// then record_sale rejected the sale ("Payments do not add up to the total").
+// So ask the database for the real total (quote_sale: same FEFO loop,
+// read-only) and take payment against that. The cart figure stays an
+// indicative shelf price.
 async function openCheckout() {
   if (!STATE.cart.length) { toast('Cart is empty.', 'bad'); return; }
   var indicative = STATE.cart.reduce(function (a, c) { return a + c.qty * c.price; }, 0);
@@ -240,10 +229,9 @@ async function openCheckout() {
   var total = Math.round((Number(quote.total) || 0) * 100) / 100;
   checkoutPayments = [{ method: 'cash', amount: total, reference: '' }];
   checkoutCustomerId = '';
-  // Saved customers, for the credit (kopa) option. If this fails the sale
-  // still works for cash; only credit needs the list.
-  // A copy loaded in the last minute is reused: reloading every customer's
-  // balance before each checkout slowed down every sale.
+  // Saved customers for credit (kopa). If this fails, cash sales still work.
+  // A copy loaded in the last minute is reused, so each checkout does not reload
+  // every balance.
   try { if (Date.now() - customersLoadedAt > 60000) await loadCustomers(); } catch (e) { /* keep whatever was loaded before */ }
   body.dataset.total = total;
   body.dataset.priceNote = Math.abs(total - indicative) > 0.01 ? '1' : '';
@@ -264,8 +252,8 @@ function drawCheckoutPayments() {
   var total = parseFloat(body.dataset.total);
   var paid = checkoutPayments.reduce(function (a, p) { return a + (parseFloat(p.amount) || 0); }, 0);
   var balance = Math.round((total - paid) * 100) / 100;
-  // What was typed in the customer boxes survives a redraw (the whole sheet
-  // is rebuilt whenever a payment line changes).
+  // Typed customer details survive a redraw (the sheet is rebuilt whenever a
+  // payment line changes).
   var keep = function (id) { var e = document.getElementById(id); return e ? e.value : ''; };
   var typedName = keep('pCustomer'), newName = keep('pNewName'), newPhone = keep('pNewPhone');
   var credit = checkoutCreditTotal();
@@ -339,9 +327,8 @@ function removePaymentLine(i) {
 async function completeSale() {
   var btn = $('#pSaveBtn');
   act(btn, async function () {
-    // Re-price the receipt lines from the quote the sale was confirmed
-    // against, so the printed receipt shows what was actually charged (batch
-    // price with markdown) rather than the cart's indicative shelf price.
+    // Re-price the receipt lines from the confirmed quote, so the receipt shows
+    // what was charged (batch price with markdown), not the shelf price.
     var perDrug = {};
     if (lastQuote && lastQuote.lines) {
       lastQuote.lines.forEach(function (l) {
@@ -372,8 +359,8 @@ async function completeSale() {
     if (checkoutCustomerId === '__new') {
       var nn = $('#pNewName') ? $('#pNewName').value.trim() : '';
       if (!nn) { toast('Enter the new customer\'s name.', 'bad'); return; }
-      // Created first, so a failed sale (say, over the limit) does not make
-      // the seller type them in again.
+      // Created first, so a failed sale (e.g. over the credit limit) does not make
+      // the seller retype them.
       customerId = await rpcCall('save_customer', {
         p_pharmacy_id: STATE.profile.pharmacy_id, p_name: nn, p_phone: ($('#pNewPhone').value.trim() || null),
         p_credit_limit: null, p_notes: null, p_id: null, p_sms_ok: true, p_active: true
@@ -396,12 +383,9 @@ async function completeSale() {
       p_customer_id: customerId
     });
     if (error) { toast(friendlyError(error), 'bad'); return; }
-    // The insurance claim used to be inserted here, as a second round trip
-    // after the sale had already committed — so if that call failed (dropped
-    // connection at the till, tab closed) the sale stood but the claim never
-    // existed and the pharmacy quietly lost money it was owed. record_sale
-    // now creates it inside the same transaction, for every insurance payment
-    // line rather than only the first one.
+    // record_sale creates the insurance claim in the same transaction, for every
+    // insurance payment line. Doing it here as a second request could leave a sale
+    // with no claim if the connection dropped in between.
     toast('Sale recorded.', 'good');
     customersLoadedAt = 0;   // a credit sale changes a customer's balance
     STATE.cart = [];
@@ -416,8 +400,8 @@ async function completeSale() {
 var pendingReceipt = null; // holds the last completed sale for the print button below
 
 function showReceipt(items, payments, customer, invoiceNo, chargedTotal) {
-  // chargedTotal is what record_sale actually billed (see openCheckout). Only
-  // fall back to summing the lines when it isn't available.
+  // chargedTotal is what record_sale billed (see openCheckout). Fall back to
+  // summing the lines only if it is missing.
   var total = (chargedTotal == null)
     ? items.reduce(function (a, c) { return a + c.qty * c.price; }, 0)
     : chargedTotal;
@@ -425,8 +409,7 @@ function showReceipt(items, payments, customer, invoiceNo, chargedTotal) {
   var body = sheet('Sale complete' + (invoiceNo ? ' — ' + invoiceNo : ''), '');
   body.innerHTML =
     // listRow() escapes its first argument, so patient_name is passed raw here
-    // — it used to be esc()'d first and then escaped again, printing a
-    // customer's apostrophe as "&#39;" on the screen receipt.
+    // (escaping twice printed an apostrophe as "&#39;").
     '<div class="card">' + items.map(function (it) {
       return listRow(it.name + (it.patient_name ? ' (' + it.patient_name + ')' : ''), it.qty + ' × ' + fmt(it.price), fmt(it.qty * it.price));
     }).join('') + '<div class="list-row"><div class="name">Total</div><div class="name">' + fmt(total) + '</div></div></div>' +
@@ -441,9 +424,8 @@ function printReceipt() {
   var extra = [];
   if (d.invoiceNo) extra.push('Invoice: ' + esc(d.invoiceNo));
   if (d.customer) extra.push('Customer: ' + esc(d.customer));
-  // extra[] is dropped straight into the print area's HTML, so every piece of
-  // it has to be escaped — the payment reference is free text a seller types
-  // at checkout (M-Pesa code, scheme/member note), and was going in raw.
+  // extra[] goes straight into the print area's HTML, so every piece must be
+  // escaped. The payment reference is free text typed at checkout.
   extra.push('Payment: ' + d.payments.map(function (p) {
     return esc(payLabel(p.method)) + (p.reference ? ' (' + esc(p.reference) + ')' : '') + ' ' + fmt(p.amount);
   }).join(', '));
@@ -453,4 +435,3 @@ function printReceipt() {
     '<p style="text-align:right;font-weight:700;margin-top:10px">Total: ' + fmt(d.total) + '</p>');
 }
 
-// ---------------------------------------------------------------------------

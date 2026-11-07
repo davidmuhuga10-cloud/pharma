@@ -1,7 +1,4 @@
-/* Pharma Admin — platform portal (/admin). Loaded AFTER style.css so it
-   reuses the app's own design tokens and shared classes (.card, .kpi + .t-*
-   tints, .badge, .btn, .field, .brand-badge, .toast) — "Command Green" —
-   and only adds what a wide, data-dense admin screen needs on top. */
+/* Pharma Admin - platform portal (/admin). Loaded AFTER style.css so it reuses the app's design tokens and shared classes (.card, .kpi + .t-* tints, .badge, .btn, .field, .brand-badge, .toast) and only adds what a wide, data-dense admin screen needs. */
 
 body.admin { background: var(--paper); }
 #admin { min-height: 100vh; display: flex; flex-direction: column; }
@@ -47,11 +44,14 @@ body.admin { background: var(--paper); }
 /* ---- KPI tiles ----------------------------------------------------- */
 .adm-kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
 .adm-kpis .kpi:first-child { grid-column: 1 / -1; }
+.adm-kpis.four .kpi:first-child { grid-column: auto; }
 @media (min-width: 720px) {
   .adm-kpis { grid-template-columns: repeat(3, 1fr); }
   .adm-kpis .kpi:first-child { grid-column: auto; }
 }
 @media (min-width: 1080px) { .adm-kpis { grid-template-columns: repeat(5, 1fr); } }
+@media (min-width: 720px) { .adm-kpis.four { grid-template-columns: repeat(4, 1fr); } }
+@media (min-width: 1080px) { .adm-kpis.four { grid-template-columns: repeat(4, 1fr); } }
 .adm-kpis.six { }
 @media (min-width: 1080px) { .adm-kpis.six { grid-template-columns: repeat(6, 1fr); } }
 .kpi .sub { font-size: 12px; margin-top: 4px; line-height: 1.35; }
@@ -197,3 +197,32 @@ body.admin { background: var(--paper); }
 .adm-modal-body p { margin: 0 0 12px; line-height: 1.5; }
 .adm-modal-body .err { background: var(--red-light); color: var(--red); border-radius: 10px; padding: 10px 12px; font-size: 13px; margin-bottom: 12px; font-weight: 600; }
 .adm-modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+
+/* ---- Side navigation (same menu as the pharmacy app: .navdrawer on a desktop, .navbar bottom bar on a phone) ---- */
+/* Phone: bottom bar, so the page needs room underneath; the docked menu is not used. */
+.adm-wrap { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
+@media (max-width: 859px) { .adm-drawer { display: none; } }
+@media (min-width: 860px) {
+  .adm-head { margin-left: var(--sidebar-w); background: #fff; color: var(--ink); box-shadow: none; border-bottom: 1px solid var(--line); }
+  .adm-head-in { max-width: none; padding: 12px 28px; }
+  .adm-id .brand-badge { display: none; }
+  .adm-id > div { display: flex; flex-direction: column; }
+  .adm-id .t2 { order: -1; font-size: 15px; font-weight: 800; opacity: 1; color: var(--ink); }
+  .adm-id .t1 { font-size: 11.5px; font-weight: 600; color: var(--ink); }
+  .adm-id .t1 span { color: var(--ink); }
+  .adm-actions button { background: var(--green-light); color: var(--green); }
+  .adm-actions button:hover { background: #DCEEE2; }
+  .adm-wrap { margin: 0 0 0 var(--sidebar-w); max-width: 1200px; width: calc(100% - var(--sidebar-w)); padding: 24px 32px 60px; }
+}
+
+/* ---- Billing rows ---------------------------------------------------- */
+.bill-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.bill-row:last-child { border-bottom: none; }
+.bill-id { display: flex; gap: 12px; align-items: center; flex: 1 1 220px; min-width: 0; text-decoration: none; color: inherit; }
+.bill-id .body { min-width: 0; }
+.bill-id .nm { font-weight: 700; }
+.bill-id .mt, .bill-plan .mt { font-size: 12px; margin-top: 3px; }
+.bill-plan { flex: 0 0 190px; }
+.bill-btns { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; flex: 0 0 250px; }
+@media (max-width: 559px) { .bill-plan { flex: 1 1 100%; } .bill-btns { flex: 1 1 100%; width: 100%; } .bill-btns .btn { flex: 1; } }
+.foot-note a { font-weight: 700; }

@@ -185,7 +185,7 @@ async function main() {
     console.log('\n== Staff invites: single-use, role-scoped ==');
     const inviteRes = await c.query("select create_staff_invite($1, 'attendant') as code", [pharmacyId]);
     const code = inviteRes.rows[0].code;
-    assert(/^[0-9A-F]{6}$/.test(code), 'create_staff_invite returns a 6-character code');
+    assert(/^[0-9A-F]{10}$/.test(code), 'create_staff_invite returns a 10-character code (about a trillion possibilities, secure random)');
 
     await asUser(c, staffId);
     await c.query("select join_pharmacy_with_code($1, 'Test Attendant', '0711111111')", [code]);
@@ -965,6 +965,9 @@ async function main() {
     await c.query("select set_config('app.current_user_id', '', false)");
     const adminRes = await c.query("insert into auth.users default values returning id");
     await c.query('insert into platform_admins (user_id) values ($1)', [adminRes.rows[0].id]);
+    const secondAdmin = await c.query("insert into auth.users default values returning id");
+    await assertThrows(c.query('insert into platform_admins (user_id) values ($1)', [secondAdmin.rows[0].id]), 'a second platform admin cannot be added', 'the database should refuse a second platform admin');
+    assert((await c.query('select count(*) n from platform_admins')).rows[0].n === '1', 'there is exactly one platform admin');
     await asUser(c, adminRes.rows[0].id);
     await c.query("select admin_activate_pharmacy($1, 30)", [pharmacyId]);
     await asUser(c, ownerId);
@@ -980,6 +983,375 @@ async function main() {
       'a non-owner updating their own role is blocked by the privilege-escalation trigger',
       'a staff member should NOT have been able to set their own role to owner, but the update succeeded'
     );
+
+    // --------------------------------------------------------------
+    console.log('\n== Senior review fixes 7 Nov ==');
+
+    // A. A pharmacy cannot edit its own plan or counters
+    await c.query("select set_config('app.current_user_id', '', false)");
+    await c.query("update pharmacies set subscription_expires_at = now() + interval '30 days', subscription_status = 'active' where id = $1", [pharmacyId]);
+    const planBefore = (await c.query('select subscription_expires_at::text e, subscription_status s, next_invoice_no n from pharmacies where id = $1', [pharmacyId])).rows[0];
+    await asUser(c, ownerId);
+    await asRole('authenticated', async () => {
+      await assertThrows(c.query("update pharmacies set subscription_expires_at = now() + interval '100 years' where id = $1", [pharmacyId]),
+        'an owner cannot give their own pharmacy a longer subscription', 'an owner must NOT be able to extend their own subscription');
+      await assertThrows(c.query("update pharmacies set subscription_status = 'active' where id = $1", [pharmacyId]),
+        'an owner cannot mark their own pharmacy as paid', 'an owner must NOT be able to mark their pharmacy active');
+      await assertThrows(c.query("update pharmacies set activated_at = now() where id = $1", [pharmacyId]),
+        'an owner cannot change the activation date', 'activated_at must not be editable by the app');
+      await assertThrows(c.query("update pharmacies set next_invoice_no = 1 where id = $1", [pharmacyId]),
+        'an owner cannot reset the invoice counter (duplicate invoice numbers)', 'next_invoice_no must not be editable by the app');
+      await assertThrows(c.query("update pharmacies set sms_enabled = not sms_enabled where id = $1", [pharmacyId]),
+        'SMS on/off cannot be flipped around the checked function', 'sms_enabled must only change through set_sms_enabled');
+      const ok = await c.query("update pharmacies set name = name, town = 'Chuka', vat_rate = 16 where id = $1 returning id", [pharmacyId]);
+      assert(ok.rowCount === 1, 'an owner can still save the Settings screen fields (name, town, VAT ...)');
+    });
+    // belt and braces: even if UPDATE were re-granted on the whole table, the trigger still refuses
+    await c.query('grant update on pharmacies to authenticated');
+    await asRole('authenticated', async () => {
+      await assertThrows(c.query("update pharmacies set subscription_expires_at = now() + interval '100 years' where id = $1", [pharmacyId]),
+        'the billing trigger refuses the change even if the table-wide right came back', 'the trigger must block billing edits on its own');
+    });
+    await c.query('revoke update on pharmacies from authenticated');
+    await c.query('grant update (name, address, town, phone, email, kra_pin, low_stock_default, expiry_warn_days, vat_rate) on pharmacies to authenticated');
+    const planAfter = (await c.query('select subscription_expires_at::text e, subscription_status s, next_invoice_no n from pharmacies where id = $1', [pharmacyId])).rows[0];
+    assert(planAfter.e === planBefore.e && planAfter.s === planBefore.s && planAfter.n === planBefore.n, 'the plan and invoice counter are exactly as they were after all those attempts');
+    await asUser(c, adminRes.rows[0].id);
+    await asRole('authenticated', async () => {
+      await c.query('select admin_extend_trial($1, 5)', [pharmacyId]);
+    });
+    assert((await c.query('select subscription_expires_at::text e from pharmacies where id = $1', [pharmacyId])).rows[0].e !== planBefore.e, 'the platform admin can still change a pharmacy\'s plan through the admin function');
+
+    // B. invite codes are unique and secure-random
+    await asUser(c, ownerId);
+    const codeA = (await c.query("select create_staff_invite($1, 'attendant') as code", [pharmacyId])).rows[0].code;
+    const codeB = (await c.query("select create_staff_invite($1, 'attendant') as code", [pharmacyId])).rows[0].code;
+    assert(codeA !== codeB && /^[0-9A-F]{10}$/.test(codeA) && /^[0-9A-F]{10}$/.test(codeB), 'two invite codes are different and both 10 characters');
+
+    // C. one-time codes: limits and checking are atomic and server-only
+    await c.query("select set_config('app.current_user_id', '', false)");
+    await asRole('authenticated', async () => {
+      await assertThrows(c.query("select otp_check('254700000001','signup','x')"), 'signed-in users cannot call otp_check', 'otp_check must be server-only');
+      await assertThrows(c.query("select otp_issue('254700000001','signup','x')"), 'signed-in users cannot call otp_issue', 'otp_issue must be server-only');
+      await assertThrows(c.query("select auth_user_id_for_email('a@b.c')"), 'signed-in users cannot look up accounts by email', 'auth_user_id_for_email must be server-only');
+      await assertThrows(c.query('select * from password_reset_attempts'), 'password_reset_attempts is unreadable from the app', 'password_reset_attempts must be server-only');
+    });
+    await asRole('anon', async () => {
+      await assertThrows(c.query("select otp_check('254700000001','signup','x')"), 'signed-out visitors cannot call otp_check', 'otp_check must be server-only (anon)');
+    });
+    await asRole('service_role', async () => {
+      const i1 = (await c.query("select otp_issue('254711000001','signup','hash1','10.0.0.1') as r")).rows[0].r;
+      assert(i1.ok === true, 'the server can issue a first code');
+      const i2 = (await c.query("select otp_issue('254711000001','signup','hash1','10.0.0.1') as r")).rows[0].r;
+      assert(i2.ok === false && i2.reason === 'cooldown' && i2.wait_seconds > 0, 'an immediate second code is refused (resend cooldown)');
+      // per-number cap of 5 with the cooldown switched off
+      let last;
+      for (let k = 0; k < 6; k++) last = (await c.query("select otp_issue('254711000002','signup','h','10.0.0.2', 300, 0) as r")).rows[0].r;
+      assert(last.ok === false && last.reason === 'phone_limit', 'a 6th code for the same number inside the window is refused');
+      // per-IP cap
+      await c.query("select otp_issue('254711000003','signup','h','10.9.9.9', 300, 30, 5, 900, 2, 300)");
+      await c.query("select otp_issue('254711000004','signup','h','10.9.9.9', 300, 30, 5, 900, 2, 300)");
+      const ip3 = (await c.query("select otp_issue('254711000005','signup','h','10.9.9.9', 300, 30, 5, 900, 2, 300) as r")).rows[0].r;
+      assert(ip3.ok === false && ip3.reason === 'ip_limit', 'one address cannot request codes for many different numbers');
+      const gl = (await c.query("select otp_issue('254711000006','signup','h','10.8.8.8', 300, 30, 5, 900, 10, 0) as r")).rows[0].r;
+      assert(gl.ok === false && gl.reason === 'global_limit', 'the platform-wide hourly ceiling stops mass SMS requests');
+    });
+    // checking: right code works once, wrong guesses are counted, 5 max
+    await c.query("select otp_issue('254722000001','password_reset','right-hash')");
+    let otpSt = (await c.query("select otp_check('254722000001','password_reset','nope') as r")).rows[0].r;
+    assert(otpSt.status === 'wrong' && otpSt.left === 4, 'a wrong code is counted (4 left)');
+    otpSt = (await c.query("select otp_check('254722000001','password_reset','right-hash') as r")).rows[0].r;
+    assert(otpSt.status === 'ok', 'the right code is accepted');
+    otpSt = (await c.query("select otp_check('254722000001','password_reset','right-hash') as r")).rows[0].r;
+    assert(otpSt.status === 'none', 'the same code cannot be used twice');
+    // 20 guesses fired at the same instant must still count as only 5
+    await c.query("select otp_issue('254722000002','password_reset','right-hash')");
+    const racers = await Promise.all(Array.from({ length: 20 }, async () => {
+      const cl = new Client({ connectionString: CONN }); await cl.connect();
+      try { return (await cl.query("select otp_check('254722000002','password_reset','guess') as r")).rows[0].r.status; } finally { await cl.end(); }
+    }));
+    assert(racers.filter((s) => s === 'wrong').length === 5, '20 simultaneous wrong guesses count as exactly 5');
+    otpSt = (await c.query("select otp_check('254722000002','password_reset','right-hash') as r")).rows[0].r;
+    assert(otpSt.status !== 'ok', 'after 5 misses even the right code is refused');
+    // expired code
+    await c.query("select otp_issue('254722000003','signup','right-hash', null, 1)");
+    await c.query("update phone_otps set expires_at = now() - interval '1 minute' where phone = '254722000003'");
+    otpSt = (await c.query("select otp_check('254722000003','signup','right-hash') as r")).rows[0].r;
+    assert(otpSt.status === 'expired', 'an expired code is refused');
+
+    // G. account lookup by login address
+    const luId = (await c.query("insert into auth.users (email) values ('p254799000111@hodhi.local') returning id")).rows[0].id;
+    await asRole('service_role', async () => {
+      assert((await c.query("select auth_user_id_for_email('P254799000111@HODHI.local') as id")).rows[0].id === luId, 'the server finds an account by its login address (any letter case)');
+      assert((await c.query("select auth_user_id_for_email('p254000000000@hodhi.local') as id")).rows[0].id === null, 'an unknown login address gives nothing');
+    });
+
+    // D. the faster stock view gives the same numbers as adding the batches up by hand
+    const viewCheck = await c.query(`
+      select count(*) n from v_drug_stock v
+      where v.pharmacy_id = $1 and (
+            v.qty_in_stock <> coalesce((select sum(quantity_remaining) from batches b where b.drug_id = v.drug_id and b.expiry_date >= current_date), 0)
+         or v.qty_expired  <> coalesce((select sum(quantity_remaining) from batches b where b.drug_id = v.drug_id and b.expiry_date <  current_date), 0)
+         or v.stock_value_cost <> coalesce((select sum(quantity_remaining * cost_price) from batches b where b.drug_id = v.drug_id and b.expiry_date >= current_date), 0))`, [pharmacyId]);
+    assert(Number(viewCheck.rows[0].n) === 0, 'v_drug_stock totals equal the batch totals for every drug');
+    const viewRows = await c.query('select (select count(*) from v_drug_stock where pharmacy_id = $1) v, (select count(*) from drugs where pharmacy_id = $1 and active) d', [pharmacyId]);
+    assert(viewRows.rows[0].v === viewRows.rows[0].d, 'every active drug still appears in the stock list, including ones with no stock');
+    assert((await c.query("select reloptions::text r from pg_class where relname = 'v_drug_stock'")).rows[0].r.indexOf('security_invoker=true') !== -1, 'v_drug_stock still runs with the caller\'s own rights (row-level security applies)');
+
+    // F. duplicate indexes are gone, but every table keeps an index that starts with pharmacy_id
+    const dupIdx = await c.query("select indexname from pg_indexes where schemaname = 'public' and indexname in ('drugs_pharmacy_id_idx','expenses_pharmacy_id_idx','supplier_payments_pharmacy_id_idx','supplier_payments_pharmacy_supplier_idx','supplier_lpos_pharmacy_id_idx','sale_items_drug_id_idx')");
+    assert(dupIdx.rows.length === 0, 'the 6 duplicate indexes are gone');
+    const noLead = await c.query(`select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'public' and c.relkind = 'r'
+        and exists (select 1 from pg_attribute a where a.attrelid = c.oid and a.attname = 'pharmacy_id' and not a.attisdropped)
+        and not exists (select 1 from pg_index i join pg_attribute a on a.attrelid = i.indrelid and a.attnum = i.indkey[0] where i.indrelid = c.oid and a.attname = 'pharmacy_id')`);
+    assert(noLead.rows.length === 0, 'every pharmacy table still has an index starting with pharmacy_id' + (noLead.rows.length ? ' (missing: ' + noLead.rows.map((r) => r.relname).join(', ') + ')' : ''));
+
+    // --------------------------------------------------------------
+    console.log('\n== Demo pharmacy: self-running sales, restocks and payments ==');
+    const demoOwner = (await c.query('insert into auth.users default values returning id')).rows[0].id;
+    await asUser(c, demoOwner);
+    const demoPh = (await c.query("select bootstrap_pharmacy('Demo Test', 'Demo Owner', '0700000001') as id")).rows[0].id;
+    await asUser(c, ownerId);
+    const salesBefore = Number((await c.query('select count(*) n from sales where pharmacy_id = $1', [pharmacyId])).rows[0].n);
+
+    // nothing runs for a pharmacy that is not switched on as the demo
+    await assertThrows(c.query('select demo_backfill($1, current_date - 3, current_date - 1)', [pharmacyId]), 'the demo tools refuse a pharmacy that is not the demo', 'a real pharmacy must not be touched by the demo tools');
+    assert((await c.query('select demo_tick() n')).rows[0].n === 0, 'demo_tick does nothing while no pharmacy is switched on');
+
+    const ready = (await c.query('select demo_enable($1) r', [demoPh])).rows[0].r;
+    assert(/Demo ready: \d+ drugs, 12 customers/.test(ready), 'demo_enable sets up the catalogue and 12 customers (' + ready + ')');
+    assert(Number((await c.query('select count(*) n from customers where pharmacy_id = $1 and sms_ok', [demoPh])).rows[0].n) === 0, 'demo customers can never be texted');
+    assert(Number((await c.query("select count(*) n from v_drug_stock where pharmacy_id = $1 and qty_in_stock = 0", [demoPh])).rows[0].n) === 0, 'every demo drug has opening stock');
+    const drugsAfterFirst = Number((await c.query('select count(*) n from drugs where pharmacy_id = $1', [demoPh])).rows[0].n);
+    await c.query('select demo_enable($1)', [demoPh]);
+    assert(Number((await c.query('select count(*) n from drugs where pharmacy_id = $1', [demoPh])).rows[0].n) === drugsAfterFirst, 'demo_enable can be run twice without duplicating anything');
+
+    await assertThrows(c.query('select demo_backfill($1, current_date - 3, current_date)', [demoPh]), 'back-fill refuses today and the future', 'back-fill must stop at yesterday');
+    const filled = (await c.query('select demo_backfill($1, current_date - 12, current_date - 1) n', [demoPh])).rows[0].n;
+    assert(filled === 12, 'back-fill writes 12 days of history (' + filled + ')');
+
+    const days = (await c.query(`select (sold_at at time zone 'Africa/Nairobi')::date d, sum(total_amount) t, count(*)::int n
+      from sales where pharmacy_id = $1 group by 1 order by 1`, [demoPh])).rows;
+    assert(days.length === 12, 'one trading day per day asked for');
+    assert(days.every((r) => Number(r.t) >= 2000 && Number(r.t) <= 8000), 'every day sells between KES 2,000 and 8,000 (' + days.map((r) => Math.round(r.t)).join(', ') + ')');
+    assert(days.every((r) => r.n >= 3 && r.n <= 11), 'every day has 3 to 10 sales (plus at most one top-up)');
+    assert(new Set(days.map((r) => Math.round(r.t / 100))).size > 6, 'daily totals vary, so the graph does not look flat');
+    assert(Number((await c.query("select count(*) n from sales where pharmacy_id = $1 and sold_at > now()", [demoPh])).rows[0].n) === 0, 'no demo sale is dated in the future');
+    assert(Number((await c.query("select count(*) n from batches where pharmacy_id = $1 and quantity_remaining < 0", [demoPh])).rows[0].n) === 0, 'stock never goes negative');
+    assert(Number((await c.query("select count(*) n from sales where pharmacy_id = $1 and (total_amount is null or total_amount <= 0)", [demoPh])).rows[0].n) === 0, 'every demo sale has a real total');
+    assert(Number((await c.query("select count(*) n from (select invoice_number from sales where pharmacy_id = $1 group by 1 having count(*) > 1) x", [demoPh])).rows[0].n) === 0, 'invoice numbers stay unique');
+    assert(Number((await c.query("select count(*) n from v_customer_balances where pharmacy_id = $1 and balance < 0", [demoPh])).rows[0].n) === 0, 'no customer ends up with a negative balance');
+    assert(Number((await c.query("select count(*) n from customer_payments where pharmacy_id = $1", [demoPh])).rows[0].n) > 0, 'customers on account pay some of it back');
+    assert(Number((await c.query("select count(distinct payment_method) n from sales where pharmacy_id = $1", [demoPh])).rows[0].n) >= 3, 'sales are paid in a mix of ways');
+    assert(Number((await c.query("select count(*) n from expenses where pharmacy_id = $1", [demoPh])).rows[0].n) > 0, 'small expenses are posted');
+
+    const again = (await c.query('select demo_backfill($1, current_date - 12, current_date - 1) n', [demoPh])).rows[0].n;
+    assert(again === 0, 'running the back-fill again adds nothing');
+
+    // restocking: run one drug down, the next run tops it up
+    const lowDrug = (await c.query('select id, reorder_level from drugs where pharmacy_id = $1 order by name limit 1', [demoPh])).rows[0];
+    await c.query('update batches set quantity_remaining = 1 where drug_id = $1', [lowDrug.id]);
+    const restocked = (await c.query('select demo_restock_low($1) n', [demoPh])).rows[0].n;
+    const nowQty = Number((await c.query("select coalesce(sum(quantity_remaining),0) q from batches where drug_id = $1 and expiry_date >= current_date", [lowDrug.id])).rows[0].q);
+    assert(restocked >= 1 && nowQty > lowDrug.reorder_level, 'a drug that runs low is restocked');
+
+    // the demo shows every stock state: out, low, expired, expiring soon, healthy
+    await c.query('select demo_showcase($1)', [demoPh]);
+    const stateOf = async (where) => Number((await c.query('select count(*) n from v_drug_stock where pharmacy_id = $1 and ' + where, [demoPh])).rows[0].n);
+    assert(await stateOf('qty_in_stock = 0') >= 3, 'the demo always has drugs out of stock');
+    assert(await stateOf('qty_in_stock > 0 and qty_in_stock <= reorder_level') >= 3, 'the demo always has drugs running low');
+    assert(await stateOf('qty_in_stock > reorder_level') >= 20, 'most demo drugs are healthy');
+    assert(Number((await c.query("select count(*) n from batches where pharmacy_id = $1 and quantity_remaining > 0 and expiry_date < current_date", [demoPh])).rows[0].n) >= 3, 'the demo always has expired stock on the shelf');
+    assert(Number((await c.query("select count(*) n from batches where pharmacy_id = $1 and quantity_remaining > 0 and expiry_date between current_date and current_date + 30", [demoPh])).rows[0].n) >= 2, 'at least 2 batches expire within 30 days');
+    assert(Number((await c.query("select count(*) n from batches where pharmacy_id = $1 and quantity_remaining > 0 and expiry_date between current_date and current_date + 90", [demoPh])).rows[0].n) >= 5, 'at least 5 batches expire within 90 days');
+    // held drugs stay held through sales and restocking
+    const heldBefore = (await c.query("select coalesce(sum(qty_in_stock),0) q from v_drug_stock where drug_id = any (demo_held($1))", [demoPh])).rows[0].q;
+    for (let i = 0; i < 25; i++) await c.query('select demo_post_sale($1, 3000, now() - interval \'20 days\')', [demoPh]);
+    await c.query('select demo_restock_low($1)', [demoPh]);
+    assert((await c.query("select coalesce(sum(qty_in_stock),0) q from v_drug_stock where drug_id = any (demo_held($1))", [demoPh])).rows[0].q === heldBefore, 'out-of-stock and low drugs are not sold or restocked');
+    // old expired stock is written off and replaced
+    await c.query("update batches set expiry_date = current_date - 90 where pharmacy_id = $1 and quantity_remaining > 0 and expiry_date < current_date", [demoPh]);
+    await c.query('select demo_showcase($1)', [demoPh]);
+    assert(Number((await c.query("select count(*) n from batches where pharmacy_id = $1 and quantity_remaining > 0 and expiry_date < current_date - 60", [demoPh])).rows[0].n) === 0, 'expired stock older than 60 days is written off');
+    assert(Number((await c.query("select count(*) n from batches where pharmacy_id = $1 and quantity_remaining > 0 and expiry_date < current_date", [demoPh])).rows[0].n) >= 3, 'and fresh expired batches take its place');
+    assert(Number((await c.query("select count(*) n from stock_adjustments where pharmacy_id = $1 and type = 'expired_disposal'", [demoPh])).rows[0].n) > 0, 'the write-offs are on the stock audit trail');
+
+    // the "expiring soon" shelf is never empty
+    await c.query("update batches set expiry_date = current_date + 400 where pharmacy_id = $1 and expiry_date <= current_date + 60", [demoPh]);
+    await c.query('select demo_ensure_expiring($1)', [demoPh]);
+    assert(Number((await c.query("select count(*) n from batches where pharmacy_id = $1 and quantity_remaining > 0 and expiry_date between current_date and current_date + 60", [demoPh])).rows[0].n) >= 2, 'the expiring-soon list always has a couple of items');
+    assert((await c.query("select demo_ensure_expiring($1) n", [demoPh])).rows[0].n === 0, 'and nothing more is added while it does');
+    assert((await c.query("select proconfig::text c from pg_proc where proname = 'demo_new_plan'")).rows[0].c.indexOf('search_path') !== -1, 'demo_new_plan has a fixed search path');
+
+    // the hourly run
+    const hr = (await c.query("select extract(hour from now() at time zone 'Africa/Nairobi')::int h")).rows[0].h;
+    const ticked = (await c.query('select demo_tick() n')).rows[0].n;
+    const demoPlan = (await c.query('select * from demo_config where pharmacy_id = $1', [demoPh])).rows[0];
+    const todaySum = Number((await c.query("select coalesce(sum(total_amount),0) t from sales where pharmacy_id = $1 and sold_at >= (today_ke()::timestamp at time zone 'Africa/Nairobi')", [demoPh])).rows[0].t);
+    if (hr >= 8) {
+      assert(demoPlan.plan_sales >= 3 && demoPlan.plan_sales <= 10 && Number(demoPlan.plan_target) >= 2300 && Number(demoPlan.plan_target) <= 7700, 'the hourly run makes a plan for today inside the limits');
+      assert(todaySum <= 8000 && demoPlan.plan_done <= demoPlan.plan_sales + 1, 'today never goes over KES 8,000');
+      const before = Number((await c.query('select count(*) n from sales where pharmacy_id = $1', [demoPh])).rows[0].n);
+      await c.query('select demo_tick()');
+      await c.query('update demo_config set plan_done = plan_sales where pharmacy_id = $1', [demoPh]);
+      const after = Number((await c.query('select count(*) n from sales where pharmacy_id = $1', [demoPh])).rows[0].n);
+      assert(after - before <= 1, 'a repeat run in the same hour posts at most a catch-up sale');
+    } else {
+      assert(ticked === 0, 'before 08:00 Nairobi the hourly run posts nothing');
+    }
+    assert(Number((await c.query('select count(*) n from sales where pharmacy_id = $1', [pharmacyId])).rows[0].n) === salesBefore, 'the real test pharmacy was not touched by any of this');
+
+    // a missed stretch is caught up, and an expired subscription is skipped
+    await c.query("delete from sales_payments where sale_id in (select id from sales where pharmacy_id = $1 and sold_at >= now() - interval '3 days')", [demoPh]).catch(() => {});
+    await c.query('update pharmacies set subscription_expires_at = now() - interval \'1 day\' where id = $1', [demoPh]);
+    await c.query('update demo_config set plan_day = null where pharmacy_id = $1', [demoPh]);
+    const beforeExpired = Number((await c.query('select count(*) n from sales where pharmacy_id = $1', [demoPh])).rows[0].n);
+    await c.query('select demo_tick()');
+    assert(Number((await c.query('select count(*) n from sales where pharmacy_id = $1', [demoPh])).rows[0].n) === beforeExpired, 'an expired demo pharmacy is left alone');
+    await c.query("update pharmacies set subscription_expires_at = now() + interval '400 days' where id = $1", [demoPh]);
+
+    // locked down
+    const demoFns = await c.query("select p.proname, has_function_privilege('anon', p.oid, 'execute') a, has_function_privilege('authenticated', p.oid, 'execute') u from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname like 'demo\\_%'");
+    assert(demoFns.rows.length >= 13, 'all the demo functions exist (' + demoFns.rows.length + ')');
+    assert(demoFns.rows.every((r) => !r.a && !r.u), 'no demo function can be called by the app or the public API');
+    assert((await c.query("select count(*) n from information_schema.role_table_grants where table_name = 'demo_config' and grantee in ('anon','authenticated')")).rows[0].n === '0', 'demo_config is closed to the app and the public API');
+    assert((await c.query("select count(*) n from pg_policies where tablename = 'demo_config'")).rows[0].n === '0', 'demo_config has no policy, so only the server can read it');
+
+    // switched off: the tools stop working
+    await c.query('delete from demo_config where pharmacy_id = $1', [demoPh]);
+    await assertThrows(c.query('select demo_post_sale($1, 500)', [demoPh]), 'once switched off, the demo tools refuse the pharmacy', 'switching off should stop the demo tools');
+  });
+
+  await withClient(async (c) => {
+    console.log('\n== Get support: a pharmacy lets the Pharma admin in for a few hours ==');
+    // Row-level security only applies to the app's own database role, so reads that test it run as that role.
+    const asApp = async (sql, params) => { await c.query('set role authenticated'); try { return await c.query(sql, params); } finally { await c.query('reset role'); } };
+    const mkUser = async () => (await c.query('insert into auth.users default values returning id')).rows[0].id;
+    const sOwner = await mkUser(), sOwnerB = await mkUser(), sAdmin = await mkUser(), sAttendant = await mkUser();
+    await asUser(c, sOwner);
+    const phA = (await c.query("select bootstrap_pharmacy('Support Test A', 'Owner A', '0711000001') as id")).rows[0].id;
+    await asUser(c, sOwnerB);
+    const phB = (await c.query("select bootstrap_pharmacy('Support Test B', 'Owner B', '0711000002') as id")).rows[0].id;
+    // the admin's own "home" profile (needed so records the admin saves have an author)
+    await c.query("select set_config('app.current_user_id', '', false)");
+    await c.query("insert into platform_admins (user_id) select $1 where not exists (select 1 from platform_admins)", [sAdmin]);
+    const adminId = (await c.query('select user_id from platform_admins')).rows[0].user_id;
+    const adminHasProfile = (await c.query('select 1 from profiles where id = $1', [adminId])).rowCount > 0;
+    if (!adminHasProfile) await c.query("insert into profiles (id, pharmacy_id, full_name, role) values ($1, $2, 'Pharma Admin', 'co_owner')", [adminId, phB]);
+    await c.query("insert into profiles (id, pharmacy_id, full_name, role) values ($1, $2, 'Att', 'attendant')", [sAttendant, phA]);
+    await c.query("insert into drugs (pharmacy_id, name, form, unit) values ($1, 'Support Drug', 'tablet', 'tablet')", [phA]);
+
+    // before any grant: the admin can open any pharmacy directly (like Login as School in Shule Web)
+    await asUser(c, adminId);
+    assert((await asApp('select count(*) n from drugs where pharmacy_id = $1', [phA])).rows[0].n === '0', 'before opening, the admin sees none of that pharmacy\'s drugs');
+    assert((await c.query('select support_context() as x')).rows[0].x === null, 'support_context is empty when nothing is open');
+    await assertThrows(c.query('select admin_open_support($1)', ['00000000-0000-0000-0000-000000000000']), 'the admin cannot open a pharmacy that does not exist', 'unknown pharmacy should be refused');
+    const dr = (await c.query('select admin_open_support($1) as r', [phA])).rows[0].r;
+    assert(dr.granted_by_owner === false, 'with no grant, the open is reported as direct');
+    assert((await c.query('select my_pharmacy_id() as p')).rows[0].p === phA, 'the admin works inside the pharmacy with no grant');
+    assert((await c.query('select my_role() as r')).rows[0].r === 'co_owner', 'as a co-owner there');
+    assert((await asApp('select count(*) n from drugs where pharmacy_id = $1', [phA])).rows[0].n === '1', 'and can read its drugs');
+    assert((await c.query("select count(*) n from support_access_events where pharmacy_id = $1 and kind = 'opened_direct' and access_id is null", [phA])).rows[0].n === '1', 'a direct open is logged');
+    await asUser(c, sOwnerB);
+    assert((await c.query('select my_pharmacy_id() as p')).rows[0].p === phB, 'another pharmacy\'s owner is unaffected by the admin being inside pharmacy A');
+    await asUser(c, sOwner);
+    assert((await c.query('select my_support_access() as a')).rows[0].a.history.length === 0, 'a direct open does not appear as a grant in the owner\'s history');
+    await asUser(c, adminId);
+    // it ends by itself after 8 hours
+    await c.query("select set_config('app.current_user_id', '', false)");
+    await c.query("update support_session set opened_at = now() - interval '9 hours' where user_id = $1", [adminId]);
+    await asUser(c, adminId);
+    assert((await c.query('select my_pharmacy_id() as p')).rows[0].p !== phA, 'a direct session ends by itself after 8 hours');
+    assert((await c.query('select support_context() as x')).rows[0].x === null, 'and support_context is empty again');
+    await c.query('select admin_close_support()');
+    // an owner and an attendant cannot do this
+    await asUser(c, sOwner);
+    await assertThrows(c.query('select admin_open_support($1)', [phA]), 'a pharmacy owner cannot open a pharmacy as the admin', 'owner should not open directly');
+    await asUser(c, sAttendant);
+    await assertThrows(c.query('select admin_open_support($1)', [phA]), 'an attendant cannot open a pharmacy as the admin', 'attendant should not open directly');
+    await asUser(c, adminId);
+
+    // who can grant
+    await asUser(c, sAttendant);
+    await assertThrows(c.query('select grant_support_access(2)'), 'an attendant cannot give support access', 'an attendant should not be able to grant support access');
+    await asUser(c, adminId);
+    await assertThrows(c.query('select grant_support_access(2)'), 'the admin cannot grant support access to itself', 'the admin should not be able to grant access');
+    await asUser(c, sOwner);
+    await assertThrows(c.query('select grant_support_access(3)'), 'only 1, 2, 4, 8 or 24 hours are allowed', 'a 3-hour grant should be refused');
+    await assertThrows(c.query('select grant_support_access(null)'), 'a grant needs a number of hours', 'a null grant should be refused');
+    const g = (await c.query('select grant_support_access(2) as g')).rows[0].g;
+    const hrs = (new Date(g.expires_at) - new Date(g.granted_at)) / 36e5;
+    assert(Math.abs(hrs - 2) < 0.01, 'a 2-hour grant ends 2 hours after it starts');
+    assert((await c.query('select my_support_access() as a')).rows[0].a.active.id === g.id, 'the owner sees the live grant');
+
+    // other pharmacies and other roles cannot see or use it
+    await asUser(c, sOwnerB);
+    const bView = (await c.query('select my_support_access() as a')).rows[0].a;
+    assert(bView.active === null && bView.history.length === 0, 'another pharmacy sees nothing of this grant');
+    await asUser(c, sAttendant);
+    await assertThrows(c.query('select my_support_access()'), 'an attendant cannot read support access', 'attendant should not read support access');
+    await assertThrows(asApp('select * from support_access'), 'the app cannot read the grants table directly', 'support_access should be closed to the app');
+
+    // the admin opens it
+    await asUser(c, adminId);
+    assert(JSON.stringify((await c.query('select admin_support_status() as s')).rows[0].s.map(r => r.pharmacy_id)) === JSON.stringify([phA]), 'the admin sees which pharmacies gave access');
+    await c.query('select admin_open_support($1)', [phA]);
+    assert((await c.query('select my_pharmacy_id() as p')).rows[0].p === phA, 'once open, the admin acts inside the granting pharmacy');
+    assert((await c.query('select my_role() as r')).rows[0].r === 'co_owner', 'and as a co-owner there');
+    assert((await asApp('select count(*) n from drugs')).rows[0].n === '1', 'the admin can now read that pharmacy\'s drugs');
+    assert((await c.query('select support_context() as x')).rows[0].x.pharmacy_id === phA, 'support_context names the open pharmacy');
+    assert((await c.query('select my_subscription() as s')).rows[0].s.pharmacy_name === 'Support Test A', 'my_subscription describes the open pharmacy');
+    // fixing: the admin can change stock in it, and the record is written to THAT pharmacy
+    const drugA = (await c.query("select id from drugs where pharmacy_id = $1", [phA])).rows[0].id;
+    const batch = (await c.query("select record_restock($1,$2,7,5,10,(current_date + interval '200 days')::date,'SUP1','SupplierX') as id", [phA, drugA])).rows[0].id;
+    assert((await c.query('select pharmacy_id from batches where id = $1', [batch])).rows[0].pharmacy_id === phA, 'a restock done in support lands in the granting pharmacy');
+    assert((await c.query('select created_by from stock_adjustments where batch_id = $1', [batch])).rows[0].created_by === adminId, 'and is recorded as made by the admin');
+    // it never reaches a pharmacy that did not grant
+    await assertThrows(c.query("select record_restock($1,$2,1,5,10,(current_date + interval '200 days')::date,'NO','X')", [phB, drugA]), 'support access does not reach another pharmacy', 'support access must not reach other pharmacies');
+
+    // the owner sees it happened
+    await asUser(c, sOwner);
+    const hist = (await c.query('select my_support_access() as a')).rows[0].a.history;
+    assert(hist.length === 1 && Number(hist[0].opened_count) === 1, 'the owner\'s history shows it was opened once');
+
+    // stopping
+    await c.query('select revoke_support_access()');
+    await asUser(c, adminId);
+    assert((await c.query('select my_pharmacy_id() as p')).rows[0].p !== phA, 'after the owner stops it, the admin is out of the pharmacy');
+    assert((await asApp('select count(*) n from drugs where pharmacy_id = $1', [phA])).rows[0].n === '0', 'and can no longer read its drugs');
+    assert((await c.query('select support_context() as x')).rows[0].x === null, 'support_context is empty again');
+    const re = (await c.query('select admin_open_support($1) as r', [phA])).rows[0].r;
+    assert(re.granted_by_owner === false, 'after the owner stops, the admin can still open directly, and it is logged as direct');
+    await c.query('select admin_close_support()');
+
+    // an open with a live grant is logged as the owner's grant
+    await asUser(c, sOwner);
+    await c.query('select grant_support_access(1)');
+    await asUser(c, adminId);
+    const gr = (await c.query('select admin_open_support($1) as r', [phA])).rows[0].r;
+    assert(gr.granted_by_owner === true, 'with a live grant, the open is reported as given by the owner');
+    assert((await c.query('select my_pharmacy_id() as p')).rows[0].p === phA, 'a new grant works');
+    await asUser(c, sOwner);
+    assert((await c.query('select my_support_access() as a')).rows[0].a.history[0].opened_count == 1, 'the owner sees that opening in their history');
+    await asUser(c, adminId);
+    await c.query('select admin_close_support()');
+
+    // a normal owner is not affected by any of this
+    await asUser(c, sOwner);
+    assert((await c.query('select my_pharmacy_id() as p')).rows[0].p === phA, 'the pharmacy owner still works in their own pharmacy');
+    assert((await c.query('select my_role() as r')).rows[0].r === 'owner', 'with their own role');
+    await asUser(c, sOwnerB);
+    assert((await c.query('select my_pharmacy_id() as p')).rows[0].p === phB, 'and a different pharmacy is unaffected');
+
+    // the new tables and functions are closed to the public API
+    const sup = await c.query("select count(*) n from information_schema.role_table_grants where table_name in ('support_access','support_session','support_access_events') and grantee in ('anon','authenticated')");
+    assert(sup.rows[0].n === '0', 'support tables are closed to the app and the public API');
+    const anonFns = await c.query("select p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname in ('grant_support_access','revoke_support_access','my_support_access','admin_support_status','admin_open_support','admin_close_support','support_context') and has_function_privilege('anon', p.oid, 'execute')");
+    assert(anonFns.rows.length === 0, 'signed-out visitors cannot call any support function');
+    await asUser(c, sOwner);
+    await assertThrows(c.query('select admin_support_status()'), 'a pharmacy owner cannot use the admin support functions', 'owner should not run admin_support_status');
+    await assertThrows(c.query('select admin_open_support($1)', [phA]), 'a pharmacy owner cannot open support sessions', 'owner should not run admin_open_support');
   });
 
   console.log('\n' + '='.repeat(60));

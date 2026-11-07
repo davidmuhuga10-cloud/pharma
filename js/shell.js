@@ -1,17 +1,14 @@
-// js/shell.js - Start-up (init) and the page frame: sign-in check, navigation, the phone menu drawer.
-// (One of the files app.js was split into. All of them share one global scope, so
-// order in index.html matters: see the list there.)
-// BOOTSTRAP
-// ---------------------------------------------------------------------------
+// js/shell.js - start-up (init) and the page frame: sign-in check, navigation
+// and the phone menu drawer.
+//
+// --- Start-up ---
 
-// What the app needs to draw its frame (who you are, which pharmacy, the
-// category and supplier lists) is remembered on this device after every
-// successful load. On the next start the frame appears at once from that copy
-// and the real data is re-checked in the background (refreshProfileInBackground)
-// — instead of the person waiting through four round trips to the database
-// first. This copy only decides what is DRAWN; the database still enforces
-// every permission, and a changed or switched-off account is picked up by the
-// background check within a second or two.
+// What the frame needs (who you are, the pharmacy, category and supplier lists)
+// is saved on this device after each successful load. On the next start the
+// frame draws from that copy at once and the real data is re-checked in the
+// background (refreshProfileInBackground). The copy only decides what is
+// drawn; the database still enforces every permission, and a switched-off
+// account is picked up by the background check within a second or two.
 var PROFILE_CACHE_KEY = 'hodhi_profile_cache_v1';
 function saveProfileCache() {
   try {
@@ -37,7 +34,7 @@ async function refreshProfileInBackground(sigBefore) {
     if (!STATE.profile) { render(); return; }
     // Only redraw if something the frame shows actually changed.
     if (profileSig() !== sigBefore) render();
-  } catch (e) { /* offline or a hiccup: keep working from the saved copy */ }
+  } catch (e) { }
 }
 
 async function init() {
@@ -72,11 +69,10 @@ function finishInit() {
     STATE.session = session;
     if (evt === 'PASSWORD_RECOVERY') { STATE.recoveryMode = true; render(); return; }
     if (!session) { STATE.profile = null; STATE.pharmacy = null; clearProfileCache(); clearDashCache(); render(); return; }
-    // A session arriving that this tab didn't create — signed in on another
-    // tab, or a session restored after this one was opened — used to update
-    // STATE.session and nothing else, leaving the tab on the login screen with
-    // a perfectly good session behind it. doLogin/doSignup/doJoin load the
-    // profile themselves, so only handle the case where we don't have one.
+    // A session this tab did not create (signed in on another tab, or restored
+    // later) must still load the profile, or the tab stays on the login screen.
+    // doLogin/doSignup/doJoin load the profile themselves, so only handle the
+    // case where we have none.
     if (evt === 'SIGNED_IN' && !STATE.profile) {
       try { await loadProfileAndPharmacy(); } catch (e) { return; }
       render();
@@ -84,24 +80,16 @@ function finishInit() {
   });
 }
 
-// Supabase's default "confirm your email" flow means signUp() often returns
-// no session at all — the profile/pharmacy can't be created at that point
-// because there's no authenticated user yet to own it. So we stash what the
-// person typed and finish the job the first time they actually get a
-// session (right after signup if confirmation is off, or on their first
-// login after clicking the confirmation link if it's on). Without this, a
-// confirmed account with no pharmacy is a dead end with no way back in.
+// With email confirmation on, signUp() may return no session, so the pharmacy
+// cannot be created yet. We keep what the person typed and finish the job on
+// their first real session, otherwise a confirmed account with no pharmacy
+// would be a dead end.
 var PENDING_KEY = 'hodhi_pending_signup';
 
-// Pharma logs in with a phone number, not an email — pharmacy staff in
-// Kenya reliably have a phone number, not necessarily an email address they
-// check. Supabase Auth's password flow is still email-shaped under the
-// hood, so we derive a stable, non-deliverable "auth email" from the
-// phone number and use that everywhere sb.auth.* wants an email. The real
-// phone number is what the person types and sees; this derived address
-// never appears in the UI. Normalizing to a consistent digit form (07... ->
-// 2547...) means "0712345678" and "+254712345678" log into the same
-// account.
+// Login uses a phone number, but Supabase Auth wants an email, so we derive a
+// stable, non-deliverable "auth email" from the phone (never shown in the UI).
+// Numbers are normalised (07... -> 2547...) so "0712345678" and
+// "+254712345678" are the same account.
 function normalizePhone(raw) {
   var digits = (raw || '').replace(/\D/g, '');
   if (digits.length === 10 && digits.charAt(0) === '0') digits = '254' + digits.slice(1);
@@ -144,8 +132,8 @@ async function loadProfileAndPharmacy() {
   // callers keep what they have instead of treating the account as unlinked.
   if (error) throw error;
   if (!profile) {
-    // No profile yet — if this is a returning-after-email-confirmation
-    // session with a pending signup queued on this device, finish it now.
+    // No profile yet: if a signup was queued on this device (e.g. after email
+    // confirmation), finish it now.
     if (await finishPendingSignupIfAny()) {
       var retry = await sb.from('profiles').select('*').eq('id', uid).maybeSingle();
       profile = retry.data;
@@ -163,23 +151,32 @@ async function loadProfileAndPharmacy() {
     STATE.disabledMessage = 'Your access to this pharmacy has been switched off by the owner. Ask them to reactivate your account.';
     return;
   }
-  // Item 3: a temporary account (e.g. an accountant's time-limited code)
-  // past its account_expires_at — my_pharmacy_id()/my_role() already
-  // refuse it everything at the database level, but the profile row
-  // itself is still readable (see schema.sql's "read colleagues in same
-  // pharmacy" policy) precisely so this specific message can be shown
-  // instead of a generic/blank one.
+  // A temporary account (e.g. an accountant's code) past account_expires_at.
+  // The database already refuses it everything via my_pharmacy_id()/my_role(),
+  // but the profile row stays readable so this specific message can be shown.
   if (profile.account_expires_at && new Date(profile.account_expires_at) <= new Date()) {
     clearProfileCache();
     STATE.profile = null;
     STATE.disabledMessage = 'Your temporary access has expired. Ask the pharmacy owner for a new code.';
     return;
   }
-  // The pharmacy, categories and suppliers don't depend on each other, so ask
-  // for all three at once (one round trip instead of three in a row). The plan
-  // check rides along: if the trial or paid plan has ended the database already
-  // refuses this pharmacy its data (my_pharmacy_id), so show a clear message
-  // instead of empty screens. A failed check (offline) is not a lock-out.
+  // The Pharma admin working inside a pharmacy that gave support access: act as
+  // that pharmacy. The database applies the same rule (my_pharmacy_id), so this
+  // only chooses which pharmacy's id the screens ask for. A failed or empty answer
+  // simply means "not in support mode".
+  STATE.support = null;
+  try {
+    var ctx = await sb.rpc('support_context');
+    if (ctx.data && ctx.data.pharmacy_id) {
+      STATE.support = ctx.data;
+      profile = Object.assign({}, profile, { pharmacy_id: ctx.data.pharmacy_id, role: 'co_owner', full_name: 'Pharma Support' });
+    }
+  } catch (e) { STATE.support = null; }
+  // The pharmacy, categories and suppliers are independent, so fetch all three
+  // at once. The plan check rides along: if the trial or plan has ended, the
+  // database already refuses this pharmacy its data (my_pharmacy_id), so show a
+  // clear message instead of empty screens. A failed check (offline) is not a
+  // lock-out.
   var rest = await Promise.all([
     sb.from('pharmacies').select('*').eq('id', profile.pharmacy_id).maybeSingle(),
     sb.from('drug_categories').select('*').eq('pharmacy_id', profile.pharmacy_id).order('name'),
@@ -199,7 +196,8 @@ async function loadProfileAndPharmacy() {
   STATE.pharmacy = rest[0].data;
   STATE.categoriesCache = rest[1].data || [];
   STATE.suppliersCache = rest[2].data || [];
-  saveProfileCache();
+  // Never keep a support session's borrowed identity on the device.
+  if (STATE.support) clearProfileCache(); else saveProfileCache();
 }
 
 function render() {
@@ -213,15 +211,15 @@ function render() {
     }
     return;
   }
-  // The menu is rebuilt on every render; on desktop it stays on screen, so
-  // remember how far it was scrolled and put it back.
+  // The menu is rebuilt on every render; on desktop it stays visible, so
+  // remember its scroll position and restore it.
   var oldNav = document.querySelector('.nd-nav');
   var navScroll = oldNav ? oldNav.scrollTop : 0;
   app.innerHTML =
     '<div class="topbar">' +
     '<div class="topbar-left">' +
-    // Phone only (hidden at 860px+, where the sidebar already lists every
-    // destination). Opens the menu drawer — see navDrawerHtml/wireNavDrawer.
+    // Phone only (hidden at 860px+, where the sidebar lists everything). Opens the
+    // menu drawer (navDrawerHtml / wireNavDrawer).
     '<button class="burgerbtn" id="btnNavMenu" title="Menu" aria-label="Open menu">' +
       '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" ' +
       'stroke-width="2" stroke-linecap="round"><line x1="4" y1="7" x2="20" y2="7"></line>' +
@@ -229,7 +227,8 @@ function render() {
     '<div class="topbar-id">' + logoMarkHtml(30) + '<div><div class="brand">Pharma</div>' +
     '<div class="sub">' + esc(STATE.pharmacy ? STATE.pharmacy.name : '') + '</div></div></div>' +
     '</div>' +
-    '<button onclick="logout()">Log out</button></div>' +
+    '<button class="profbtn" onclick="openProfile()" title="Profile" aria-label="Profile">' + icon('user', 20) + '</button></div>' +
+    supportBannerHtml() +
     '<div class="content" id="content"></div>' +
     navBar() +
     navDrawerHtml();
@@ -239,18 +238,12 @@ function render() {
   return renderTab();
 }
 
-// ---------------------------------------------------------------------------
-// MENU DRAWER (phone only) — ported from Kodi's own drawer, see the matching
-// block in style.css for the geometry and why it exists. The bottom bar can
-// carry about five thumb-sized targets; this is where everything else lives,
-// including the five Reports sub-screens, which previously took two taps
-// (Reports, then the tile) from anywhere in the app.
-//
-// Rows are either a tab (`tab`), a Reports sub-view (`report`), or a grouping
-// label (`grp`). Every row is permission-gated with the same can() checks the
-// bottom bar and the screens themselves use, so the drawer can never offer an
-// action the database would refuse.
-// ---------------------------------------------------------------------------
+// --- Menu drawer (phone only) ---
+// The bottom bar fits about five thumb-sized buttons. The drawer holds the
+// rest, including the Reports sub-screens (one tap instead of two). Rows are
+// a tab (`tab`), a Reports sub-view (`report`) or a group label (`grp`). Each
+// row uses the same can() checks as the screens, so the drawer never offers
+// something the database would refuse.
 function navMenuItems() {
   var out = [{ tab: 'dashboard', label: 'Overview', ic: '&#127968;' }];
   var seeStock = can('view_inventory');
@@ -286,8 +279,7 @@ function navMenuItems() {
 function navDrawerHtml() {
   return '<div class="navscrim" id="navScrim"></div>' +
     '<aside class="navdrawer" id="navDrawer">' +
-      // Desktop only (docked sidebar, see style.css): logo and pharmacy name
-      // at the top, like Kodi's side menu. Hidden on phones.
+      // Desktop only (docked sidebar): logo and pharmacy name at the top. Hidden on phones.
       '<div class="nd-brand">' + logoMarkHtml(34) +
         '<div class="nd-bname">' + esc(STATE.pharmacy ? STATE.pharmacy.name : 'Pharma') + '</div></div>' +
       '<div class="nd-head">Menu</div>' +
@@ -295,8 +287,8 @@ function navDrawerHtml() {
       '<nav class="nd-nav">' + navMenuItems().map(function (m) {
         if (m.grp) return '<div class="nd-grp">' + esc(m.grp) + '</div>';
         var attr = m.report ? 'data-report="' + m.report + '"' : 'data-nav="' + m.tab + '"';
-        // A Reports sub-view counts as current only while that exact view is
-        // open, so "All Reports" and e.g. "Expiry Dates" never both highlight.
+        // A Reports sub-view is current only while that exact view is open, so "All
+        // Reports" and e.g. "Expiry Dates" never both highlight.
         var on = m.report
           ? (STATE.tab === 'reports' && reportsView === m.report)
           : (STATE.tab === m.tab && !(m.tab === 'reports' && reportsView !== 'hub'));
@@ -323,8 +315,7 @@ function wireNavDrawer() {
   var th = document.getElementById('navSbTh');
   if (!btn || !drawer) return;
 
-  // Size and place the drawn thumb. Hidden outright when the list already
-  // fits, so the bar only ever appears when there is genuinely more below.
+  // Size and place the scroll thumb. Hidden when the list already fits.
   function updateNavScrollbar() {
     if (!list || !sb || !th) return;
     var hidden = list.scrollHeight - list.clientHeight;
@@ -335,11 +326,9 @@ function wireNavDrawer() {
     th.style.height = thumbH + 'px';
     th.style.top = Math.round((trackH - thumbH) * (list.scrollTop / hidden)) + 'px';
   }
-  // The drawer's own elements are rebuilt by every render(), so their
-  // listeners go on fresh nodes each time and die with them. The window and
-  // document ones would NOT — re-binding them on every render would stack up
-  // a new listener per render for the life of the session — so they are
-  // attached once and read the current drawer through the DOM instead.
+  // The drawer's elements are rebuilt on every render(), so their listeners die
+  // with them. Window and document listeners would pile up, so they are attached
+  // once and look up the current drawer in the DOM.
   if (list) list.addEventListener('scroll', updateNavScrollbar, { passive: true });
   if (!wireNavDrawer._global) {
     wireNavDrawer._global = true;
@@ -352,10 +341,10 @@ function wireNavDrawer() {
     });
   }
   wireNavDrawer.refresh = updateNavScrollbar;
-  updateNavScrollbar(); // no-op while hidden on a phone; sizes the docked desktop menu
+  updateNavScrollbar();  // no-op while hidden on a phone; sizes the docked desktop menu
 
-  // Mouse and pen only: drag the thumb, or click the track to jump. A finger
-  // scrolls the list itself, so touch is deliberately ignored here.
+  // Mouse and pen only: drag the thumb or click the track. A finger scrolls the
+  // list itself, so touch is ignored.
   if (sb && th && list) {
     var dragging = false, startY = 0, startTop = 0;
     th.addEventListener('pointerdown', function (e) {
@@ -388,8 +377,7 @@ function wireNavDrawer() {
 
   btn.onclick = function () {
     document.body.classList.toggle('nav-open');
-    // Measured once the drawer is actually on screen — a hidden element has
-    // no height to measure, so this cannot run at build time.
+    // Measured once the drawer is on screen; a hidden element has no height.
     if (document.body.classList.contains('nav-open')) updateNavScrollbar();
   };
   if (scrim) scrim.onclick = closeNavDrawer;
@@ -403,31 +391,25 @@ function wireNavDrawer() {
   };
 }
 
-// Opens a Reports sub-screen directly, instead of Reports-then-tile. Used by
-// the drawer; renderReports() reads reportsView on its way in.
+// Open a Reports sub-screen directly. Used by the drawer; renderReports()
+// reads reportsView on its way in.
 function goReport(view) {
   reportsView = view;
   setTab('reports');
 }
 
-// Same markup renders as the phone's bottom tab bar and the desktop's full
-// left sidebar (see style.css's .navbar rules) — the brand block and the
-// account footer are written here too, but stay hidden (display:none)
-// until the desktop layout has room for them.
+// The same markup is the phone's bottom bar and the desktop's left sidebar
+// (see the .navbar rules in style.css). The brand block and account footer are
+// hidden until the desktop layout has room for them.
 function navBar() {
-  // Item 3: dashboard/reports/settings are on every role's list, so they
-  // stay unconditional — but inventory and sell aren't (e.g. accountant
-  // has neither, stock_taker has no 'sell'), so they're now gated the same
-  // way suppliers/expenses already were.
-  // The fourth element marks a destination as desktop-sidebar-only. Seven
-  // items crammed into a phone's bottom bar left each target well under the
-  // ~40px a thumb needs, so Suppliers and Settings now live in the menu
-  // drawer on a phone (navMenuItems above) and stay on the sidebar at 860px+,
-  // where there is a full column and no size pressure at all. The bar itself
-  // is unchanged on desktop — see .nav-desktop-extra in style.css.
-  // The glass 3D chip shown on phones (the desktop sidebar keeps the line
-  // icon). Same emoji as the menu drawer's rows (navMenuItems) so the two
-  // always match.
+  // Dashboard, reports and settings are on every role's list; inventory, sell,
+  // suppliers and expenses are permission-gated.
+  // The fourth element marks a desktop-sidebar-only item. Seven items in the
+  // phone bar made the buttons too small; six fit (Home, Inventory, Sell, Customers,
+  // Expenses, Reports, as in Kodi), so SMS, Suppliers and Settings live in the
+  // menu drawer on phones (navMenuItems) and in the sidebar at 860px+.
+  // Phones show an emoji chip (same emoji as navMenuItems); the desktop sidebar
+  // keeps the line icon.
   var CHIP = { dashboard: '&#127968;', inventory: '&#128138;', sell: '&#129534;', suppliers: '&#128666;',
                expenses: '&#128181;', reports: '&#128202;', settings: '&#9881;', customers: '&#128101;', sms: '&#128172;' };
   var items = [['dashboard', 'home', t('home')]];
@@ -435,7 +417,7 @@ function navBar() {
   if (can('sell')) items.push(['sell', 'sell', t('sell')]);
   var seeSuppliers = can('suppliers') || can('view_suppliers');
   var seeExpenses = can('expenses') || can('view_expenses');
-  if (canSeeCustomers()) items.push(['customers', 'people', 'Customers', true]);
+  if (canSeeCustomers()) items.push(['customers', 'people', 'Customers']);
   if (can('sms')) items.push(['sms', 'chat', 'SMS', true]);
   if (seeSuppliers) items.push(['suppliers', 'truck', t('suppliers'), true]);
   if (seeExpenses) items.push(['expenses', 'wallet', t('expenses')]);
@@ -457,10 +439,8 @@ function navBar() {
     '</div>';
 }
 
-// UI fix: was a round floating button that only refreshed on a full
-// re-render (so its item count went stale as drugs were added) and, on
-// desktop, sat on top of the drug list. Now a checkout bar showing items +
-// total, kept in sync by drawSell() via syncCartBar().
+// Checkout bar showing item count and total, kept in sync by drawSell() via
+// syncCartBar().
 function cartFab() {
   if (!STATE.cart.length) return '';
   var n = STATE.cart.reduce(function (a, c) { return a + c.qty; }, 0);
@@ -479,14 +459,13 @@ function syncCartBar() {
   if (html) document.getElementById('app').insertAdjacentHTML('beforeend', html);
 }
 
-// Stock take and the controlled-drug register are part of the Stock area, so
-// the Inventory item stays lit while they are open.
+// Stock take and the controlled-drug register belong to Stock, so Inventory
+// stays highlighted while they are open.
 function navTabOn(tab) {
   return STATE.tab === tab || (tab === 'inventory' && (STATE.tab === 'stocktake' || STATE.tab === 'controlled'));
 }
-// While a screen is loading, a clear "Please wait, loading…" shows and every
-// tap is ignored, so nobody can press tab after tab and pile up requests. The
-// pill itself waits ~120 ms so a screen that opens instantly does not flicker.
+// While a screen loads, show "Please wait, loading..." and ignore taps so
+// requests don't pile up. The pill waits ~120 ms so instant screens don't flicker.
 var veilBusy = false;
 function runWithVeil(fn) {
   if (veilBusy) return Promise.resolve();
@@ -526,4 +505,3 @@ function renderTab() {
   else if (STATE.tab === 'controlled') return renderControlled();
 }
 
-// ---------------------------------------------------------------------------

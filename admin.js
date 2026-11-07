@@ -1,17 +1,23 @@
-/* Pharma Admin — the platform portal at /admin. Same idea as Kodi's admin:
-   same Supabase project, same phone + password login as the main app, and
-   an account only gets in if it's listed in platform_admins (checked by the
-   database, not just here). All cross-pharmacy data comes from two
-   SECURITY DEFINER functions — admin_overview() and
-   admin_pharmacy_detail() — see schema.sql section 10. Reading is open to
-   any platform admin; changing a pharmacy (trial days, mark as paid, delete)
-   goes through admin_extend_trial / admin_activate_pharmacy /
-   admin_delete_pharmacy, which re-check admin rights in the database. */
+// Pharma Admin - the platform portal at /admin. One owner account signs in
+// with an email and password; the database lets in only the single account
+// listed in platform_admins (checked there, not just here).
+// Cross-pharmacy data comes from SECURITY DEFINER functions such as
+// admin_overview() and admin_pharmacy_detail(). Changing a pharmacy (trial days,
+// mark as paid, delete) goes through admin_extend_trial / admin_activate_pharmacy /
+// admin_delete_pharmacy, which re-check admin rights in the database.
+
+// A password-reset email link opens this page with "type=recovery" in the address.
+// The client clears the address while it starts, so note it first.
+var RECOVERY_LINK = /type=recovery/.test(location.hash);
+var RECOVERY_BAD = /error_code=|error=access_denied/.test(location.hash);
 
 var sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 var A = {
   session: null,
+  recovering: false,   // true while the new-password screen is showing
+  bfilter: 'all',      // billing page filter
+  support: {},         // pharmacy id -> live support grant (the owner let you in)
   overview: null,
   loadedAt: null,
   detail: {},          // pharmacy_id -> admin_pharmacy_detail() result
@@ -31,10 +37,9 @@ var STATUS = {
 var AVATAR_CLS = { good: '', info: 'blue', warn: 'warn', bad: 'bad', muted: 'muted' };
 var ROLE_LABELS = { owner: 'Owner', co_owner: 'Co-owner', pharmacist: 'Pharmacist', stock_taker: 'Stock taker', attendant: 'Seller', accountant: 'Accountant' };
 
-// ---------------------------------------------------------------------------
-// Helpers (phone/email mapping MUST match app.js exactly, or the same
-// person couldn't sign in here with the same phone number).
-// ---------------------------------------------------------------------------
+// --- Helpers ---
+// The phone -> email mapping must match the main app exactly, or the same
+// person could not sign in here with the same number.
 function $(s, c) { return (c || document).querySelector(s); }
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
   return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -62,8 +67,8 @@ function toast(msg, kind) {
   document.body.appendChild(t);
   setTimeout(function () { t.remove(); }, 2800);
 }
-// Disable a button and show "Please wait…" for the length of an async action,
-// so it can't be double-tapped; restores the original label afterwards.
+// Disable a button and show "Please wait..." during an async action, then
+// restore the label. Stops double taps.
 function act(btn, fn) {
   if (!btn) { fn().catch(function (e) { toast(friendlyError(e), 'bad'); }); return; }
   var original = btn.innerHTML;
@@ -72,9 +77,8 @@ function act(btn, fn) {
   fn().catch(function (e) { toast(friendlyError(e), 'bad'); })
     .finally(function () { btn.disabled = false; btn.innerHTML = original; });
 }
-// Small centered dialog. Returns the overlay element; onOpen(overlay) wires
-// its buttons. closeModal() removes it. Clicking the backdrop or pressing
-// Escape cancels.
+// Small centered dialog. Returns the overlay element; onOpen(overlay) wires its
+// buttons. closeModal() removes it. Backdrop click or Escape cancels.
 function closeModal() { var m = document.querySelector('.adm-modal'); if (m) m.remove(); }
 function modal(title, bodyHtml, opts) {
   opts = opts || {};
@@ -151,8 +155,8 @@ function statusBadge(s) {
   var m = STATUS[s] || { label: s, cls: 'muted' };
   return '<span class="badge ' + m.cls + '"><span class="dot"></span>' + esc(m.label) + '</span>';
 }
-// Plan = free trial or paid. Days left come from the database so the admin
-// screen and the lock-out in the app always agree.
+// Plan = free trial or paid. Days left come from the database, so this screen
+// and the lock-out in the app always agree.
 function planInfo(p) {
   var left = p.trial_days_left, paid = p.subscription_status === 'active';
   if (left == null) return { label: paid ? 'Active' : 'Trial', cls: paid ? 'good' : 'info', ended: false, left: null };
@@ -164,7 +168,7 @@ function planBadge(p) {
   var pi = planInfo(p);
   return '<span class="badge ' + pi.cls + '"><span class="dot"></span>' + esc(pi.label) + '</span>';
 }
-// Which signal made a pharmacy "last active" — shown next to the time.
+// Which signal made a pharmacy "last active", shown next to the time.
 function activeVia(p) {
   if (!p.last_active_at) return '';
   var t = toDate(p.last_active_at).getTime();
@@ -192,9 +196,7 @@ function icon(n, s) {
   return '<svg width="' + s + '" height="' + s + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (ICON[n] || '') + '</svg>';
 }
 
-// ---------------------------------------------------------------------------
-// Boot, auth & routing
-// ---------------------------------------------------------------------------
+// --- Boot, auth and routing ---
 async function init() {
   try {
     var res = await sb.auth.getSession();
@@ -204,8 +206,13 @@ async function init() {
   }
   sb.auth.onAuthStateChange(function (evt, session) {
     A.session = session;
-    if (!session && evt === 'SIGNED_OUT') { A.overview = null; A.detail = {}; renderLogin(); }
+    if (evt === 'PASSWORD_RECOVERY') { A.recovering = true; renderNewPassword(); return; }
+    if (!session && evt === 'SIGNED_OUT') { A.overview = null; A.detail = {}; A.recovering = false; renderLogin(); }
   });
+  if (RECOVERY_LINK || RECOVERY_BAD) {
+    if (A.session && RECOVERY_LINK) { A.recovering = true; return renderNewPassword(); }
+    return renderLogin('That reset link has expired or was already used. Ask for a new one with “Forgot password?”.');
+  }
   if (!A.session) return renderLogin();
   await gate();
 }
@@ -221,49 +228,129 @@ async function gate() {
 }
 
 function route() {
-  var m = location.hash.match(/^#\/p\/([0-9a-f-]{36})$/i);
-  if (m) showDetail(m[1]); else showOverview();
+  if (A.recovering) return;
+  var h = location.hash;
+  var m = h.match(/^#\/p\/([0-9a-f-]{36})$/i);
+  if (m) return showDetail(m[1]);
+  if (h === '#/pharmacies') return showPharmacies();
+  if (h === '#/billing') return showBilling();
+  if (h === '#/account') return showAccount();
+  showOverview();
+}
+
+// --- Sign-in screens: same look as the pharmacy app (style.css, "AUTH") ---
+function adminHeroHtml() {
+  return '<div class="auth-hero"><div class="auth-hero-mark"><svg viewBox="0 0 48 48" aria-hidden="true">' +
+    '<polygon points="18,6 30,6 30,18 42,18 42,30 30,30 30,42 18,42 18,30 6,30 6,18 18,18" fill="#fff" stroke="#fff" stroke-width="6" stroke-linejoin="round"/></svg></div>' +
+    '<h1 class="auth-hero-word">Pharma</h1><p class="auth-hero-tag">Admin console</p>' +
+    '<div class="auth-feats">' +
+    '<div class="auth-feat"><i>&#127973;</i><span>All<br>pharmacies</span></div>' +
+    '<div class="auth-feat"><i>&#128179;</i><span>Plans &amp;<br>billing</span></div>' +
+    '<div class="auth-feat"><i>&#128202;</i><span>Daily<br>activity</span></div>' +
+    '<div class="auth-feat"><i>&#128172;</i><span>SMS<br>credit</span></div>' +
+    '</div></div>';
+}
+var ADMIN_FOOT = '<div class="auth-lfoot"><span>Platform owner</span><span>Admin</span></div>';
+function authPage(mode, cardHtml) {
+  document.title = 'Pharma Admin — Sign in';
+  $('#admin').innerHTML =
+    '<div class="auth-wrap" data-mode="' + mode + '"><div class="auth-bg-fill"></div>' +
+    '<div class="auth-brand"><div class="auth-brand-top">' + adminHeroHtml() + '</div></div>' +
+    '<div class="auth-form-col"><div class="auth-card"><div id="authBody">' + cardHtml + '</div></div></div></div>';
+  wirePwEyes($('#admin'));
 }
 
 function renderLogin(errorMsg) {
-  document.title = 'Pharma Admin — Sign in';
-  $('#admin').innerHTML =
-    '<div class="adm-auth"><div class="box">' +
-      '<div class="brand"><div class="brand-badge" style="width:48px;height:48px;font-size:24px">P</div>' +
-      '<div class="t1">Pharma Admin</div><div class="t2">Sign in with your usual Pharma phone number and password</div></div>' +
-      '<form class="card" id="loginForm" style="padding:18px">' +
-        (errorMsg ? '<div class="err">' + esc(errorMsg) + '</div>' : '') +
-        '<div class="field"><label for="lgPhone">Phone number</label><input id="lgPhone" type="tel" inputmode="tel" autocomplete="username" placeholder="07XX XXX XXX" required></div>' +
-        '<div class="field"><label for="lgPw">Password</label><div class="pw-wrap"><input id="lgPw" type="password" autocomplete="current-password" required>' +
-          '<button type="button" class="pw-eye" aria-label="Show password" aria-pressed="false">' + EYE_ON + '</button></div></div>' +
-        '<button class="btn primary" id="lgBtn" type="submit">Sign in</button>' +
-      '</form>' +
-    '</div></div>';
-  wirePwEyes($('#loginForm'));
+  authPage('login',
+    '<form class="card" id="loginForm" novalidate>' +
+      '<h2 class="auth-title">Admin sign in</h2>' +
+      '<div class="field"><label for="lgEmail">Email</label><input id="lgEmail" type="email" inputmode="email" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="you@example.com"></div>' +
+      '<div class="field"><label for="lgPw">Password</label>' + pwField('lgPw', 'current-password') + '</div>' +
+      '<div id="lgErr" class="error-text">' + esc(errorMsg || '') + '</div>' +
+      '<button class="btn primary" id="lgBtn" type="submit">Sign in</button>' +
+      '<div class="tiny auth-forgot"><a href="#" id="lgForgot">Forgot password?</a></div>' +
+      ADMIN_FOOT +
+    '</form>');
   $('#loginForm').addEventListener('submit', doLogin);
-  $('#lgPhone').focus();
+  $('#lgForgot').addEventListener('click', function (e) { e.preventDefault(); renderForgot($('#lgEmail').value.trim()); });
+  $('#lgEmail').focus();
 }
 
 async function doLogin(e) {
   e.preventDefault();
-  var phone = $('#lgPhone').value.trim(), pw = $('#lgPw').value;
-  if (normalizePhone(phone).length !== 12) return renderLoginKeep('Enter a valid phone number, e.g. 0712345678.', phone);
+  var email = $('#lgEmail').value.trim().toLowerCase(), pw = $('#lgPw').value;
+  var err = $('#lgErr'); err.textContent = '';
+  if (!email || !pw) { err.textContent = 'Enter your email and password.'; return; }
   var btn = $('#lgBtn');
-  btn.disabled = true; btn.textContent = 'Please wait…';
-  var res;
-  try {
-    res = await sb.auth.signInWithPassword({ email: phoneToAuthEmail(phone), password: pw });
-  } catch (err) {
-    return renderLoginKeep(friendlyError(err), phone);
-  }
-  if (res.error) return renderLoginKeep(/invalid/i.test(res.error.message) ? 'Wrong phone number or password.' : friendlyError(res.error), phone);
-  A.session = res.data.session;
-  gate();
+  act(btn, async function () {
+    var res = await sb.auth.signInWithPassword({ email: email, password: pw });
+    if (res.error) {
+      err.textContent = /invalid/i.test(res.error.message) ? 'Wrong email or password.' : friendlyError(res.error);
+      return;
+    }
+    A.session = res.data.session;
+    gate();
+  });
 }
-function renderLoginKeep(msg, phone) {
-  renderLogin(msg);
-  $('#lgPhone').value = phone || '';
-  $('#lgPw').focus();
+
+function renderForgot(email) {
+  authPage('forgot',
+    '<form class="card" id="forgotForm" novalidate>' +
+      '<h2 class="auth-title">Reset your password</h2>' +
+      '<div class="field"><label for="fgEmail">Admin email</label><input id="fgEmail" type="email" inputmode="email" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="you@example.com" value="' + esc(email || '') + '"></div>' +
+      '<div id="fgMsg" class="error-text"></div>' +
+      '<button class="btn primary" id="fgBtn" type="submit">Send reset link</button>' +
+      '<div class="tiny auth-forgot"><a href="#" id="fgBack">Back to sign in</a></div>' +
+      ADMIN_FOOT +
+    '</form>');
+  $('#fgBack').addEventListener('click', function (e) { e.preventDefault(); renderLogin(); });
+  $('#forgotForm').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var em = $('#fgEmail').value.trim().toLowerCase(), msg = $('#fgMsg');
+    if (!em) { msg.textContent = 'Enter your admin email.'; return; }
+    act($('#fgBtn'), async function () {
+      var r = await sb.auth.resetPasswordForEmail(em, { redirectTo: location.origin + location.pathname });
+      if (r.error && !/rate|too many|seconds/i.test(r.error.message)) { msg.textContent = friendlyError(r.error); return; }
+      if (r.error) { msg.textContent = 'Too many tries. Wait a minute and try again.'; return; }
+      msg.className = 'tiny'; msg.style.fontWeight = '700'; msg.style.color = '#0A5C2F';
+      msg.textContent = 'If that is the admin email, a reset link is on its way. Check your inbox and spam folder.';
+    });
+  });
+  $('#fgEmail').focus();
+}
+
+// Reached from the reset-link email: choose a new password.
+function renderNewPassword() {
+  authPage('forgot',
+    '<form class="card" id="newPwForm" novalidate>' +
+      '<h2 class="auth-title">Choose a new password</h2>' +
+      '<div class="field"><label for="npPw">New password</label>' + pwField('npPw', 'new-password') + '</div>' +
+      '<div class="field"><label for="npPw2">Type it again</label>' + pwField('npPw2', 'new-password') + '</div>' +
+      '<div id="npErr" class="error-text"></div>' +
+      '<button class="btn primary" id="npBtn" type="submit">Save new password</button>' +
+      ADMIN_FOOT +
+    '</form>');
+  $('#newPwForm').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var pw = $('#npPw').value, pw2 = $('#npPw2').value, err = $('#npErr'); err.textContent = '';
+    var bad = passwordProblem(pw, pw2);
+    if (bad) { err.textContent = bad; return; }
+    act($('#npBtn'), async function () {
+      var r = await sb.auth.updateUser({ password: pw });
+      if (r.error) { err.textContent = friendlyError(r.error); return; }
+      A.recovering = false; RECOVERY_LINK = false;
+      toast('Password updated.', 'good');
+      gate();
+    });
+  });
+  $('#npPw').focus();
+}
+
+// At least 10 characters, and typed twice the same.
+function passwordProblem(pw, pw2) {
+  if (pw.length < 10) return 'Use at least 10 characters.';
+  if (pw !== pw2) return 'The two passwords do not match.';
+  return '';
 }
 
 async function logout() {
@@ -278,7 +365,7 @@ function renderNoAccess() {
     '<div class="adm-auth"><div class="box"><div class="brand"><div class="brand-badge" style="width:48px;height:48px;font-size:24px">P</div>' +
     '<div class="t1">Pharma Admin</div></div>' +
     '<div class="card" style="padding:18px"><div style="display:flex;gap:8px;align-items:flex-start;font-weight:600">' + icon('warn', 18) +
-    '<div>This account doesn\'t have admin access.<div style="font-weight:400;font-size:13px;margin-top:6px">You\'re signed in, but only accounts added as platform admins can open this page. Your pharmacy app is still at the main site.</div></div></div>' +
+    '<div>This account can\'t open the admin console.<div style="font-weight:400;font-size:13px;margin-top:6px">Only the platform owner account is allowed in. Your pharmacy app is still at the main site.</div></div></div>' +
     '<div style="display:flex;gap:8px;margin-top:14px"><a class="btn secondary" href="./" style="text-decoration:none">Open Pharma</a>' +
     '<button class="btn ghost" onclick="logout()">Sign out</button></div></div></div></div>';
 }
@@ -289,8 +376,31 @@ function renderFatal(msg) {
     icon('warn', 18) + esc(msg) + '</div><div style="margin-top:12px"><button class="btn primary" onclick="location.reload()">Reload</button></div></div></div></div>';
 }
 
-function shell(sub, body) {
-  return '<header class="adm-head"><div class="adm-head-in">' +
+// Page frame: a left sidebar on a desktop, a bottom bar on a phone (same
+// .navbar as the pharmacy app), a slim title strip on top and the page below.
+var NAV_ITEMS = [
+  ['overview', '#/', '\uD83C\uDFE0', 'Overview'],
+  ['pharmacies', '#/pharmacies', '\uD83C\uDFE5', 'Pharmacies'],
+  ['billing', '#/billing', '\uD83D\uDCB3', 'Billing'],
+  ['account', '#/account', '\uD83D\uDC64', 'Account']
+];
+function shell(sub, body, navKey) {
+  var email = (A.session && A.session.user && A.session.user.email) || '';
+  function go(i) { return 'onclick="location.hash=\'' + i[1] + '\'"'; }
+  return '<aside class="navdrawer adm-drawer" aria-label="Admin menu">' +
+      '<div class="nd-brand"><div class="brand-badge" style="width:34px;height:34px;font-size:17px">P</div><div class="nd-bname">Pharma Admin</div></div>' +
+      '<div class="nd-head">Menu</div>' +
+      '<div class="nd-navwrap"><nav class="nd-nav">' + NAV_ITEMS.map(function (i) {
+        return '<button class="nd-row' + (navKey === i[0] ? ' active' : '') + '" ' + go(i) + (navKey === i[0] ? ' aria-current="page"' : '') + '>' +
+          '<span class="nd-chip">' + i[2] + '</span><span class="nd-lab">' + i[3] + '</span></button>';
+      }).join('') + '</nav></div>' +
+      '<div class="nd-foot"><div class="nd-who">Platform owner</div>' + esc(email) + '</div>' +
+    '</aside>' +
+    '<div class="navbar adm-nav">' + NAV_ITEMS.map(function (i) {
+      return '<button class="' + (navKey === i[0] ? 'active' : '') + '" ' + go(i) + '>' +
+        '<span class="ic3d" aria-hidden="true">' + i[2] + '</span>' + i[3] + '</button>';
+    }).join('') + '</div>' +
+    '<header class="adm-head"><div class="adm-head-in">' +
       '<a class="adm-id" href="#/" style="color:inherit;text-decoration:none"><div class="brand-badge" style="width:36px;height:36px;font-size:18px">P</div>' +
       '<div style="min-width:0"><div class="t1">Pharma <span>Admin</span></div><div class="t2">' + esc(sub) + '</div></div></a>' +
       '<div class="adm-actions">' +
@@ -300,8 +410,8 @@ function shell(sub, body) {
     '<main class="adm-wrap">' + body + '</main>';
 }
 
-// Same loading screen as the pharmacy app (markup in loadScreenHtml, js/core.js;
-// styles in style.css), so signing in looks the same on both sides.
+// Same loading screen as the pharmacy app (loadScreenHtml in js/core.js,
+// styles in style.css).
 function renderLoading() {
   document.title = 'Pharma Admin';
   $('#admin').innerHTML = '<div class="loadscreen" role="status" aria-label="Opening Pharma Admin"><div class="loadscreen-mark"><svg viewBox="0 0 48 48" aria-hidden="true"><polygon points="18,6 30,6 30,18 42,18 42,30 30,30 30,42 18,42 18,30 6,30 6,18 18,18" fill="#fff" stroke="#fff" stroke-width="6" stroke-linejoin="round"/></svg></div><p class="loadscreen-word">Pharma</p><svg class="loadscreen-ecg" viewBox="0 0 200 34" fill="none" stroke="#E7C76A" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M0 18h54l8-14 10 28 10-20 6 6h112"/></svg><p class="loadscreen-tag">Admin</p></div>';
@@ -318,22 +428,84 @@ async function refresh() {
   route();
 }
 
-// ---------------------------------------------------------------------------
-// OVERVIEW
-// ---------------------------------------------------------------------------
+// --- Support access: pharmacies whose owner let you in (Profile -> Get support in the app) ---
+async function loadSupportStatus() {
+  A.support = {};
+  try {
+    var r = await sb.rpc('admin_support_status');
+    (r.data || []).forEach(function (g) { A.support[g.pharmacy_id] = g; });
+  } catch (e) {}
+}
+function supportBadge(id) {
+  return A.support[id] ? ' <span class="badge good"><span class="dot"></span>Support access on</span>' : '';
+}
+function supportCard(p) {
+  var g = A.support[p.id];
+  if (!g) {
+    return '<div class="card"><div class="card-head"><div><h2>Support access</h2>' +
+      '<div class="sub">Not given. The pharmacy owner can give it from Profile, then Get support, for 1 to 24 hours. You will see it here.</div></div></div></div>';
+  }
+  var mins = Math.max(0, Math.round((toDate(g.expires_at) - new Date()) / 60000));
+  var left = (mins >= 60 ? Math.floor(mins / 60) + ' h ' : '') + (mins % 60) + ' min left';
+  return '<div class="card" style="border-color:var(--d-sales);background:var(--d-sales-light)"><div class="card-head"><div><h2>Support access</h2>' +
+    '<div class="sub">The pharmacy owner let you in to look at a problem and fix it.</div></div>' +
+    '<span class="badge good"><span class="dot"></span>Until ' + esc(hm(toDate(g.expires_at))) + '</span></div>' +
+    '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><button class="btn primary small" id="btnOpenSupport">Open this pharmacy (support view)</button>' +
+    '<span class="tiny">' + esc(left) + '. It ends on its own, and the owner can stop it sooner.</span></div>' +
+    '<div class="foot-note">Each time you open it, the owner can see that in their access history. Use “Leave” at the top of the app to come back here.</div></div>';
+}
+function wireSupport(p) {
+  var b = $('#btnOpenSupport');
+  if (!b) return;
+  b.addEventListener('click', function () {
+    act(b, async function () {
+      var r = await sb.rpc('admin_open_support', { p_pharmacy_id: p.id });
+      if (r.error) throw r.error;
+      location.href = './';
+    });
+  });
+}
+
+// --- Overview ---
+async function loadOverview(navKey, title) {
+  if (A.overview) return true;
+  renderLoading();
+  var res;
+  try { res = await sb.rpc('admin_overview'); } catch (e) { res = { error: e }; }
+  if (res.error) {
+    $('#admin').innerHTML = shell(title, errorBlock(friendlyError(res.error), 'refresh()'), navKey);
+    return false;
+  }
+  A.overview = res.data; A.loadedAt = new Date();
+  await loadSupportStatus();
+  return true;
+}
+
 async function showOverview() {
   document.title = 'Pharma Admin';
-  if (!A.overview) {
-    renderLoading();
-    var res;
-    try { res = await sb.rpc('admin_overview'); } catch (e) { res = { error: e }; }
-    if (res.error) {
-      $('#admin').innerHTML = shell('Platform overview', errorBlock(friendlyError(res.error), 'refresh()'));
-      return;
-    }
-    A.overview = res.data; A.loadedAt = new Date();
-  }
-  drawOverview();
+  if (await loadOverview('overview', 'Overview')) drawOverview();
+}
+
+// Pharmacies that need you today: plan ended, plan ending within a week, or gone quiet.
+function attentionList() {
+  var rows = [];
+  (A.overview.pharmacies || []).forEach(function (p) {
+    var pi = planInfo(p);
+    if (pi.ended) rows.push({ p: p, why: 'Plan ended', rank: 0, cls: 'bad' });
+    else if (pi.left != null && pi.left <= 7) rows.push({ p: p, why: 'Plan ends in ' + pi.left + (pi.left === 1 ? ' day' : ' days'), rank: 1, cls: 'warn' });
+    else if (p.status === 'dormant') rows.push({ p: p, why: 'Dormant: no activity for over 30 days', rank: 2, cls: 'bad' });
+    else if (p.status === 'quiet') rows.push({ p: p, why: 'Quiet: nothing for 8 to 30 days', rank: 3, cls: 'warn' });
+    else if (p.status === 'not_started') rows.push({ p: p, why: 'Signed up but not started', rank: 4, cls: 'muted' });
+  });
+  rows.sort(function (a, b) { return a.rank - b.rank; });
+  return rows;
+}
+
+function pharmacyRow(p, extraHtml) {
+  var st = STATUS[p.status] || { cls: 'muted' };
+  return '<a class="ph-row" href="#/p/' + esc(p.id) + '"><div class="row-avatar ' + (AVATAR_CLS[st.cls] || '') + '">' + esc(initials(p.name)) + '</div>' +
+    '<div class="body"><div class="top"><div class="nm">' + esc(p.name) + supportBadge(p.id) + '</div>' + (extraHtml || '') + '</div>' +
+    '<div class="mt">' + esc(p.owner_name || '—') + (p.owner_phone ? ' · ' + esc(p.owner_phone) : '') + (p.town ? ' · ' + esc(p.town) : '') + '</div></div></a>';
 }
 
 function drawOverview() {
@@ -355,14 +527,153 @@ function drawOverview() {
     '<div class="chart-box" id="chartOverview" data-empty="No activity in the last 30 days"></div>' +
     '</div>';
 
-  var body = tiles + chart +
-    '<div class="card adm-section" id="phCard"></div>';
-  $('#admin').innerHTML = shell('Platform overview · updated ' + hm(A.loadedAt), body);
+  var att = attentionList();
+  var attHtml =
+    '<div class="card"><div class="card-head"><div><h2>Needs your attention<span class="count-pill">' + num(att.length) + '</span></h2>' +
+    '<div class="sub">Plans that ended or are about to, and pharmacies that have gone quiet.</div></div></div>' +
+    (att.length ? att.slice(0, 8).map(function (r) {
+      return pharmacyRow(r.p, '<span class="badge ' + r.cls + '"><span class="dot"></span>' + esc(r.why.split(':')[0]) + '</span>');
+    }).join('') + (att.length > 8 ? '<div class="foot-note"><a href="#/billing">See all in Billing</a> or <a href="#/pharmacies">Pharmacies</a></div>' : '')
+      : '<div class="empty-note">All clear. Nothing needs you right now.</div>') + '</div>';
+
+  var recent = (A.overview.pharmacies || []).slice().sort(function (a, b) { return toDate(b.created_at) - toDate(a.created_at); }).slice(0, 6);
+  var recentHtml =
+    '<div class="card"><div class="card-head"><div><h2>Newest pharmacies</h2><div class="sub">The last six to sign up.</div></div></div>' +
+    (recent.length ? recent.map(function (p) {
+      return pharmacyRow(p, '<span class="mt" style="margin:0">' + esc(fmtDate(p.created_at)) + '</span>');
+    }).join('') : '<div class="empty-note">No pharmacies have signed up yet.</div>') + '</div>';
+
+  $('#admin').innerHTML = shell('Overview · updated ' + hm(A.loadedAt), tiles + chart + '<div class="adm-grid-2 adm-section">' + attHtml + recentHtml + '</div>', 'overview');
   barChart($('#chartOverview'), o.daily, 'active_pharmacies', function (d) {
     return '<b>' + esc(fmtDate(d.day)) + '</b><br><span class="sw"></span>' + num(d.active_pharmacies) + ' active ' + (d.active_pharmacies === 1 ? 'pharmacy' : 'pharmacies') +
       '<br>' + num(d.sign_ins) + ' sign-ins · ' + num(d.sales) + ' sales';
   });
+}
+
+// --- Pharmacies page: search, filter and open any pharmacy ---
+async function showPharmacies() {
+  document.title = 'Pharmacies — Pharma Admin';
+  if (!(await loadOverview('pharmacies', 'Pharmacies'))) return;
+  $('#admin').innerHTML = shell('Pharmacies', '<div class="card" id="phCard"></div>', 'pharmacies');
   drawPharmacies();
+}
+
+// --- Billing page: every plan on one screen, with quick actions ---
+function billingKind(p) {
+  var pi = planInfo(p), paid = p.subscription_status === 'active';
+  if (pi.ended) return 'ended';
+  if (pi.left != null && pi.left <= 7) return 'soon';
+  return paid ? 'paid' : 'trial';
+}
+async function showBilling() {
+  document.title = 'Billing — Pharma Admin';
+  if (!(await loadOverview('billing', 'Billing'))) return;
+  drawBilling();
+}
+function drawBilling() {
+  var all = (A.overview.pharmacies || []).slice();
+  var counts = { all: all.length, ended: 0, soon: 0, trial: 0, paid: 0 };
+  all.forEach(function (p) { counts[billingKind(p)]++; });
+  var chips = [['all', 'All'], ['ended', 'Ended'], ['soon', 'Ending in 7 days'], ['trial', 'On trial'], ['paid', 'Paid']];
+  var list = all.filter(function (p) { return A.bfilter === 'all' || billingKind(p) === A.bfilter; });
+  list.sort(function (a, b) {
+    function d(p) { return p.trial_days_left == null ? 99999 : Number(p.trial_days_left); }
+    return d(a) - d(b);
+  });
+  var tiles =
+    '<div class="adm-kpis four">' +
+      kpi(counts.ended ? 't-amber' : 't-neutral', 'Plan ended', num(counts.ended), 'Locked out until you extend or activate them') +
+      kpi(counts.soon ? 't-amber' : 't-neutral', 'Ending in 7 days', num(counts.soon), 'Worth a call or a WhatsApp') +
+      kpi('t-blue', 'On free trial', num(counts.trial), 'More than 7 days left') +
+      kpi('t-green', 'Paid and active', num(counts.paid), 'More than 7 days left') +
+    '</div>';
+  var rows = list.length ? list.map(function (p) {
+    var st = STATUS[p.status] || { cls: 'muted' };
+    var paid = p.subscription_status === 'active';
+    return '<div class="bill-row"><a class="bill-id" href="#/p/' + esc(p.id) + '"><div class="row-avatar ' + (AVATAR_CLS[st.cls] || '') + '">' + esc(initials(p.name)) + '</div>' +
+      '<div class="body"><div class="nm">' + esc(p.name) + supportBadge(p.id) + '</div>' +
+      '<div class="mt">' + esc(p.owner_name || '—') + (p.owner_phone ? ' · ' + esc(p.owner_phone) : '') + '</div></div></a>' +
+      '<div class="bill-plan">' + planBadge(p) + '<div class="mt">' + (p.subscription_expires_at ? (planInfo(p).ended ? 'Ended ' : 'Until ') + esc(fmtDate(p.subscription_expires_at)) : 'No end date') + '</div></div>' +
+      '<div class="bill-btns"><button class="btn secondary small" data-q="add" data-id="' + esc(p.id) + '">+30 days</button>' +
+      '<button class="btn primary small" data-q="pay" data-id="' + esc(p.id) + '">' + (paid ? 'Renew 30 days' : 'Mark paid') + '</button></div></div>';
+  }).join('') : '<div class="empty-note">No pharmacies in this group.</div>';
+
+  var body = tiles +
+    '<div class="card"><div class="card-head"><div><h2>Plans<span class="count-pill">' + num(list.length) + '</span></h2>' +
+    '<div class="sub">Soonest to end first. “+30 days” adds free days. “Mark paid” or “Renew” sets the plan to Active for 30 days from now or from its end date. Open a pharmacy for other amounts.</div></div></div>' +
+    '<div class="chips" role="group" aria-label="Filter by plan">' + chips.map(function (c) {
+      return '<button class="chip' + (A.bfilter === c[0] ? ' on' : '') + '" data-f="' + c[0] + '" aria-pressed="' + (A.bfilter === c[0]) + '">' + c[1] + '<span class="n">' + counts[c[0]] + '</span></button>';
+    }).join('') + '</div>' + rows + '</div>';
+  $('#admin').innerHTML = shell('Billing', body, 'billing');
+  document.querySelectorAll('.chip').forEach(function (b) {
+    b.addEventListener('click', function () { A.bfilter = b.getAttribute('data-f'); drawBilling(); });
+  });
+  document.querySelectorAll('[data-q]').forEach(function (b) {
+    b.addEventListener('click', function () { quickBilling(b.getAttribute('data-id'), b.getAttribute('data-q')); });
+  });
+}
+// One-tap +30 days or 30 paid days, after a confirmation.
+function quickBilling(id, kind) {
+  var p = (A.overview.pharmacies || []).filter(function (x) { return x.id === id; })[0];
+  if (!p) return;
+  var paid = p.subscription_status === 'active';
+  var text = kind === 'add'
+    ? 'Add 30 free days to ' + p.name + '?'
+    : (paid ? 'Renew ' + p.name + ' for 30 more days?' : 'Mark ' + p.name + ' as paid for 30 days?');
+  modal(kind === 'add' ? 'Add 30 days' : (paid ? 'Renew plan' : 'Mark as paid'),
+    '<p>' + esc(text) + '</p><div class="adm-modal-actions"><button class="btn ghost small" onclick="closeModal()">Cancel</button>' +
+    '<button class="btn primary small" id="qbGo">Yes, do it</button></div>',
+    { onOpen: function (m) {
+      var go = $('#qbGo', m);
+      go.onclick = function () {
+        act(go, async function () {
+          var r = kind === 'add'
+            ? await sb.rpc('admin_extend_trial', { p_pharmacy_id: id, p_days: 30 })
+            : await sb.rpc('admin_activate_pharmacy', { p_pharmacy_id: id, p_days: 30 });
+          if (r.error) throw r.error;
+          closeModal(); toast('Done: ' + p.name + '.');
+          A.overview = null; A.detail = {};
+          await showBilling();
+        });
+      };
+    } });
+}
+
+// --- Account page: who is signed in, change password ---
+function showAccount() {
+  document.title = 'Account — Pharma Admin';
+  var email = (A.session && A.session.user && A.session.user.email) || '';
+  var body =
+    '<div class="adm-grid-2"><div class="card"><div class="card-head"><div><h2>Change password</h2>' +
+    '<div class="sub">Type your current password once, then the new one twice. At least 10 characters.</div></div></div>' +
+    '<form id="chPwForm" novalidate>' +
+      '<div class="field"><label for="cpOld">Current password</label>' + pwField('cpOld', 'current-password') + '</div>' +
+      '<div class="field"><label for="cpNew">New password</label>' + pwField('cpNew', 'new-password') + '</div>' +
+      '<div class="field"><label for="cpNew2">New password again</label>' + pwField('cpNew2', 'new-password') + '</div>' +
+      '<div id="cpErr" class="error-text"></div>' +
+      '<button class="btn primary" id="cpBtn" type="submit">Save new password</button>' +
+    '</form></div>' +
+    '<div class="card"><div class="card-head"><div><h2>This account</h2></div></div>' +
+      '<dl class="kv"><dt>Signed in as</dt><dd>' + esc(email) + '</dd><dt>Access</dt><dd>Platform owner (the only admin)</dd></dl>' +
+      '<div class="foot-note">Only one account can ever be the admin; the database refuses a second one. If you forget the password, use “Forgot password?” on the sign-in page.</div>' +
+      '<div style="margin-top:12px"><button class="btn ghost small" onclick="logout()">' + icon('logout', 15) + 'Sign out</button></div></div></div>';
+  $('#admin').innerHTML = shell('Account', body, 'account');
+  wirePwEyes($('#admin'));
+  $('#chPwForm').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var oldPw = $('#cpOld').value, pw = $('#cpNew').value, pw2 = $('#cpNew2').value, err = $('#cpErr'); err.textContent = '';
+    if (!oldPw) { err.textContent = 'Type your current password.'; return; }
+    var bad = passwordProblem(pw, pw2);
+    if (bad) { err.textContent = bad; return; }
+    act($('#cpBtn'), async function () {
+      var chk = await sb.auth.signInWithPassword({ email: email, password: oldPw });
+      if (chk.error) { err.textContent = 'The current password is wrong.'; return; }
+      var r = await sb.auth.updateUser({ password: pw });
+      if (r.error) { err.textContent = friendlyError(r.error); return; }
+      toast('Password updated.', 'good');
+      $('#chPwForm').reset();
+    });
+  });
 }
 
 function kpi(tint, label, value, sub, smallValue) {
@@ -436,7 +747,7 @@ function drawPharmacies() {
         var via = activeVia(p);
         return '<tr class="link" onclick="location.hash=\'#/p/' + p.id + '\'">' +
           '<td><div class="cell-id"><div class="row-avatar ' + (AVATAR_CLS[st.cls] || '') + '">' + esc(initials(p.name)) + '</div>' +
-            '<div><a class="nm" href="#/p/' + esc(p.id) + '">' + esc(p.name) + '</a>' + (p.town ? '<div class="mt">' + esc(p.town) + '</div>' : '') + '</div></div></td>' +
+            '<div><a class="nm" href="#/p/' + esc(p.id) + '">' + esc(p.name) + '</a>' + supportBadge(p.id) + (p.town ? '<div class="mt">' + esc(p.town) + '</div>' : '') + '</div></div></td>' +
           '<td>' + esc(p.owner_name || '—') + '<div class="mt">' + esc(p.owner_phone || p.phone || '') + '</div></td>' +
           '<td title="' + esc(exactTime(p.created_at)) + '">' + esc(fmtDate(p.created_at)) + '<div class="mt">' + esc(ago(p.created_at)) + '</div></td>' +
           '<td title="' + esc(exactTime(p.last_sign_in_at)) + '">' + esc(fmtWhen(p.last_sign_in_at)) + '<div class="mt">' + num(p.sign_ins_30d) + ' in 30 days</div></td>' +
@@ -450,7 +761,7 @@ function drawPharmacies() {
       '<div class="only-narrow">' + list.map(function (p) {
         var st = STATUS[p.status] || { cls: 'muted' };
         return '<a class="ph-row" href="#/p/' + esc(p.id) + '"><div class="row-avatar ' + (AVATAR_CLS[st.cls] || '') + '">' + esc(initials(p.name)) + '</div>' +
-          '<div class="body"><div class="top"><div class="nm">' + esc(p.name) + '</div>' + statusBadge(p.status) + '</div>' +
+          '<div class="body"><div class="top"><div class="nm">' + esc(p.name) + supportBadge(p.id) + '</div>' + statusBadge(p.status) + '</div>' +
           '<div style="margin:2px 0 4px">' + planBadge(p) + '</div>' +
           '<div class="mt">' + esc(p.owner_name || '—') + (p.owner_phone ? ' · ' + esc(p.owner_phone) : '') + (p.town ? ' · ' + esc(p.town) : '') + '</div>' +
           '<div class="mt">Joined ' + esc(fmtDate(p.created_at)) + ' · Last sign-in ' + esc(fmtWhen(p.last_sign_in_at)) + '</div>' +
@@ -495,9 +806,7 @@ function exportCsv() {
   setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
 }
 
-// ---------------------------------------------------------------------------
-// PHARMACY DETAIL
-// ---------------------------------------------------------------------------
+// --- Pharmacy detail ---
 async function showDetail(id) {
   A.histAll = false;
   var cached = A.detail[id];
@@ -506,12 +815,13 @@ async function showDetail(id) {
     var res;
     try { res = await sb.rpc('admin_pharmacy_detail', { p_pharmacy_id: id }); } catch (e) { res = { error: e }; }
     if (res.error) {
-      $('#admin').innerHTML = shell('Pharmacy', '<a class="back-link" href="#/">' + icon('back') + 'All pharmacies</a>' + errorBlock(friendlyError(res.error), "A.detail={};route()"));
+      $('#admin').innerHTML = shell('Pharmacy', '<a class="back-link" href="#/pharmacies">' + icon('back') + 'All pharmacies</a>' + errorBlock(friendlyError(res.error), "A.detail={};route()"), 'pharmacies');
       return;
     }
     cached = A.detail[id] = res.data;
     if (!A.loadedAt) A.loadedAt = new Date();
   }
+  await loadSupportStatus();
   drawDetail(cached);
   window.scrollTo(0, 0);
 }
@@ -586,8 +896,9 @@ function drawDetail(d) {
     '</div>';
 
   $('#admin').innerHTML = shell(p.name,
-    '<a class="back-link" href="#/">' + icon('back') + 'All pharmacies</a>' + hero + subscriptionCard(p) + '<div class="card" id="smsCard"><div class="empty-note">Loading SMS…</div></div>' + tiles +
-    '<div class="adm-grid-2">' + chart + signins + '</div>' + staffHtml + dangerCard(p));
+    '<a class="back-link" href="#/pharmacies">' + icon('back') + 'All pharmacies</a>' + hero + supportCard(p) + subscriptionCard(p) + '<div class="card" id="smsCard"><div class="empty-note">Loading SMS…</div></div>' + tiles +
+    '<div class="adm-grid-2">' + chart + signins + '</div>' + staffHtml + dangerCard(p), 'pharmacies');
+  wireSupport(p);
   wireSubscription(p);
   loadAdminSms(p);
 
@@ -597,9 +908,7 @@ function drawDetail(d) {
   });
 }
 
-// ---------------------------------------------------------------------------
-// Subscription: trial days, mark as paid, delete
-// ---------------------------------------------------------------------------
+// --- Subscription: trial days, mark as paid, delete ---
 function subscriptionCard(p) {
   var pi = planInfo(p), paid = p.subscription_status === 'active';
   var line = p.subscription_expires_at
@@ -679,8 +988,8 @@ function wireSubscription(p) {
   del.onclick = function () { startDelete(p); };
 }
 
-// SMS credit: balance, usage and a manual add / remove (a gift, or fixing a
-// payment made outside M-Pesa). Read-only numbers come from admin_sms_wallet.
+// SMS credit: balance, usage and a manual add / remove (a gift, or a payment
+// made outside M-Pesa). Read-only numbers come from admin_sms_wallet.
 async function loadAdminSms(p) {
   var card = $('#smsCard');
   var r;
@@ -714,7 +1023,7 @@ async function loadAdminSms(p) {
   };
 }
 
-// Two steps, same as Kodi: first your password again, then the exact name.
+// Two steps: your password again, then the exact pharmacy name.
 function startDelete(p) {
   modal('Delete ' + p.name + '?',
     '<p>Step 1 of 2 — confirm it is you. Enter your admin password.</p>' +
@@ -758,7 +1067,7 @@ function confirmDelete(p) {
           closeModal();
           A.overview = null; A.detail = {};
           toast(p.name + ' was deleted.');
-          location.hash = '#/';
+          location.hash = '#/pharmacies';
           route();
         });
       };
@@ -767,7 +1076,7 @@ function confirmDelete(p) {
 
 // Password field with a show/hide eye, same markup as the main app.
 function pwField(id, autocomplete) {
-  return '<div class="pw-wrap"><input id="' + id + '" type="password" autocomplete="' + autocomplete + '">' +
+  return '<div class="pw-wrap"><input id="' + id + '" type="password" autocomplete="' + autocomplete + '" autocapitalize="off" autocorrect="off" spellcheck="false">' +
     '<button type="button" class="pw-eye" aria-label="Show password" aria-pressed="false">' + EYE_ON + '</button></div>';
 }
 var EYE_ON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>';
@@ -785,12 +1094,10 @@ function wirePwEyes(root) {
   });
 }
 
-// ---------------------------------------------------------------------------
-// Chart: a single-series daily bar chart (inline SVG, no library). Thin bars
-// with 2px gaps and 4px rounded tops anchored on the baseline, recessive
-// gridlines, integer ticks, a hover/tap tooltip per day. Single series, so
-// no legend — the card title names it. Redrawn on resize.
-// ---------------------------------------------------------------------------
+// --- Chart ---
+// Single-series daily bar chart in inline SVG, no library: thin bars with 2px
+// gaps and rounded tops, light gridlines, integer ticks, a hover/tap tooltip
+// per day. No legend (the card title names it). Redrawn on resize.
 var CHARTS = [];
 function barChart(el, rows, key, tipFn) {
   if (!el) return;
@@ -798,8 +1105,8 @@ function barChart(el, rows, key, tipFn) {
   CHARTS.push({ el: el, rows: rows, key: key, tipFn: tipFn });
   drawBarChart(el, rows, key, tipFn);
 }
-// Integer-only y-axis (these are counts): step is 1/2/5/10×10ⁿ, at most ~5
-// ticks, and the top tick is always >= the largest bar.
+// Integer-only y-axis (counts): step is 1/2/5/10 x 10^n, at most ~5 ticks, and
+// the top tick is always >= the largest bar.
 function niceScale(max) {
   if (max <= 0) return { top: 1, step: 1 };
   var raw = max / 4, p = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / p;

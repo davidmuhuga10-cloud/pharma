@@ -1,8 +1,4 @@
-// js/export.js - Printing and Excel export helpers shared by every report.
-// (One of the files app.js was split into. All of them share one global scope, so
-// order in index.html matters: see the list there.)
-// PRINTING & EXCEL EXPORT — shared helpers
-// ---------------------------------------------------------------------------
+// js/export.js - printing and Excel export helpers shared by every report.
 
 function letterheadHtml(title, subtitle) {
   var p = STATE.pharmacy || {};
@@ -42,4 +38,3 @@ function exportExcel(filename, sheetName, rows) {
   loadXlsx().then(write).catch(function (e) { toast(friendlyError(e), 'bad'); });
 }
 
-// ---------------------------------------------------------------------------

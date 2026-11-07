@@ -14,9 +14,9 @@ check(/class="nd-brand"/.test(shell) && /class="nd-bname"/.test(shell), 'shell.j
 check(/class="nd-who"/.test(shell), 'shell.js writes who is signed in (.nd-who)');
 check(/\.nd-brand, \.nd-who \{ display: none; \}/.test(css), 'phone: .nd-brand / .nd-who are hidden');
 
-// 2. phone bottom bar unchanged: customers, SMS, suppliers and settings stay off it (nav-desktop-extra)
-check(/\['customers', 'people', 'Customers', true\]/.test(shell) && /\['suppliers', 'truck', t\('suppliers'\), true\]/.test(shell)
-  && /\['settings', 'settings', t\('settings'\), true\]/.test(shell), 'phone bar: extra rows are still marked desktop-only');
+// 2. phone bottom bar: six tabs like Kodi (Home, Inventory, Sell, Customers, Expenses, Reports); SMS, suppliers and settings stay off it (nav-desktop-extra)
+check(/\['customers', 'people', 'Customers'\]/.test(shell) && /\['sms', 'chat', 'SMS', true\]/.test(shell) && /\['suppliers', 'truck', t\('suppliers'\), true\]/.test(shell)
+  && /\['settings', 'settings', t\('settings'\), true\]/.test(shell), 'phone bar: Customers is on the bar; SMS, Suppliers and Settings are desktop-only');
 check(/\.navbar button\.nav-desktop-extra/.test(css) || /nav-desktop-extra/.test(css), 'phone bar: .nav-desktop-extra is styled');
 
 // 3. the desktop styles

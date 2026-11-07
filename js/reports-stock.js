@@ -1,27 +1,15 @@
 // js/reports-stock.js - Expiry, Stock valuation and Low stock reports.
-// (One of the files app.js was split into. All of them share one global scope, so
-// order in index.html matters: see the list there.)
-// EXPIRY DATES REPORT — every batch still in stock, bucketed by urgency.
-// Reuses the same thresholds/logic as the drug-detail batch list and the
-// Inventory "unknown expiry" notice (expiry_unknown, item 26).
-// ---------------------------------------------------------------------------
+//
+// --- Expiry dates report ---
+// Every batch still in stock, grouped by urgency. Uses the same thresholds as
+// the drug-detail batch list and Inventory's "unknown expiry" notice.
 
-// Item — user punch list: full per-category drill-down lists (not just a
-// count), each independently printable/exportable, paginated 10-at-a-time,
-// and (for Unknown Expiry) editable right there instead of only from
-// Inventory's separate "fix later" list. expiryReportData now holds one
-// FLAT array (`all`) rather than pre-split buckets — every category's
-// membership (including the summary tiles' own counts) is computed on
-// demand by expiryCategoryRows() from that one array, so the tile count,
-// the drill-down list and the print/export can never drift out of sync
-// with each other. That single source of truth is also the actual fix for
-// the "90-day report shows dates out to 2028" bug: the bucketing math
-// (days <= 90) was always correct, but the old layout printed every bucket
-// — including "later than 90 days", genuinely containing far-future dates
-// — one after another on the same unbroken page with no drill-down, so a
-// reader scrolling past "Expiring soon" straight into "Later than 90 days"
-// could easily read those as still being part of the 90-day report. Now
-// clicking "Expiring in 90 Days" opens ONLY that category's own rows.
+// Each category opens its own drill-down list, printable and exportable,
+// 10 rows per page. Unknown-expiry rows can be edited right there.
+// expiryReportData holds one flat array (`all`); every category, including the
+// summary tile counts, is worked out from it by expiryCategoryRows(), so a
+// tile, its list and its print can never disagree. Each category shows only
+// its own rows, so far-future dates never read as part of the 90-day report.
 var expiryCategory = null; // null = summary tiles | 'expired' | 'within30' | 'within90' | 'unknown' | 'custom'
 var expiryPage = 1;
 var EXPIRY_PAGE_SIZE = 10;
@@ -33,11 +21,13 @@ async function loadExpiryReport() {
   expiryPage = 1;
   drawReportsShell2('Expiry Dates Report');
   try {
-    var { data: batches, error } = await sb.from('batches')
-      .select('id, batch_no, quantity_remaining, expiry_date, expiry_unknown, drug_id, drugs(name, unit)')
-      .eq('pharmacy_id', STATE.profile.pharmacy_id)
-      .gt('quantity_remaining', 0)
-      .order('expiry_date');
+    var { data: batches, error } = await fetchAllRows(function () {
+      return sb.from('batches')
+        .select('id, batch_no, quantity_remaining, expiry_date, expiry_unknown, drug_id, drugs(name, unit)')
+        .eq('pharmacy_id', STATE.profile.pharmacy_id)
+        .gt('quantity_remaining', 0)
+        .order('expiry_date');
+    }, 'id');
     if (error) throw error;
     var all = (batches || []).map(function (b) {
       return {
@@ -53,11 +43,9 @@ async function loadExpiryReport() {
   }
 }
 
-// Cumulative thresholds (0–30, 0–90), not mutually-exclusive bands — a drug
-// expiring in 12 days is meant to show up under BOTH "Expiring in 30 Days"
-// and "Expiring in 90 Days", since anyone pulling the 90-day list wants
-// everything expiring that soon, urgent items included, not just the 31–90
-// slice. Expired items are their own bucket and never double up into these.
+// Thresholds are cumulative (0-30, 0-90), not separate bands: a drug expiring
+// in 12 days appears under both "30 Days" and "90 Days". Expired items are
+// their own bucket.
 function expiryCategoryRows(cat) {
   var all = (expiryReportData && expiryReportData.all) || [];
   if (cat === 'expired') return all.filter(function (r) { return !r.expiry_unknown && r.days < 0; });
@@ -137,10 +125,8 @@ function drawExpiryCategory(body) {
   var cat = expiryCategory;
   var meta = EXPIRY_CATEGORY_META[cat];
   var allRows = expiryCategoryRows(cat);
-  // Soonest/most-overdue first, same urgency ordering the old fixed buckets
-  // used; Unknown Expiry keeps insertion order (oldest batch first — same
-  // as Inventory's own "fix later" list, so the two never disagree on
-  // which one to fix first).
+  // Soonest or most overdue first. Unknown Expiry keeps insertion order (oldest
+  // batch first), the same as Inventory's "fix later" list.
   if (cat !== 'unknown') allRows = allRows.slice().sort(function (a, b) { return a.days - b.days; });
   var rows = allRows.slice(0, expiryPage * EXPIRY_PAGE_SIZE);
   var title = cat === 'custom' ? ('Custom range: ' + fmtDate(expiryCustomFrom) + ' – ' + fmtDate(expiryCustomTo)) : meta.title;
@@ -153,12 +139,9 @@ function drawExpiryCategory(body) {
     '</div></div>' +
     (cat === 'unknown' && allRows.length ? '<div class="tiny" style="margin-bottom:10px">Set the real expiry date once you have it — this only needs doing once per batch.</div>' : '') +
     (allRows.length ? (
-      // Every category but "custom" has one status for all its rows, so
-      // meta.badge (fixed red/amber/gray) is right for all of them. Custom
-      // range can mix already-expired rows with still-future ones in the
-      // same list, so its badge color is worked out per row instead —
-      // otherwise an expired item in a custom range would wrongly show the
-      // same amber "still has time" color as a not-yet-expired one.
+      // Every category except "custom" has one status, so meta.badge fits all rows.
+      // A custom range can mix expired and future rows, so its badge colour is
+      // chosen per row.
       '<div class="card">' + rows.map(function (r) {
         var kind = meta.badge;
         if (cat === 'custom') kind = r.days < 0 ? 'bad' : (r.days <= 30 ? 'bad' : 'warn');
@@ -181,9 +164,8 @@ function expiryRowHtml(r, kind, showDays, editable) {
     ) + '</div>';
 }
 
-// Lets a batch's expiry date be set right from the Unknown Expiry
-// drill-down, not only from Inventory's separate list — same RPC
-// (set_batch_expiry), so both places enforce the exact same rules.
+// Set a batch's expiry from the Unknown Expiry list. Uses the same RPC
+// (set_batch_expiry) as Inventory, so the rules are identical.
 async function saveExpiryReportRowDate(batchId) {
   var btn = $('#expSaveBtn_' + batchId);
   act(btn, async function () {
@@ -224,10 +206,8 @@ function exportExpiryCategoryExcel() {
   exportExcel((STATE.pharmacy.name || 'Pharma') + ' - expiry - ' + (meta ? meta.title.toLowerCase().replace(/\s+/g, '-') : expiryCategory) + ' - ' + todayStr() + '.xlsx', 'Expiry', rows);
 }
 
-// Whole-report (every category combined) print/export — still reachable
-// from the persistent shell toolbar at the top of both the summary and any
-// drill-down, for a single combined list when that's what's wanted instead
-// of one category at a time.
+// Print/export of the whole report (all categories). Reachable from the toolbar
+// on the summary and on every drill-down.
 function expiryReportRows() {
   var all = (expiryReportData && expiryReportData.all) || [];
   function statusLabel(r) {
@@ -260,16 +240,14 @@ function exportExpiryReportExcel() {
   exportExcel((STATE.pharmacy.name || 'Pharma') + ' - expiry - ' + todayStr() + '.xlsx', 'Expiry', rows);
 }
 
-// ---------------------------------------------------------------------------
-// STOCK VALUATION REPORT — what current stock is worth, at cost and retail,
-// drug by drug. Reuses v_drug_stock's stock_value_cost/stock_value_retail
-// (already computed for Inventory's own export, item 26/27).
-// ---------------------------------------------------------------------------
+// --- Stock valuation report ---
+// What current stock is worth at cost and retail, drug by drug. Uses
+// v_drug_stock's stock_value_cost and stock_value_retail.
 
 async function loadValuationReport() {
   drawReportsShell2('Stock Valuation Report');
   try {
-    var { data, error } = await sb.from('v_drug_stock').select('drug_id, name, unit, qty_in_stock, stock_value_cost, stock_value_retail').order('stock_value_retail', { ascending: false });
+    var { data, error } = await fetchAllRows(function () { return sb.from('v_drug_stock').select('drug_id, name, unit, qty_in_stock, stock_value_cost, stock_value_retail').order('stock_value_retail', { ascending: false }); }, 'drug_id');
     if (error) throw error;
     var rows = (data || []).filter(function (d) { return d.qty_in_stock > 0; });
     var totalCost = rows.reduce(function (a, d) { return a + Number(d.stock_value_cost || 0); }, 0);
@@ -281,11 +259,10 @@ async function loadValuationReport() {
   }
 }
 
-// One drug's figures for the valuation report. The view gives the value of ALL the
-// stock of a drug (cost and retail); the per-unit cost and price are those values
-// divided by the quantity, so a drug held in batches bought at different prices shows
-// the average. A cost of 0 means no cost was ever entered (stock imported from a sheet
-// has selling prices only), and shows as a dash instead of "KES 0".
+// One drug's figures. The view gives the value of ALL of a drug's stock; the
+// per-unit cost and price are those values divided by quantity (an average when
+// batches were bought at different prices). A cost of 0 means none was entered
+// (sheet imports have selling prices only) and shows as a dash, not "KES 0".
 function valuationUnitCost(r) {
   var q = Number(r.qty_in_stock) || 0;
   return q > 0 ? Number(r.stock_value_cost || 0) / q : 0;
@@ -294,7 +271,7 @@ function valuationUnitPrice(r) {
   var q = Number(r.qty_in_stock) || 0;
   return q > 0 ? Number(r.stock_value_retail || 0) / q : 0;
 }
-// "tablet" -> "tablets" for a quantity other than 1; short codes (ml, mg, g) are left alone.
+// "tablet" -> "tablets" unless the quantity is 1; short codes (ml, mg, g) stay as typed.
 function valuationUnitWord(unit, qty) {
   var u = String(unit || 'unit');
   if (Number(qty) !== 1 && /^[A-Za-z]{4,}$/.test(u) && !/s$/i.test(u)) u += 's';
@@ -307,9 +284,8 @@ function valuationLine(r) {
     ' · price ' + fmt(valuationUnitPrice(r));
 }
 
-// One drug on the report: the name and the value of all its stock on the top line, and the
-// quantity, cost and price on a line of their own that is never allowed to wrap (it uses the
-// full width of the row and shrinks a little on narrow phones instead).
+// One drug row: name and total value on the top line; quantity, cost and price
+// on a line that never wraps (it shrinks a little on narrow phones).
 function valuationRow(r) {
   return '<div class="val-row"><div class="val-top"><span class="name">' + esc(r.name) + '</span><span class="right">' + fmt(r.stock_value_retail) + '</span></div>' +
     '<div class="val-meta">' + valuationLine(r) + '</div></div>';
@@ -350,16 +326,15 @@ function exportValuationReportExcel() {
   exportExcel((STATE.pharmacy.name || 'Pharma') + ' - stock valuation - ' + todayStr() + '.xlsx', 'Valuation', rows);
 }
 
-// ---------------------------------------------------------------------------
-// LOW STOCK REPORT — every drug at or below its reorder level, with a
-// suggested order quantity. Same formula as the Inventory reorder list
-// (openReorderList), but as its own formal, printable/exportable report.
-// ---------------------------------------------------------------------------
+// --- Low stock report ---
+// Every drug at or below its reorder level with a suggested order quantity.
+// Same formula as Inventory's reorder list (openReorderList), as a printable,
+// exportable report.
 
 async function loadLowStockReport() {
   drawReportsShell2('Low Stock Report');
   try {
-    var { data, error } = await sb.from('v_drug_stock').select('drug_id, name, unit, qty_in_stock, reorder_level').order('name');
+    var { data, error } = await fetchAllRows(function () { return sb.from('v_drug_stock').select('drug_id, name, unit, qty_in_stock, reorder_level').order('name'); }, 'drug_id');
     if (error) throw error;
     var rows = (data || []).filter(function (d) { return d.qty_in_stock <= d.reorder_level; }).map(function (d) {
       return { name: d.name, unit: d.unit, current: d.qty_in_stock, reorderLevel: d.reorder_level, suggested: Math.max(d.reorder_level * 3 - d.qty_in_stock, d.reorder_level || 5) };
@@ -397,4 +372,3 @@ function exportLowStockReportExcel() {
   exportExcel((STATE.pharmacy.name || 'Pharma') + ' - low stock - ' + todayStr() + '.xlsx', 'Low stock', rows);
 }
 
-// ---------------------------------------------------------------------------

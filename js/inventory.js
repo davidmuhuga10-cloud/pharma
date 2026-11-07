@@ -1,8 +1,4 @@
-// js/inventory.js - The Inventory screen: drug list, add/edit drug.
-// (One of the files app.js was split into. All of them share one global scope, so
-// order in index.html matters: see the list there.)
-// INVENTORY
-// ---------------------------------------------------------------------------
+// js/inventory.js - the Inventory screen: drug list, add/edit drug.
 
 var invFilter = '';
 
@@ -11,7 +7,7 @@ async function renderInventory() {
   if (!can('view_inventory')) { c.innerHTML = '<div class="card empty">You do not have access to Inventory.</div>'; return; }
   c.innerHTML = '<div class="empty">Loading inventory…</div>';
   try {
-    var { data: stock } = await sb.from('v_drug_stock').select('*').order('name');
+    var { data: stock } = await fetchAllRows(function () { return sb.from('v_drug_stock').select('*').order('name'); }, 'drug_id');
     STATE.drugsCache = stock || [];
   } catch (e) {
     errorCard(c, friendlyError(e), 'renderInventory');
@@ -94,4 +90,3 @@ function printInventory() {
 
 function todayStr() { return new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }); }
 
-// ---------------------------------------------------------------------------

@@ -23,7 +23,7 @@
 <!-- The loading screen's own styles, inline, so it draws before style.css arrives.
      Identical to the critical block in style.css (tests/critical-css.test.js checks). -->
 <style id="critical">
-/* critical:start - the few rules the loading screen needs. index.html carries an identical copy inline so the screen draws before this file arrives; tests/critical-css.test.js fails if the two drift apart. */
+/* critical:start - the few rules the loading screen needs. index.html has an identical inline copy so the screen draws before this file arrives; tests/critical-css.test.js fails if the two differ. */
 html,body{margin:0}
 .loadscreen{box-sizing:border-box;min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;text-align:center;color:#fff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:radial-gradient(circle at 18% 0%,#1C7A52 0%,transparent 55%),linear-gradient(180deg,#0F5132 0%,#09291B 100%)}
 .loadscreen-mark{width:76px;height:76px;border-radius:22px;background:#B3261E;display:grid;place-items:center;box-shadow:0 0 0 4px #fff,0 12px 26px rgba(0,0,0,.35)}
@@ -39,24 +39,22 @@ html,body{margin:0}
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<!-- The same markup as loadScreenHtml() in app.js, so nothing visibly changes when app.js takes over. -->
+<!-- Same markup as loadScreenHtml() in js/core.js, so nothing changes visibly when the app takes over. -->
 <div id="app"><div class="loadscreen" role="status" aria-label="Opening Pharma"><div class="loadscreen-mark"><svg viewBox="0 0 48 48" aria-hidden="true"><polygon points="18,6 30,6 30,18 42,18 42,30 30,30 30,42 18,42 18,30 6,30 6,18 18,18" fill="#fff" stroke="#fff" stroke-width="6" stroke-linejoin="round"/></svg></div><p class="loadscreen-word">Pharma</p><svg class="loadscreen-ecg" viewBox="0 0 200 34" fill="none" stroke="#E7C76A" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M0 18h54l8-14 10 28 10-20 6 6h112"/></svg><p class="loadscreen-tag">Know your stock</p></div></div>
 <div id="printArea" class="print-only"></div>
 
-<!-- Self-hosted instead of loaded from a CDN: a CDN outage, a blocked domain
-     on a customer's Wi-Fi/firewall, or jsDelivr being slow left the whole
-     app stuck on "Loading Pharma…" forever with no error message. Vendoring
-     these two files removes that single point of failure entirely — they
-     now load exactly like every other file in this folder. -->
+<!-- Self-hosted, not from a CDN: a CDN outage or a blocked domain on a customer's
+     network would leave the app stuck on "Loading Pharma…" with no error. -->
 <script src="vendor-supabase.js"></script>
 <!-- vendor-xlsx.js (880 KB) is not loaded here any more: only Excel export and
      import need it, so the app loads it in the background after the first screen
      is up (see loadXlsx in js/core.js). -->
 <script src="config.js"></script>
-<!-- The app code, in this order. It used to be one 5,700-line app.js; it is now split by screen into js/.
-     They all share one global scope (no build step), so keep main.js LAST. tests/js-split.test.js checks this list. -->
+<!-- The app code, one file per screen area. They share one global scope (no build
+     step), so order matters and main.js stays LAST. tests/js-split.test.js checks this list. -->
 <script src="js/core.js"></script>
 <script src="js/shell.js"></script>
+<script src="js/profile.js"></script>
 <script src="js/export.js"></script>
 <script src="js/auth.js"></script>
 <script src="js/dashboard.js"></script>

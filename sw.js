@@ -1,24 +1,18 @@
-/* Hodhi service worker — caches the app shell so the app still opens (and
-   shows the last screen it had data for) on a bad connection, which matters
-   a lot for a pharmacy in a rural sub-county. It deliberately NEVER caches
-   Supabase API calls — stock, prices and stock levels must always come from
-   the network when it's available; a stale cached "in stock" answer at a
-   pharmacy counter is worse than a slow one. Bump CACHE_NAME on every
-   deploy so returning users pick up the new app shell instead of an old
-   cached copy. */
+// Pharma service worker. Caches the app shell so the app still opens (showing
+// the last screen it had data for) on a bad connection. It NEVER caches
+// Supabase API calls: stock and prices must come from the network when it is
+// available, since a stale "in stock" answer at the counter is worse than a slow
+// one. Bump CACHE_NAME on every deploy so returning users get the new shell.
 
-const CACHE_NAME = 'hodhi-shell-v3a';
-// vendor-supabase.js and vendor-xlsx.js were missing from this list, so a
-// first-ever offline open failed outright: index.html came from the cache,
-// then <script src="vendor-supabase.js"> went to the network, got nothing,
-// and app.js died on `supabase.createClient` — the exact single point of
-// failure vendoring them was meant to remove. They only reached the cache
-// once the fetch handler below had seen them on a successful online load.
+const CACHE_NAME = 'hodhi-shell-v3f';
+// The vendored libraries must be listed here, or a first-ever offline open
+// fails: index.html comes from the cache but vendor-supabase.js does not.
 const SHELL_FILES = [
   './', './index.html', './style.css', './nativeShell.js', './install.js', './config.js', './manifest.json',
   './vendor-supabase.js',
   './js/core.js',
   './js/shell.js',
+  './js/profile.js',
   './js/export.js',
   './js/auth.js',
   './js/dashboard.js',
@@ -34,9 +28,9 @@ const SHELL_FILES = [
   './js/customers.js',
   './js/controlled-stocktake.js',
   './js/main.js'
-  // vendor-xlsx.js (880 KB) is deliberately NOT pre-cached: it is only needed
-  // for Excel export/import, so the app loads it after the first screen, and the
-  // fetch handler below then keeps it cached for offline use.
+  // vendor-xlsx.js (880 KB) is deliberately not pre-cached. Only Excel
+  // import/export needs it; the app loads it after the first screen and the fetch
+  // handler below then keeps it cached for offline use.
 ];
 
 self.addEventListener('install', function (event) {
@@ -58,22 +52,15 @@ self.addEventListener('activate', function (event) {
 self.addEventListener('fetch', function (event) {
   var url = new URL(event.request.url);
 
-  // Never touch anything that isn't a plain GET, and never cache Supabase
-  // (or any cross-origin) API traffic — that data must always be live.
+  // Ignore anything that is not a plain GET, and never cache Supabase or other
+  // cross-origin API traffic. That data must be live.
   if (event.request.method !== 'GET' || url.origin !== self.location.origin) return;
 
-  // Network-first for the app's own code and markup; cache-first for
-  // everything else (icons, fonts, the vendored libraries — none of which
-  // change without their filename changing).
-  //
-  // This was cache-first for everything, which meant a returning user kept
-  // running the OLD app.js and index.html out of the cache until someone
-  // remembered to bump CACHE_NAME by hand on deploy. Forget once and a fix
-  // shipped to Netlify simply never reaches the pharmacy that needs it —
-  // they would have had to clear site data to get it. Network-first keeps
-  // the offline guarantee (the cached copy is still served the moment the
-  // network fails) without making correctness depend on remembering a
-  // constant.
+  // Network-first for the app's own code and markup; cache-first for everything
+  // else (icons, fonts, vendored libraries, which only change with their
+  // filename). Cache-first for all of it left returning users on old code until
+  // CACHE_NAME was bumped by hand. Network-first still serves the cached copy
+  // when the network fails.
   var isAppShell = event.request.mode === 'navigate' ||
                    /\.(html|js|css)$/.test(url.pathname) ||
                    url.pathname === '/' ||

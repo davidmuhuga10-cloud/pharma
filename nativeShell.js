@@ -1,28 +1,20 @@
-/**
- * nativeShell.js — runs ONLY inside the Pharma Android app (a Capacitor 8
- * WebView shell whose server.url is https://pharmacymngt.netlify.app — see
- * capacitor.config.json and android/). In a normal browser window.Capacitor
- * doesn't exist and this file returns on its first line, so the website is
- * untouched by everything below.
- *
- * Loaded in <head> of index.html (before style.css and app.js) so the layout
- * fix in step 1 happens before anything is drawn.
- *
- * What it does:
- *  1. Layout: the page runs edge-to-edge (viewport-fit=cover) and style.css
- *     pads the top bar by the status-bar height (safe-area-inset-top), so the
- *     green bar is never hidden under the clock and battery.
- *  2. Status bar: light icons on Pharma green.
- *  3. Printing: receipts and reports call window.print(), which does nothing
- *     in an Android WebView. Here it sends the page to Android's print
- *     service (Printer plugin), which applies the same print styles as a
- *     browser — only the document (#printArea) is printed, and "Save as PDF"
- *     is one of the printer choices.
- *  4. Back button: closes an open pop-up first, then an open sheet, then the menu drawer; on any
- *     screen other than Home it goes to Home; otherwise the app goes to the
- *     background like any Android app.
- *  5. Splash: hidden as soon as the page has loaded (and after 8s at most).
- */
+// nativeShell.js - runs ONLY inside the Pharma Android app (a Capacitor 8
+// WebView shell loading https://pharmacymngt.netlify.app; see
+// capacitor.config.json and android/). In a normal browser window.Capacitor
+// does not exist and this file returns on its first line.
+// Loaded in <head> of index.html, before style.css, so the layout step runs
+// before anything is drawn.
+//
+//  1. Layout: edge-to-edge page (viewport-fit=cover); style.css pads the top
+//     bar by the status-bar height so it is not hidden under the clock.
+//  2. Status bar: light icons on Pharma green.
+//  3. Printing: window.print() does nothing in an Android WebView, so it sends
+//     the page to Android's print service (Printer plugin) with the same print
+//     styles; only #printArea is printed and "Save as PDF" is a choice.
+//  4. Back button: closes a pop-up, then a sheet, then the menu drawer. On any
+//     screen other than Home it goes Home; otherwise the app goes to the
+//     background.
+//  5. Splash: hidden once the page has loaded (after 8s at most).
 (function () {
   var C = window.Capacitor;
   if (!C || !C.isNativePlatform || !C.isNativePlatform()) return;
@@ -33,12 +25,10 @@
   document.documentElement.classList.add('native-app');
 
   /* ------------------------------------------------------- 1. layout --- */
-  // Nothing to do here on purpose. The app runs edge-to-edge (viewport-fit=cover
-  // stays as the page asks) and style.css pads the green top bar, the menu and
-  // the sign-in screen by env(safe-area-inset-top), so nothing sits under the
-  // clock and battery. Older WebViews pad the page natively and report 0 for
-  // the inset, so there is never a double gap. (Switching the viewport to
-  // viewport-fit=auto at run time is not honoured by newer WebViews.)
+  // Nothing to do here on purpose. style.css pads the top bar, menu and sign-in
+  // screen by env(safe-area-inset-top). Older WebViews pad the page natively and
+  // report 0 for the inset, so there is never a double gap. (Changing
+  // viewport-fit at run time is ignored by newer WebViews.)
 
   /* --------------------------------------------------- 2. status bar --- */
   if (P.StatusBar) {

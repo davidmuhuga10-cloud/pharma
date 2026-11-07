@@ -1,12 +1,10 @@
-// js/import.js - Bulk import from a spreadsheet, and "sync common drugs" for a new pharmacy.
-// (One of the files app.js was split into. All of them share one global scope, so
-// order in index.html matters: see the list there.)
-// BULK IMPORT — the whole reason this app exists is a spreadsheet just like
-// this one; re-typing 300 rows by hand defeats the point. Accepts a flexible
-// column layout (matches the columns pharmacists already use: Drug, Qty,
-// Price, Expiry…) and understands the "12.2027" (month.year) expiry format
-// seen in real stock-take sheets, not just proper dates.
-// ---------------------------------------------------------------------------
+// js/import.js - bulk import from a spreadsheet, and "Sync common drugs" for a
+// new pharmacy.
+//
+// --- Bulk import ---
+// Pharmacies already keep stock in a spreadsheet, so import accepts a flexible
+// column layout (Drug, Qty, Price, Expiry...) and the "12.2027" (month.year)
+// expiry format used in real stock-take sheets.
 
 function downloadImportTemplate() {
   var rows = [{
@@ -17,9 +15,8 @@ function downloadImportTemplate() {
   exportExcel('Pharma - import template.xlsx', 'Stock', rows);
 }
 
-// Parses "12.2027" (month.year, as seen in real stock-take sheets), a
-// proper date string, or an Excel date object — returns 'YYYY-MM-DD' (last
-// day of the month for the month.year form) or null if unreadable.
+// Parses "12.2027" (month.year), a date string or an Excel date object.
+// Returns 'YYYY-MM-DD' (last day of the month for month.year) or null.
 function parseFlexibleExpiry(val) {
   if (!val) return null;
   if (val instanceof Date && !isNaN(val)) return val.toISOString().slice(0, 10);
@@ -37,9 +34,8 @@ function parseFlexibleExpiry(val) {
   return null;
 }
 
-// Column-name aliases the importer recognizes, matched case-insensitively.
-// 'drugs' (plural) is here because that's the header real pharmacy
-// stock-take sheets actually use (see IMPORT_COLUMN_ALIASES.name).
+// Column-name aliases, matched case-insensitively. 'drugs' (plural) is there
+// because real stock-take sheets use that header.
 var IMPORT_COLUMN_ALIASES = {
   name: ['drug', 'drugs', 'name', 'drug name'],
   category: ['category'],
@@ -53,12 +49,9 @@ var IMPORT_COLUMN_ALIASES = {
   supplier: ['supplier']
 };
 
-// Real stock-take sheets (like the one this app was built from) often have
-// a title row above the real column headers ("RUBAO MUKOTHIMA STOCK TAKE",
-// then "DRUGS / QTY / PRICE PER UNIT / …" on the next row). Reading the
-// file as plain rows (not assuming row 1 is the header) and searching the
-// first several rows for one that actually contains a recognized column
-// name handles that without asking the pharmacist to edit their sheet first.
+// Sheets often have a title row above the real headers. Read plain rows and
+// search the first several for one containing a known column name, so nobody
+// has to edit their sheet first.
 function findImportHeaderRow(rows) {
   for (var i = 0; i < Math.min(rows.length, 10); i++) {
     for (var c = 0; c < rows[i].length; c++) {
@@ -124,11 +117,9 @@ function previewImport(dataRows, colMap) {
     var qty = parseInt(cell('qty'), 10);
     var sellPrice = parseFloat(cell('sellPrice'));
 
-    // A row that's just a drug name with no quantity and no price at all
-    // (written in ALL CAPS, e.g. "ANALGESICS/ANTIPYRETICS", "COUGH SYRUPS")
-    // is a section header in the pharmacist's sheet, not a stock line —
-    // remember it as the category for the rows underneath, same way a
-    // person reading the sheet by eye would.
+    // A row with only a drug name (often ALL CAPS, e.g. "COUGH SYRUPS") and no
+    // quantity or price is a section header: use it as the category for the rows
+    // below it.
     if (name && qty !== qty /* NaN */ && !sellPrice) {
       var trimmedName = String(name).trim();
       if (trimmedName === trimmedName.toUpperCase() && /[A-Za-z]/.test(trimmedName)) {
@@ -137,16 +128,10 @@ function previewImport(dataRows, colMap) {
       }
     }
 
-    // Only drug name and current stock quantity are actually required —
-    // everything else (price, expiry, category, batch no., supplier) is
-    // optional at import time, so a messy real-world stock-take sheet
-    // doesn't lose rows over incidental missing columns. A missing sell
-    // price defaults to cost price (or 0, visibly flaggable in Inventory —
-    // nobody misses a drug priced at KES 0). A missing expiry imports as
-    // "expiry unknown" (same placeholder-date pattern record_restock
-    // already supports for Sync common drugs / supplier LPOs) rather than
-    // being skipped — see openUnknownExpiryList() for how the pharmacy
-    // finds and fixes these afterward.
+    // Only drug name and current quantity are required; everything else is
+    // optional so a messy sheet does not lose rows. A missing sell price defaults
+    // to cost price (or 0, which shows up in Inventory). A missing expiry imports
+    // as "expiry unknown" (see openUnknownExpiryList) instead of being skipped.
     var expiryRaw = cell('expiry');
     var expiry = parseFlexibleExpiry(expiryRaw);
     if (!name || !qty || qty <= 0) { skipped++; return; }
@@ -177,8 +162,8 @@ function previewImport(dataRows, colMap) {
     '</div>' +
     '<div class="card" style="max-height:260px;overflow-y:auto">' +
     (parsed.length ? parsed.slice(0, 50).map(function (p) {
-      // listRow() escapes its name argument but not meta — and p.unit here is
-      // a raw cell out of an uploaded spreadsheet.
+      // listRow() escapes its name argument but not meta, and p.unit here is a raw
+      // cell from an uploaded spreadsheet.
       return listRow(p.name, p.qty + ' ' + esc(p.unit) + ' · exp ' + (p.expiryUnknown ? 'unknown' : fmtDate(p.expiry)), fmt(p.sellPrice));
     }).join('') : '<div class="empty">Nothing importable was found in that file.</div>') +
     (parsed.length > 50 ? '<div class="tiny" style="margin-top:8px">…and ' + (parsed.length - 50) + ' more</div>' : '') +
@@ -192,18 +177,15 @@ async function runImport(encoded) {
   var rows = JSON.parse(decodeURIComponent(atob(encoded)));
   var btn = $('#impBtn');
   act(btn, async function () {
-    // Normalized (letters/digits only, lowercased) so "Anti-H-Pylori" from
-    // the seeded categories matches "ANTI H PYLORI" as written by hand in a
-    // real stock-take sheet — punctuation/spacing varies, the category
-    // doesn't.
+    // Normalised (letters and digits only, lowercase) so "Anti-H-Pylori" matches
+    // "ANTI H PYLORI" written by hand.
     var normCat = function (s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, ''); };
     var catByName = {};
     STATE.categoriesCache.forEach(function (c) { catByName[normCat(c.name)] = c.id; });
 
-    // The database imports a block of rows per request (import_stock_rows):
-    // it finds or creates each drug and restocks it by the same rules as a
-    // normal restock. A bad row is skipped and reported, never stops the rest.
-    // This used to be two requests per row, so a 2,000-row sheet took minutes.
+    // The database imports a block of rows per request (import_stock_rows). It
+    // finds or creates each drug and restocks it by the normal restock rules. A
+    // bad row is skipped and reported; it never stops the rest.
     var imported = 0, failed = 0, firstProblem = '';
     for (var i = 0; i < rows.length; i += IMPORT_BLOCK) {
       var block = rows.slice(i, i + IMPORT_BLOCK).map(function (r) {
@@ -233,20 +215,15 @@ async function runImport(encoded) {
   });
 }
 
-// ---------------------------------------------------------------------------
-// SYNC COMMON DRUGS — fast onboarding for a fresh pharmacy: instead of
-// typing every drug by hand (or preparing an Excel sheet), browse/search a
-// shared catalog of the drugs a Kenyan chemist commonly stocks and tick the
-// ones this pharmacy actually sells, entering just the current quantity,
-// price, reorder threshold and (optionally) expiry per item. An additional
-// option alongside "+ Add new drug" and Excel import, not a replacement —
-// whichever suits the pharmacy best. See sync_master_drugs() in schema.sql.
-// ---------------------------------------------------------------------------
+// --- Sync common drugs ---
+// Fast onboarding for a new pharmacy: search a shared catalogue of drugs a
+// Kenyan chemist commonly stocks, tick the ones sold here, and enter quantity,
+// price, reorder level and optional expiry. An alternative to "+ Add new drug"
+// and Excel import. See sync_master_drugs() in schema.sql.
 
 var syncFilter = '';
 
-// Matches the order bootstrap_pharmacy() seeds these 16 categories in, so
-// the list reads in the same familiar order as a real stock-take sheet.
+// Same order bootstrap_pharmacy() seeds these 16 categories in.
 var SYNC_CATEGORY_ORDER = [
   'Analgesics/Antipyretics', 'Antibiotics/Antifungals/Amoebicides',
   'Bronchodilators/Anti-Allergy', 'Antacids/Anti-H-Pylori', 'Antimalarials',
@@ -334,9 +311,8 @@ function toggleSyncDrug(masterDrugId) {
   drawSyncMasterDrugs();
 }
 
-// Field edits write straight into STATE, with no re-render — re-rendering
-// the whole sheet on every keystroke would reset focus and lose whatever
-// the pharmacist is mid-typing in every other expanded row.
+// Field edits write straight into STATE with no re-render; re-rendering on every
+// keystroke would reset focus in the other expanded rows.
 function updateSyncField(masterDrugId, field, value) {
   if (STATE.syncSelected[masterDrugId]) STATE.syncSelected[masterDrugId][field] = value;
 }
@@ -375,4 +351,3 @@ async function submitMasterDrugsSync() {
   });
 }
 
-// ---------------------------------------------------------------------------

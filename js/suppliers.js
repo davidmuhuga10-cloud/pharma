@@ -1,17 +1,13 @@
-// js/suppliers.js - Suppliers, supplier detail, payments and the New LPO form.
-// (One of the files app.js was split into. All of them share one global scope, so
-// order in index.html matters: see the list there.)
-// SUPPLIERS — opening balances, LPOs (Local Purchase Orders) that record a
-// delivery AND restock inventory in one step (integrated by design, so a
-// pharmacist enters a delivery once rather than in both Suppliers and
-// Stock), payments against a supplier's running balance, and a full
-// running-ledger statement per supplier: first delivery to most recent,
-// running debt owed, what's been paid and when. See schema.sql's
-// supplier_lpos/supplier_lpo_items/supplier_payments tables and the
-// record_supplier_lpo/record_supplier_payment functions.
-// ---------------------------------------------------------------------------
+// js/suppliers.js - suppliers, supplier detail, payments and the New LPO form.
+//
+// --- Suppliers ---
+// An LPO (Local Purchase Order) records a delivery AND restocks inventory in one
+// step, so a delivery is entered once. Payments reduce a supplier's running
+// balance, and each supplier has a ledger from first delivery to latest. See
+// supplier_lpos, supplier_lpo_items, supplier_payments and the
+// record_supplier_lpo / record_supplier_payment functions in schema.sql.
 
-var supplierDetailId = null;   // set while viewing one supplier's ledger instead of the list
+var supplierDetailId = null;  // set while viewing one supplier's ledger instead of the list
 var lpoFilter = '';
 var lpoDeliveredAt = '';
 var lpoNotes = '';
@@ -98,8 +94,8 @@ function supplierPaymentMethodLabel(m) {
   return map[m] || 'Other';
 }
 
-// Merges a supplier's LPOs and payments into one chronological ledger with
-// a running balance, starting from the supplier's opening balance (if any).
+// Merges a supplier's LPOs and payments into one dated ledger with a running
+// balance, starting from the opening balance if any.
 function buildSupplierLedger(detail) {
   var supplier = detail.supplier;
   var entries = [];
@@ -213,15 +209,12 @@ function printSupplierStatement() {
   printHtml('Supplier Statement', detail.supplier.name, tableHtml(['Date', 'Entry', 'Detail', 'Delivered', 'Paid', 'Balance'], rows), 'Balance owed: ' + fmt(ledger.balance));
 }
 
-// ---------------------------------------------------------------------------
-// NEW LPO — multi-drug delivery entry. Same STATE-keyed-by-id pattern as
-// openSyncMasterDrugs: ticking a drug reveals its own fields, and every
-// keystroke writes straight into STATE.lpoSelected with no re-render, so
-// focus/typing in one row is never disturbed by editing another. Submits as
-// one jsonb array to record_supplier_lpo, which creates the LPO AND the
-// matching batches in a single transaction (integrated, per the owner's
-// choice — one entry records both the debt and the stock received).
-// ---------------------------------------------------------------------------
+// --- New LPO ---
+// Multi-drug delivery entry. Like openSyncMasterDrugs: ticking a drug shows its
+// fields, and each keystroke writes straight into STATE.lpoSelected with no
+// re-render, so typing in one row is never disturbed. Submits one jsonb array
+// to record_supplier_lpo, which creates the LPO and its batches in a single
+// transaction.
 
 async function openNewLpo(supplierId) {
   lpoFilter = '';
@@ -232,7 +225,7 @@ async function openNewLpo(supplierId) {
   var body = sheet('New LPO' + (supplier ? ': ' + supplier.name : ''), '<div class="empty">Loading drugs…</div>');
   if (!STATE.drugsCache || !STATE.drugsCache.length) {
     try {
-      var { data, error } = await sb.from('v_drug_stock').select('*').order('name');
+      var { data, error } = await fetchAllRows(function () { return sb.from('v_drug_stock').select('*').order('name'); }, 'drug_id');
       if (error) throw error;
       STATE.drugsCache = data || [];
     } catch (e) {
@@ -293,17 +286,10 @@ function drawLpoDrugRow(d, supplierId, selected) {
   return row;
 }
 
-// BUG FIX: the search-results list (searchMatches, in drawNewLpo) always
-// excludes anything already in STATE.lpoSelected, since a selected drug is
-// meant to show only in the "On this delivery" card above instead. Ticking
-// a drug that was the search's only match used to leave lpoFilter
-// unchanged, so the very next render recomputed searchMatches against that
-// same query, found it now excluded, and landed on "No drugs match your
-// search" — even though the tick had just worked and the drug was sitting
-// right there in "On this delivery". Clearing the search box on a genuine
-// selection (not on de-selecting) sidesteps that: the search section
-// collapses back to nothing instead of showing a contradictory empty state,
-// and the user can see their pick in "On this delivery" right away.
+// Search results (searchMatches in drawNewLpo) exclude drugs already in
+// STATE.lpoSelected, which show in "On this delivery". If the ticked drug was
+// the only match, the next render showed "No drugs match your search". So
+// clear the search box when a drug is selected (not when deselected).
 function toggleLpoDrug(drugId, supplierId) {
   if (STATE.lpoSelected[drugId]) {
     delete STATE.lpoSelected[drugId];
@@ -315,9 +301,7 @@ function toggleLpoDrug(drugId, supplierId) {
   drawNewLpo(supplierId);
 }
 
-// Field edits write straight into STATE, with no re-render — see the note
-// on updateSyncField above for why (re-rendering would reset focus/typing
-// in every other expanded row).
+// Field edits write straight into STATE with no re-render (see updateSyncField).
 function updateLpoField(drugId, field, value) {
   if (STATE.lpoSelected[drugId]) STATE.lpoSelected[drugId][field] = value;
 }
@@ -439,4 +423,3 @@ async function saveSupplier() {
   });
 }
 
-// ---------------------------------------------------------------------------

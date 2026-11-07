@@ -1,17 +1,14 @@
-// js/expenses.js - The Expenses ledger.
-// (One of the files app.js was split into. All of them share one global scope, so
-// order in index.html matters: see the list there.)
-// EXPENSES — a general pharmacy-expenses ledger (rent, utilities, salaries,
-// transport, licenses, marketing, maintenance, supplies, other), separate
-// from Suppliers (which is specifically about drug-stock deliveries and
-// supplier debt). Same Today/Week/Month/Year range filter as the dashboard
-// (filtered client-side against one fetch — expense volume for a single
-// pharmacy is small, so a second RPC isn't worth the complexity). Voiding
-// follows the same soft-delete pattern as void_sale — see schema.sql §14.
-// ---------------------------------------------------------------------------
+// js/expenses.js - the Expenses ledger.
+//
+// --- Expenses ---
+// General pharmacy costs (rent, utilities, salaries, transport, licences,
+// marketing, maintenance, supplies, other), separate from Suppliers, which is
+// about drug deliveries and supplier debt. Same Today/Week/Month/Year filter as
+// the dashboard, applied in the browser to one fetch (one pharmacy's expenses
+// are few). Voiding is a soft delete, like void_sale (schema.sql).
 
 var expRange = 'month';
-var expensesAllCache = [];  // this year's expenses (incl. voided), newest first; filtered client-side by expRange
+var expensesAllCache = [];  // this year's expenses (including voided), newest first; filtered by expRange
 var EXP_CATEGORY_LABELS = {
   rent: 'Rent', utilities: 'Utilities', salaries: 'Salaries', transport: 'Transport',
   licenses: 'Licenses & permits', marketing: 'Marketing', maintenance: 'Maintenance & repairs',
@@ -23,11 +20,13 @@ async function renderExpenses() {
   if (!can('expenses') && !can('view_expenses')) { c.innerHTML = '<div class="card empty">You do not have access to Expenses.</div>'; return; }
   c.innerHTML = '<div class="empty">Loading expenses…</div>';
   try {
-    // Only this year is loaded: "Year" is the widest range the screen offers.
+    // Only this year is loaded; "Year" is the widest range offered.
     var yearStart = new Date().getFullYear() + '-01-01';
-    var { data, error } = await sb.from('expenses').select('*').eq('pharmacy_id', STATE.profile.pharmacy_id)
-      .gte('expense_date', yearStart)
-      .order('expense_date', { ascending: false }).order('created_at', { ascending: false });
+    var { data, error } = await fetchAllRows(function () {
+      return sb.from('expenses').select('*').eq('pharmacy_id', STATE.profile.pharmacy_id)
+        .gte('expense_date', yearStart)
+        .order('expense_date', { ascending: false }).order('created_at', { ascending: false });
+    }, 'id');
     if (error) throw error;
     expensesAllCache = data || [];
   } catch (e) {
@@ -42,7 +41,7 @@ function expRangeStart(r) {
   if (r === 'today') return new Date(now.getFullYear(), now.getMonth(), now.getDate());
   if (r === 'week') return new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay());
   if (r === 'year') return new Date(now.getFullYear(), 0, 1);
-  return new Date(now.getFullYear(), now.getMonth(), 1); // month (default)
+  return new Date(now.getFullYear(), now.getMonth(), 1);  // month (default)
 }
 
 function setExpRange(r) {
@@ -53,7 +52,7 @@ function setExpRange(r) {
 
 function drawExpensesList() {
   var c = $('#content');
-  var rs = expRangeStart(expRange);   // local date, not toISOString(): in Nairobi that rolled back a day
+  var rs = expRangeStart(expRange);  // local date, not toISOString(): in Nairobi that rolled back a day
   var startStr = rs.getFullYear() + '-' + String(rs.getMonth() + 1).padStart(2, '0') + '-' + String(rs.getDate()).padStart(2, '0');
   var inRange = expensesAllCache.filter(function (e) { return e.expense_date >= startStr; });
   var active = inRange.filter(function (e) { return !e.voided; });
@@ -92,10 +91,9 @@ function expenseCategoryLabel(cat) {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : 'Other';
 }
 
-// Every distinct category this pharmacy has actually used, beyond the
-// fixed preset — feeds the "New expense" category datalist so a custom
-// category someone typed once shows up as a quick pick next time, without
-// needing a separate categories table.
+// Every category this pharmacy has used beyond the presets. Feeds the "New
+// expense" category list so a custom category shows up as a quick pick next
+// time, without a separate categories table.
 function expCustomCategories() {
   var seen = {};
   (expensesAllCache || []).forEach(function (e) { if (e.category) seen[e.category] = true; });
@@ -140,10 +138,9 @@ async function saveExpense() {
     if (!description) { toast('Give the expense a short description.', 'bad'); return; }
     var amount = parseFloat($('#exAmount').value);
     if (!amount || amount <= 0) { toast('Enter a valid amount.', 'bad'); return; }
-    // Free-text category (fixed presets and custom ones alike) — normalized
-    // to lowercase/trimmed for storage so "Rent" and "rent" group together;
-    // displayed back through expenseCategoryLabel(), which title-cases
-    // anything not in the fixed EXP_CATEGORY_LABELS preset.
+    // Free-text category, stored lowercase and trimmed so "Rent" and "rent" group
+    // together. Shown through expenseCategoryLabel(), which title-cases anything
+    // not in EXP_CATEGORY_LABELS.
     var categoryRaw = $('#exCategory').value.trim();
     var category = categoryRaw.toLowerCase().replace(/\s+/g, ' ') || 'other';
     var { error } = await sb.rpc('record_expense', {
@@ -183,12 +180,10 @@ async function doReverseExpense(expenseId) {
   });
 }
 
-// Item 3: was two hardcoded one-tap buttons (pharmacist/seller only) that
-// generated a permanent-account code immediately. Now a role picker
-// covering all 5 invitable roles, plus an account time-limit picker —
-// mandatory (and forced non-permanent) for accountant, optional for
-// everyone else — since the resulting account's lifespan is now a real
-// thing to choose, not just the 7-day code-redemption window.
+// Invite staff: pick a role (all 5 invitable roles) and an account time limit.
+// The limit is required (and never permanent) for accountant, optional for the
+// rest. This is the lifespan of the account, separate from the 7-day window
+// to redeem the code.
 function openInviteStaff(btn) {
   btn.disabled = true;
   var body = sheet('Invite staff', '');
@@ -286,5 +281,3 @@ async function saveSettings() {
   });
 }
 
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------

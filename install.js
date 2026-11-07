@@ -1,38 +1,29 @@
-/*
- * install.js - the "Install Pharma" bar and popup.
- *
- * Two pieces:
- *
- *  1. A slim bar fixed to the top of the sign-in pages: "Install Pharma app  [Install]".
- *     It stays until Pharma is installed, even after "Not now". Tapping it installs.
- *     Phones, tablets and computers.
- *  2. A popup card shown as soon as the browser says the site can be installed.
- *     Phones and tablets only (on a computer only the bar is shown, so nothing
- *     covers the sign-in fields). "Not now" hides the popup for 3 days (the bar stays).
- *
- * On a computer (Chrome, Edge, Brave, Opera, and Safari 17+ on a Mac) the bar appears
- * once the browser says Pharma can be installed, so it is never offered when it is
- * already installed. Tapping it runs the browser's install box; progress and the
- * result are shown in the bar itself. Firefox on a computer cannot install apps, so
- * nothing is shown there.
- *
- * What a tap does on a phone or tablet:
- *  - Android Chrome, Edge, Samsung Internet, Opera: the browser's own install
- *    prompt (beforeinstallprompt). After you accept, the card says "Installing"
- *    and waits for the browser to finish. If nothing has finished after 30
- *    seconds (it sometimes stalls) the card closes and the bar goes back to
- *    "Install", so one more tap tries again.
- *  - Android, browser has not offered install yet: the menu steps.
- *  - iPhone and iPad: Apple has no one-tap install, so the two steps (Share, then
- *    Add to Home Screen).
- *  - Inside WhatsApp, Facebook, Instagram, TikTok and similar in-app browsers
- *    nothing can be installed: "Open in Chrome" on Android, "open in Safari" on iPhone.
- *  - Never shown inside the installed app or the Android app.
- *
- * Self-contained: no other file is needed and it touches nothing else. It only
- * looks for the sign-in screen (an element with class auth-wrap) to decide
- * whether to show the bar.
- */
+// install.js - the "Install Pharma" bar and popup.
+//
+// 1. A slim bar at the top of the sign-in pages. It stays until Pharma is
+//    installed, even after "Not now". Phones, tablets and computers.
+// 2. A popup card shown once the browser says the site can be installed.
+//    Phones and tablets only (on a computer only the bar shows, so nothing
+//    covers the sign-in fields). "Not now" hides it for 3 days.
+//
+// Computers (Chrome, Edge, Brave, Opera, Safari 17+ on a Mac): the bar appears
+// once the browser says Pharma can be installed, and runs the browser's install
+// box when tapped. Firefox on a computer cannot install apps, so nothing shows.
+//
+// Phones and tablets, by browser:
+//  - Android Chrome, Edge, Samsung Internet, Opera: the browser's install prompt
+//    (beforeinstallprompt). After accepting, the card says "Installing". If the
+//    browser has not finished after 30 seconds (it sometimes stalls) the card
+//    closes and the bar goes back to "Install" so one more tap retries.
+//  - Android, install not offered yet: the menu steps.
+//  - iPhone and iPad: no one-tap install, so two steps (Share, then Add to
+//    Home Screen).
+//  - Inside WhatsApp, Facebook, Instagram, TikTok and similar in-app browsers:
+//    nothing can be installed, so "Open in Chrome" (Android) or Safari (iPhone).
+//  - Never shown inside the installed app or the Android app.
+//
+// Self-contained: needs no other file. It only looks for the sign-in screen
+// (class auth-wrap) to decide whether to show the bar.
 (function () {
   'use strict';
 

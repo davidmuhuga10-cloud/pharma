@@ -17,18 +17,13 @@ function client(env = process.env, fetchImpl = fetch) {
   const url = String(env.SUPABASE_URL || DEFAULT_URL).replace(/\/+$/, '');
   const key = String(env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
   if (!key) { const e = new Error('Payments are being set up. Please try again later.'); e.statusCode = 503; throw e; }
-  /* Which headers carry the key depends on which kind of key it is.
-     A new-format key (sb_secret_…) is an opaque string, not a JWT, and
-     Supabase authenticates it from the "apikey" header on its own - that is
-     the documented way to use one. Sending it as "Authorization: Bearer
-     sb_secret_…" instead hands it to the part of Supabase that expects a
-     signed user token, which is not what it is.
-     A legacy service_role key IS a JWT and Supabase still expects it in both
-     headers, so that path is left exactly as it was: whichever key Netlify
-     holds today keeps behaving today's way, byte for byte. This only changes
-     what happens on the day that key is replaced with a new-format one.
-     getUser() below is deliberately different and is not affected - it sends
-     the browser's own session token as the Bearer, never the service key. */
+  // Which headers carry the key depends on its kind. A new-format key
+  // (sb_secret_...) is an opaque string, not a JWT; Supabase reads it from the
+  // "apikey" header alone, so sending it as Authorization: Bearer would be wrong.
+  // A legacy service_role key IS a JWT and is still sent in both headers, so
+  // whichever key Netlify holds today behaves exactly as before.
+  // getUser() below is different: it sends the browser's own session token as
+  // the Bearer, never the service key.
   const isOpaqueKey = key.startsWith('sb_');
   const headers = (extra) => Object.assign(
     { apikey: key, 'content-type': 'application/json', accept: 'application/json' },

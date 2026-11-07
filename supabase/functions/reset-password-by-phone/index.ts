@@ -201,14 +201,10 @@ Deno.serve(async (req: Request) => {
 
   const targetEmail = phoneToAuthEmail(phone);
 
-  let userId: string | null = null;
-  for (let page = 1; page <= 20 && !userId; page++) {
-    const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 1000 });
-    if (error) return json({ error: "Could not look up that account. Try again shortly." });
-    const match = data.users.find((u) => (u.email || "").toLowerCase() === targetEmail);
-    if (match) userId = match.id;
-    if (data.users.length < 1000) break; // last page
-  }
+  // One indexed lookup in the database. This used to download every user, 1000
+  // at a time (and give up after 20,000), on every password reset.
+  const { data: userId, error: lookupErr } = await admin.rpc("auth_user_id_for_email", { p_email: targetEmail });
+  if (lookupErr) return json({ error: "Could not look up that account. Try again shortly." });
 
   if (!userId) {
     return json({ error: "No Pharma account is registered with that phone number." });

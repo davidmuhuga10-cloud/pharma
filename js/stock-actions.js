@@ -1,9 +1,8 @@
-// js/stock-actions.js - Reorder list, and the stock-movement actions: write-off, correction, discount.
-// (One of the files app.js was split into. All of them share one global scope, so
-// order in index.html matters: see the list there.)
-// REORDER LIST — a proactive "what to buy" list from what's low/out, instead
-// of waiting to notice at the counter.
-// ---------------------------------------------------------------------------
+// js/stock-actions.js - reorder list and stock-movement actions: write-off,
+// correction, discount.
+//
+// --- Reorder list ---
+// A "what to buy" list from what is low or out, so nobody has to notice at the counter.
 
 var pendingReorderList = [];
 
@@ -41,10 +40,9 @@ function printReorderList() {
   printHtml('Reorder List', todayStr(), tableHtml(['Drug', 'Current stock', 'Reorder level', 'Suggested order'], rows), needed.length + ' items');
 }
 
-// Drugs brought into stock without a known expiry date (e.g. via a relaxed
-// Excel import, item 26) are flagged in v_drug_stock via has_unknown_expiry.
-// This lets the pharmacy come back later, look up the exact batch, and fill
-// in the real expiry date once they have it.
+// Drugs brought in without an expiry date (e.g. a relaxed Excel import) are
+// flagged by has_unknown_expiry in v_drug_stock. This lets the pharmacy find
+// the batch later and enter the real date.
 function openUnknownExpiryList() {
   sheet('Batches with no expiry date', '<div class="empty">Loading…</div>');
   loadUnknownExpiryList();
@@ -54,12 +52,14 @@ async function loadUnknownExpiryList() {
   var body = $('#sheetBody');
   if (!body) return;
   try {
-    var { data: batches, error } = await sb.from('batches')
-      .select('id, batch_no, quantity_remaining, drug_id, drugs(name, unit)')
-      .eq('pharmacy_id', STATE.profile.pharmacy_id)
-      .eq('expiry_unknown', true)
-      .gt('quantity_remaining', 0)
-      .order('created_at', { ascending: true });
+    var { data: batches, error } = await fetchAllRows(function () {
+      return sb.from('batches')
+        .select('id, batch_no, quantity_remaining, drug_id, drugs(name, unit)')
+        .eq('pharmacy_id', STATE.profile.pharmacy_id)
+        .eq('expiry_unknown', true)
+        .gt('quantity_remaining', 0)
+        .order('created_at', { ascending: true });
+    }, 'id');
     if (error) throw error;
     STATE.unknownExpiryBatches = batches || [];
     renderUnknownExpiryList();
@@ -159,13 +159,12 @@ async function saveNewDrug() {
 
 function encodeDrugForRestock(drug) { return btoa(encodeURIComponent(JSON.stringify(drug))); }
 
-// ---------------------------------------------------------------------------
-// EDIT, STOP SELLING, DELETE — fixing a mistyped drug and retiring one that is
-// no longer sold. A drug with history is never deleted (old sales and reports
-// point at it): it is hidden instead, and can be brought back. Only a drug that
-// never had a batch or a sale can be deleted. The rules live in the database
-// (edit_drug, set_drug_active, delete_drug); the screens just ask.
-// ---------------------------------------------------------------------------
+// --- Edit, stop selling, delete ---
+// Fix a mistyped drug or retire one that is no longer sold. A drug with
+// history is never deleted (old sales and reports point at it); it is hidden
+// and can be brought back. Only a drug with no batch and no sale can be
+// deleted. The rules live in the database (edit_drug, set_drug_active,
+// delete_drug); the screens just ask.
 
 function drugToolsHtml(drugRow, neverStocked) {
   if (!can('edit_inventory') || !drugRow) return '';
@@ -271,8 +270,10 @@ async function loadHiddenDrugs() {
   var body = $('#sheetBody');
   if (!body) return;
   try {
-    var { data, error } = await sb.from('drugs').select('id, name, unit')
-      .eq('pharmacy_id', STATE.profile.pharmacy_id).eq('active', false).order('name');
+    var { data, error } = await fetchAllRows(function () {
+      return sb.from('drugs').select('id, name, unit')
+        .eq('pharmacy_id', STATE.profile.pharmacy_id).eq('active', false).order('name');
+    }, 'id');
     if (error) throw error;
     body.innerHTML =
       '<div class="tiny" style="margin-bottom:10px">Drugs you stopped selling. They stay out of Sell and Inventory until you bring them back; their old sales are kept.</div>' +
@@ -298,9 +299,9 @@ function restoreDrug(btn, drugId) {
 async function openDrugDetail(drugId) {
   var d = STATE.drugsCache.find(function (x) { return x.drug_id === drugId; });
   if (!d) return;
-  // Batches with stock are all shown; of the used-up ones only the latest few,
-  // so a drug restocked hundreds of times still opens quickly. The three
-  // requests run together.
+  // All batches with stock are shown, but only the latest few used-up ones, so
+  // a drug restocked hundreds of times still opens fast. The three requests run
+  // together.
   var DONE_BATCHES_SHOWN = 5;
   var detail = await Promise.all([
     sb.from('drugs').select('*').eq('id', drugId).single(),
@@ -322,9 +323,9 @@ async function openDrugDetail(drugId) {
     '<div class="section-title">Batches</div>' +
     (batches && batches.length ? batches.map(function (b) {
       var d2 = daysUntil(b.expiry_date);
-      // expiry_unknown batches (from "Sync common drugs", or a restock marked
-      // "I don't know the expiry") carry a placeholder date 3 years out —
-      // never show that fake date, and never flag it as expiring.
+      // expiry_unknown batches (from "Sync common drugs" or a restock marked "I don't
+      // know the expiry") hold a placeholder date 3 years out. Never show that date
+      // and never flag it as expiring.
       var kind = b.quantity_remaining === 0 ? 'muted' : b.expiry_unknown ? 'good' : d2 < 0 ? 'bad' : d2 <= 30 ? 'bad' : d2 <= 90 ? 'warn' : 'good';
       var expiryLabel = b.expiry_unknown ? 'Expiry unknown' : fmtDate(b.expiry_date);
       var discountBadge = b.discount_percent > 0 ? ' <span class="badge warn">-' + b.discount_percent + '%</span>' : '';
@@ -333,17 +334,13 @@ async function openDrugDetail(drugId) {
         '<div class="meta">Received ' + fmtDate(b.received_at) + (b.supplier ? ' from ' + esc(b.supplier) : '') + '</div>' +
         ((can('write_off') || can('correct_stock') || can('edit_expiry')) && b.quantity_remaining > 0 ? '<div class="batch-actions">' +
           (can('write_off') ? '<button class="btn ghost small" onclick="openWriteOff(\'' + b.id + '\',\'' + esc(d.name).replace(/'/g, "\\'") + '\',' + b.quantity_remaining + ')">Write off</button>' : '') +
-          // Was gated on can('write_off') — a real pre-existing bug: this
-          // button is "Correct count" (record_correction), a different
-          // action from write-off with its own backend permission tier,
-          // so it needs its own can('correct_stock') check. Fixed as part
-          // of item 3 since stock_taker can correct stock but not write
-          // off, and the old gate would have hidden this button from them.
+          // "Correct count" is record_correction, which has its own permission
+          // (correct_stock), separate from write_off. A stock_taker can correct but not
+          // write off.
           (can('correct_stock') ? '<button class="btn ghost small" onclick="openCorrection(\'' + b.id + '\',\'' + esc(d.name).replace(/'/g, "\\'") + '\',' + b.quantity_remaining + ')">Correct count</button>' : '') +
           (can('discount') ? '<button class="btn ghost small" onclick="openDiscount(\'' + b.id + '\',\'' + esc(d.name).replace(/'/g, "\\'") + '\',' + b.discount_percent + ')">Mark down</button>' : '') +
-          // Item 34: owner-only — fixes a batch that already has a real (just
-          // wrong) expiry date, e.g. entered as already-past by mistake, which
-          // silently drops it out of "in stock" with no other way to correct it.
+          // Owner only: fixes a batch with a real but wrong expiry date (e.g. already
+          // past by mistake), which otherwise drops out of "in stock" with no way back.
           (can('edit_expiry') ? '<button class="btn ghost small" onclick="openEditExpiry(\'' + b.id + '\',\'' + esc(d.name).replace(/'/g, "\\'") + '\',\'' + (b.expiry_unknown ? '' : b.expiry_date) + '\')">Edit expiry</button>' : '') +
           '</div>' : '') +
         '</div>';
@@ -398,11 +395,9 @@ async function saveRestock(drugId) {
   });
 }
 
-// ---------------------------------------------------------------------------
-// WRITE-OFF, CORRECTION, DISCOUNT — the stock-movement actions the spec was
-// missing: disposing of expired/damaged stock, reconciling a physical
-// count, and marking down a near-expiry batch instead of a total write-off.
-// ---------------------------------------------------------------------------
+// --- Write-off, correction, discount ---
+// Dispose of expired or damaged stock, reconcile a physical count, or mark
+// down a near-expiry batch instead of writing it off.
 
 function openWriteOff(batchId, drugName, maxQty) {
   var body = sheet('Write off: ' + drugName, '');
@@ -421,13 +416,11 @@ async function saveWriteOff(batchId) {
   act(btn, async function () {
     var qty = parseInt($('#woQty').value, 10);
     if (!qty || qty <= 0) { toast('Enter a valid quantity.', 'bad'); return; }
-    // The reason is what the stock audit trail carries into a GSDP
-    // inspection, so record_write_off now requires it. Catch it here too,
-    // before the round trip, so the message points at the right field.
+    // The reason goes into the stock audit trail (needed for a GSDP inspection), so
+    // record_write_off requires it. Check here too so the message names the right field.
     var woReason = $('#woReason').value.trim();
     if (!woReason) { toast('Give a reason — it goes on the stock audit trail.', 'bad'); return; }
-    // Write-offs permanently remove stock with no undo — a fat-fingered tap
-    // at a busy counter shouldn't be able to do that with zero friction.
+    // A write-off removes stock for good, so ask for confirmation first.
     if (!(await askConfirm('Write off stock', 'Write off ' + qty + ' unit(s)? This cannot be undone.', 'Write off', true))) return;
     var { error } = await sb.rpc('record_write_off', {
       p_pharmacy_id: STATE.profile.pharmacy_id, p_batch_id: batchId, p_quantity: qty,
@@ -454,13 +447,11 @@ async function saveCorrection(batchId) {
   act(btn, async function () {
     var qty = parseInt($('#coQty').value, 10);
     if (qty === '' || isNaN(qty) || qty < 0) { toast('Enter a valid quantity.', 'bad'); return; }
-    // Same as write-off: a correction overwrites a counted quantity outright,
-    // and record_correction now insists on an explanation for the audit row.
+    // A correction overwrites a counted quantity, and record_correction requires a
+    // reason for the audit row.
     var coReason = $('#coReason').value.trim();
     if (!coReason) { toast('Give a reason — it goes on the stock audit trail.', 'bad'); return; }
-    // A correction directly overwrites the batch's counted quantity — cheap
-    // to close the same confirmation gap write-off and void already have,
-    // so a fat-fingered tap doesn't silently overwrite a real count.
+    // Confirm first, like write-off and void, so a mis-tap cannot overwrite a real count.
     if (!(await askConfirm('Correct the count', 'Set this batch\'s quantity to ' + qty + '? This overwrites the current count.', 'Set quantity', true))) return;
     var { error } = await sb.rpc('record_correction', {
       p_pharmacy_id: STATE.profile.pharmacy_id, p_batch_id: batchId, p_new_quantity: qty,
@@ -494,12 +485,9 @@ async function saveDiscount(batchId) {
   });
 }
 
-// Item 34 — owner-only fix for a real bug report: a batch restocked with an
-// already-past expiry date (e.g. picked yesterday by mistake) silently drops
-// out of "in stock" everywhere (dashboard, Inventory, Sell) with no way to
-// correct it in the app — set_batch_expiry only covers batches marked
-// "expiry unknown", not one that already has a real-but-wrong date. Reopens
-// the same drug's detail sheet afterward so the fix is visible immediately.
+// Owner only: set a new expiry on a batch that already has a (wrong) real date.
+// set_batch_expiry only handles "expiry unknown" batches. Reopens the drug's
+// detail sheet afterwards so the fix shows immediately.
 function openEditExpiry(batchId, drugName, currentExpiry) {
   var body = sheet('Edit expiry: ' + drugName, '');
   body.innerHTML =
@@ -523,4 +511,3 @@ async function saveEditExpiry(batchId) {
   });
 }
 
-// ---------------------------------------------------------------------------

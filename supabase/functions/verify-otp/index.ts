@@ -95,36 +95,31 @@ Deno.serve(async (req: Request) => {
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
 
-  const { data: rows, error: readErr } = await admin
-    .from("phone_otps")
-    .select("*")
-    .eq("phone", phone).eq("purpose", purpose)
-    .is("consumed_at", null)
-    .order("created_at", { ascending: false })
-    .limit(1);
-  if (readErr) return json({ ok: false, message: "Could not verify that code right now. Try again shortly." });
-
-  const otpRow = (rows || [])[0];
-  if (!otpRow) return json({ ok: false, message: "No code was requested for this number — request a new one." });
-  if (new Date(otpRow.expires_at).getTime() < Date.now()) {
-    return json({ ok: false, message: "That code has expired — request a new one." });
-  }
-  if (otpRow.attempts >= MAX_ATTEMPTS) {
-    await admin.from("phone_otps").update({ consumed_at: new Date().toISOString() }).eq("id", otpRow.id);
-    return json({ ok: false, message: "Too many incorrect attempts — request a new code." });
-  }
-
+  // The database checks the code and counts a miss in ONE locked step
+  // (otp_check). Doing it as "read the row, then write attempts + 1" here let
+  // many guesses sent at the same instant all count as the first attempt and
+  // slip past the 5-guess limit.
   const expectedHash = await hashCode(phone, purpose, code);
-  if (expectedHash !== otpRow.code_hash) {
-    await admin.from("phone_otps").update({ attempts: otpRow.attempts + 1 }).eq("id", otpRow.id);
-    const left = MAX_ATTEMPTS - (otpRow.attempts + 1);
+  const { data: res, error: checkErr } = await admin.rpc("otp_check", {
+    p_phone: phone,
+    p_purpose: purpose,
+    p_code_hash: expectedHash,
+    p_max_attempts: MAX_ATTEMPTS,
+  });
+  if (checkErr || !res) return json({ ok: false, message: "Could not verify that code right now. Try again shortly." });
+
+  if (res.status === "none") return json({ ok: false, message: "No code was requested for this number — request a new one." });
+  if (res.status === "expired") return json({ ok: false, message: "That code has expired — request a new one." });
+  if (res.status === "locked") return json({ ok: false, message: "Too many incorrect attempts — request a new code." });
+  if (res.status === "wrong") {
+    const left = Number(res.left) || 0;
     return json({
       ok: false,
       message: left > 0 ? `Incorrect code — ${left} attempt(s) left.` : "Incorrect code — request a new one.",
     });
   }
+  if (res.status !== "ok") return json({ ok: false, message: "Could not verify that code right now. Try again shortly." });
 
-  await admin.from("phone_otps").update({ consumed_at: new Date().toISOString() }).eq("id", otpRow.id);
   const token = await signVerifiedToken(phone, purpose);
   return json({ ok: true, verified_token: token });
 });

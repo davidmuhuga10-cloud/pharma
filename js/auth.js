@@ -1,12 +1,9 @@
-// js/auth.js - Sign in, sign up, password reset, staff invites.
-// (One of the files app.js was split into. All of them share one global scope, so
-// order in index.html matters: see the list there.)
-// AUTH
-// ---------------------------------------------------------------------------
+// js/auth.js - sign in, sign up, password reset and staff invites.
+//
+// --- Auth ---
 
-// Phone sign-in pieces (hidden at >= 860px by style.css). The mark is the
-// white-on-red hospital cross; the benefit row only shows on the log-in
-// screen and only when the screen is tall enough (style.css).
+// Phone sign-in pieces (hidden at 860px and wider, see style.css). The benefit
+// row shows only on the log-in screen and only when the screen is tall enough.
 function crossMarkHtml() {
   return '<div class="auth-hero-mark"><svg viewBox="0 0 48 48" aria-hidden="true">' +
     '<polygon points="18,6 30,6 30,18 42,18 42,30 30,30 30,42 18,42 18,30 6,30 6,18 18,18" fill="#fff" stroke="#fff" stroke-width="6" stroke-linejoin="round"/>' +
@@ -24,15 +21,15 @@ function authHeroHtml() {
     '</div></div>';
 }
 // Tells style.css which auth screen is showing (the benefit row is for log-in
-// only). Returns '' so it can sit at the front of each body.innerHTML string.
-// The footer line below sits inside each card, under the button (style.css uses
-// display:contents + order on #authBody so the card and the links share one column).
+// only). Returns '' so it can start each body.innerHTML string.
+// The footer links sit inside each card, under the button (style.css puts the
+// card and links in one column with display:contents and order on #authBody).
 function authSetMode(mode) {
   var w = $('.auth-wrap'); if (w) w.setAttribute('data-mode', mode);
   return '';
 }
 var AUTH_FOOT = '<div class="auth-lfoot"><span>Batches &middot; FEFO</span><span>KES</span></div>';
-// list: [prefix, label, onclick-js]. Prefix shows on the phone only; the " · "
+// list: [prefix, label, onclick-js]. The prefix shows on phones only, the " · "
 // separator on desktop only (style.css).
 function authLinks(list) {
   return '<div class="auth-toggle">' + list.map(function (x) {
@@ -41,26 +38,18 @@ function authLinks(list) {
   }).join('<span class="auth-sep"> &middot; </span>') + '</div>';
 }
 
-// One sign-in design on every screen size (the "dispensing label" sign-in):
-// hospital-cross mark, "Know your stock", four feature chips, and the form as a
-// cream label card with the two links under it. A phone stacks them (curved
-// green header, card below); at 860px+ it is a split screen with the same
-// pieces: green hero on the left, label card on the right (style.css, the
-// "AUTH, desktop" block). Both use the same #authBody and ids.
+// One sign-in design for every screen size: cross mark, tagline, four feature
+// chips and the form as a card with two links under it. Phones stack them
+// (green header, card below). At 860px+ it is a split screen with the same
+// pieces (style.css, "AUTH, desktop"). Both use the same #authBody and ids.
 function authScreen() {
   if (STATE.recoveryMode) return recoveryScreen();
   var msg = STATE.disabledMessage;
   STATE.disabledMessage = null;
-  // auth-bg-fill is a full-bleed absolutely-positioned green layer behind
-  // EVERYTHING (phone only — hidden at 860px+, where auth-brand paints its
-  // own green instead) so the hero text, the card and the trust line all sit
-  // on ONE continuous green screen, exactly like the approved sketch —
-  // instead of auth-brand's green box ending right after its own text and
-  // the card floating in a separate, differently-colored section below it.
-  // auth-brand-trust lives at the auth-wrap level (a sibling of auth-brand/
-  // auth-form-col, not nested inside auth-brand) so it can be pinned via
-  // position:absolute to the bottom of the FULL screen, not just to the
-  // bottom of the short text block.
+  // auth-bg-fill is a full-bleed green layer behind everything (phone only), so
+  // the hero text, card and trust line sit on one continuous green screen.
+  // auth-brand-trust is a sibling of auth-brand/auth-form-col so it can be pinned
+  // to the bottom of the whole screen, not just the text block.
   return '<div class="auth-wrap">' +
     '<div class="auth-bg-fill"></div>' +
     '<div class="auth-brand">' +
@@ -105,15 +94,15 @@ function renderSignup() {
     authLinks([['Already registered?', 'Log in', 'renderLogin()'], ['Have a code?', 'Staff login', 'renderJoin()']]);
 }
 
-// Staff with an invite code (Settings -> Staff, in the owner's app) join here
-// from the "Have a code? Staff login" link on the log-in and create-account screens.
+// Staff with an invite code (Settings -> Staff) join here, from the "Have a
+// code? Staff login" link on the log-in and create-account screens.
 function renderJoin() {
   STATE.authMode = 'join';
   var body = $('#authBody') || (function () { render(); return $('#authBody'); })();
   body.innerHTML = authSetMode('join') +
     '<div class="card">' +
     '<h2 class="auth-title">Join pharmacy</h2>' +
-    '<div class="field"><label>Staff code</label><input id="jnCode" placeholder="e.g. 2E530A" style="text-transform:uppercase"></div>' +
+    '<div class="field"><label>Staff code</label><input id="jnCode" placeholder="e.g. 2E530A81F4" style="text-transform:uppercase"></div>' +
     '<div class="field"><label>Your name</label><input id="jnName" placeholder="e.g. Daud Kinyua"></div>' +
     '<div class="field"><label>Phone number</label><input id="jnPhone" type="tel" placeholder="07XXXXXXXX"></div>' +
     '<div class="field"><label>Password</label>' + pwField('jnPw', 'At least 8 characters') + '</div>' +
@@ -122,20 +111,13 @@ function renderJoin() {
     AUTH_FOOT + '</div>' + authLinks([['', 'Back to log in', 'renderLogin()']]);
 }
 
-// Was a native browser prompt() — looks broken/untrustworthy on mobile,
-// can't be styled, and some in-app browsers (e.g. opening the PWA link from
-// inside WhatsApp) block it outright. A normal form field, like every other
-// screen in the app, fixes both problems.
-// Phone-based accounts have no email on file to send a reset link to.
-// UPDATED (PHARMA_PROJECT_STATUS.md item 18, closing roadmap A.1(b)): this
-// used to let anyone who knew the phone number set a brand-new password
-// immediately, no code. Now a real 3-step flow — phone -> SMS code ->
-// new password — proves phone ownership first. send-otp/verify-otp are
-// public Edge Functions; the short-lived verified_token verify-otp returns
-// is what reset-password-by-phone now requires before it will touch the
-// account. The actual account lookup + password change still happens
-// server-side in that Edge Function, the only place allowed to hold the
-// service-role key this needs.
+// A normal form field instead of prompt(), which looks untrustworthy on mobile
+// and is blocked by some in-app browsers (e.g. links opened inside WhatsApp).
+// Phone accounts have no email to send a reset link to, so reset is 3 steps:
+// phone -> SMS code -> new password. send-otp and verify-otp are public Edge
+// Functions; the short-lived token verify-otp returns is what
+// reset-password-by-phone requires. The password change itself happens only
+// in that function, because only it may hold the service-role key.
 var fpStep = 'phone';
 var fpPhoneVal = '';
 var fpToken = '';
@@ -290,8 +272,8 @@ async function doLogin() {
       return;
     }
     STATE.session = (await sb.auth.getSession()).data.session;
-    // Signed in: show the branded loading screen straight away rather than
-    // leaving the button on "Please wait…" while the pharmacy loads.
+    // Signed in: show the loading screen right away instead of leaving the button
+    // on "Please wait..." while the pharmacy loads.
     $('#app').innerHTML = loadScreenHtml();
     try { await loadProfileAndPharmacy(); }
     catch (loadErr) { render(); toast(friendlyError(loadErr), 'bad'); return; }
@@ -317,13 +299,12 @@ async function doSignup() {
   });
 }
 
-// ---------------------------------------------------------------------------
-// Phone check at sign-up. The account is NOT created until the number has been
-// proven with a text code: send-otp -> verify-otp (purpose 'signup') -> the
-// signup-by-phone Edge Function, which needs the verified token and creates the
-// account server-side. suFlow holds what the person typed while they wait for
-// the code; it lives only in memory and is wiped once the account exists.
-// ---------------------------------------------------------------------------
+// --- Phone check at sign-up ---
+// The account is NOT created until the number is proven with a text code:
+// send-otp -> verify-otp (purpose 'signup') -> signup-by-phone, which needs the
+// verified token and creates the account server-side. suFlow holds what the
+// person typed while waiting for the code; it stays in memory and is wiped
+// once the account exists.
 var suFlow = null;
 
 async function startSignupVerify(flow, err) {
@@ -430,4 +411,3 @@ async function doVerifySignupCode() {
   });
 }
 
-// ---------------------------------------------------------------------------

@@ -9,14 +9,7 @@
   --red: #B3261E;
   --red-light: #FBE9E7;
   --ink: #201E1B;
-  /* Design rule (going forward, app-wide): no gray/muted text color anywhere
-     — light gray reads poorly in bright daylight, which is how this app is
-     mostly used. --ink-soft used to be a genuinely lighter gray-brown
-     (a gray-brown) for "less important" text (meta lines, axis labels, timestamps);
-     it's now the same deep near-black as --ink itself. Every "soft"/muted
-     text style in the app inherits this automatically since they all read
-     the variable rather than a hardcoded color — visual hierarchy for that
-     text now comes from size/weight/letter-spacing, not from being lighter. */
+  /* No gray or muted text anywhere: light gray is hard to read in bright daylight. --ink-soft is the same deep near-black as --ink, and every "soft" text style uses it. Hierarchy comes from size and weight instead. */
   --ink-soft: #201E1B;
   --paper: #EFE8D8;
   --card: #FFFFFF;
@@ -27,14 +20,10 @@
   --shadow-sm: 0 1px 2px rgba(32,30,27,0.05), 0 1px 1px rgba(32,30,27,0.04);
   --shadow-md: 0 6px 20px rgba(15,81,50,0.09), 0 2px 6px rgba(32,30,27,0.05);
   --shadow-lg: 0 16px 40px rgba(15,81,50,0.16);
-  --sidebar-w: 200px; /* desktop menu: the phone drawer, docked (Kodi-style rows) */
+  --sidebar-w: 200px; /* desktop menu: the phone drawer, docked */
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 
-  /* Dashboard data colors — validated for colorblind-safety with the
-     dataviz skill's palette checker (lightness band, chroma floor, CVD
-     separation, contrast). Distinct from the brand chrome colors above
-     (--green/--amber/--red), which stay reserved for nav/buttons/badges
-     everywhere else in the app and never carry chart/data meaning. */
+  /* Dashboard data colours. Checked for colour-blind safety (lightness, chroma, separation, contrast). Kept apart from the brand colours (--green/--amber/--red), which are reserved for nav, buttons and badges. */
   --d-sales: #008300;       --d-sales-light: #E3F3E3;
   --d-blue: #4D7AB3;        --d-blue-light: #E7EEF6;   /* Top sellers bars */
   --d-violet: #6F5FA0;      --d-violet-light: #ECE8F7;  /* Rush hours bars */
@@ -52,10 +41,7 @@ body { -webkit-font-smoothing: antialiased; padding-bottom: env(safe-area-inset-
 button { font: inherit; cursor: pointer; }
 input, select, textarea { font: inherit; }
 
-/* A small reusable badge: the "H" mark on a rounded green square, matching
-   the app icon (icons/icon-512.png). Used on the topbar, the sidebar, the
-   loading screen and every auth screen so the brand has one consistent
-   mark instead of plain unstyled "Pharma" text. */
+/* Reusable brand badge ("P" on a rounded green square, matching icons/icon-512.png). Used on the top bar, sidebar, loading screen and every auth screen. */
 .brand-badge {
   flex-shrink: 0; display: flex; align-items: center; justify-content: center;
   background: linear-gradient(155deg, var(--green), var(--green-dark));
@@ -64,19 +50,15 @@ input, select, textarea { font: inherit; }
 }
 .ic-svg { display: block; }
 
-/* ---------------------------------------------------------------------- */
-/* TOPBAR — on a phone this is the brand bar (green, holds the identity).  */
-/* On desktop the brand moves into the sidebar instead (see below), so     */
-/* the topbar becomes a slim, quiet utility strip: just the current        */
-/* pharmacy name and account controls, not a second copy of the logo.      */
-/* ---------------------------------------------------------------------- */
+/* ---- TOPBAR ----
+   On a phone this is the green brand bar. On desktop the brand moves into the
+   sidebar and the top bar becomes a slim strip with the pharmacy name and
+   account controls. */
 .topbar {
   display: flex; align-items: center; justify-content: space-between;
   padding: 12px 16px; background: var(--green); color: #fff;
   position: sticky; top: 0; z-index: 10; box-shadow: var(--shadow-sm);
-  /* In the Android app the page runs edge-to-edge, so the phone's clock and
-     battery sit on top of the page. This padding keeps the green bar's
-     content below them (and the green behind them). 0 in a normal browser. */
+  /* In the Android app the page runs edge-to-edge, so this padding keeps the bar's content below the clock and battery. 0 in a normal browser. */
   padding-top: calc(12px + env(safe-area-inset-top, 0px));
   padding-left: max(16px, env(safe-area-inset-left, 0px));
   padding-right: max(16px, env(safe-area-inset-right, 0px));
@@ -90,12 +72,10 @@ input, select, textarea { font: inherit; }
 
 .content { flex: 1; padding: 16px; padding-bottom: 90px; max-width: 720px; margin: 0 auto; width: 100%; }
 
-/* ---------------------------------------------------------------------- */
-/* NAV — a bottom tab bar on a phone, the same element becomes the full   */
-/* left sidebar on desktop (see the min-width:860px block below). Brand   */
-/* and account blocks are written into it too, but stay hidden until      */
-/* the desktop layout has room for them.                                  */
-/* ---------------------------------------------------------------------- */
+/* ---- NAV ----
+   A bottom tab bar on a phone; the same element is the left sidebar on
+   desktop (see the min-width:860px block). Its brand and account blocks stay
+   hidden until the desktop layout has room. */
 .navbar {
   position: fixed; bottom: 0; left: 0; right: 0; background: linear-gradient(165deg, var(--green) 0%, var(--green-dark) 100%);
   display: flex; z-index: 10;
@@ -112,12 +92,7 @@ input, select, textarea { font: inherit; }
 .navbar button.active { color: #fff; }
 .navbar button.active .ic { background: var(--amber); color: #241A03; }
 
-/* Item 31: the left/right colored-accent border pattern, ported over from
-   ShuleTop's .stat/.hub-tile tiles (src/styles/main.css) — a thin 1px
-   border all around plus a thicker 4px accent specifically on the left and
-   right edges, colored to match the tile's own hue. The base rule reserves
-   transparent 4px left/right borders so nothing shifts in width when a
-   .t-* (or dash-pill/dash-*) color class later recolors them. */
+/* Tile accent: a 1px border all round plus a thicker 4px accent on the left and right, in the tile's own hue. The base rule reserves transparent 4px borders so width never shifts when a .t-* colour class is added. */
 .card {
   background: var(--card); border: 1px solid var(--line); border-left: 4px solid transparent; border-right: 4px solid transparent;
   border-radius: var(--radius); padding: 14px; margin-bottom: 12px; box-shadow: var(--shadow-sm);
@@ -130,25 +105,11 @@ input, select, textarea { font: inherit; }
 .kpi .label { font-size: 12px; color: var(--ink-soft); font-weight: 600; }
 .kpi .value { font-size: 23px; font-weight: 800; margin-top: 5px; font-variant-numeric: tabular-nums; letter-spacing: -0.2px; }
 
-/* Expiry Reports drill-down: the summary KPI tiles are now real <button>
-   elements (clicking one opens that category's full list), so they need
-   the same text-align/width/cursor reset .report-tile below already uses
-   to undo default button centering and auto-width, plus a matching hover
-   lift so it's visually obvious they're clickable. */
+/* Expiry report summary tiles are buttons (tap to open that category's list), so they need the same text-align, width and cursor reset as .report-tile, plus a hover lift. */
 .kpi-clickable { text-align: left; width: 100%; cursor: pointer; font: inherit; color: inherit; transition: box-shadow 0.15s, transform 0.15s; }
 .kpi-clickable:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
 
-/* Item 30 (tile color sketch, approved): every summary tile across the app
-   (drug detail, Reports, Suppliers, Expenses) now uses a light tint from
-   the same palette as the Dashboard's Sales/Stock value/Profit pills,
-   instead of plain white or the old bold solid-color "good/bad/warn"
-   treatment. Color is chosen by what the number means, not per-screen:
-   sales/green = money in or a healthy state, orange = stock & goods
-   movement, violet = a neutral count, red = money out/owed, amber =
-   needs attention, neutral gray = zero/not applicable. Item 31 adds the
-   matching accent border color on top (border-color recolors all four
-   sides at once, so the 1px top/bottom and the 4px left/right both pick up
-   the same hue in one declaration — same trick ShuleTop's CSS uses). */
+/* Summary tiles everywhere (drug detail, Reports, Suppliers, Expenses) use a light tint from the dashboard palette. Colour follows meaning, not screen: green = money in or healthy, orange = needs attention, neutral gray = zero or not applicable. */
 .kpi.t-sales   { background: var(--d-sales-light); border-color: var(--d-sales); }
 .kpi.t-sales .label { color: var(--d-sales); }
 .kpi.t-orange  { background: var(--d-orange-light); border-color: var(--d-orange); }
@@ -167,9 +128,7 @@ input, select, textarea { font: inherit; }
 .kpi.t-neutral { background: #F1EEEA; border-color: var(--line); }
 .kpi.t-neutral .label { color: var(--ink-soft); }
 
-/* Item 32: the Reports hub — a grid of tinted, accent-bordered tiles (same
-   .t-* tint tokens and border-accent trick as .kpi, items 30/31) instead of
-   a flat list, one per report sub-module. */
+/* Reports hub: a grid of tinted, accent-bordered tiles (same .t-* tints and border trick as .kpi), one per report. */
 .reports-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
 @media (min-width: 640px) { .reports-grid { grid-template-columns: 1fr 1fr; } }
 .report-tile {
@@ -209,9 +168,7 @@ h2 { font-size: 16px; }
 .list-row .meta { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
 .list-row .right { text-align: right; white-space: nowrap; }
 
-/* A small round initial badge, colour-coded by status (good/warn/bad),
-   used in front of a list row's name (drug rows, first on the Stock tab)
-   instead of leaving every row as plain text with nothing to scan by eye. */
+/* Small round initial badge, colour-coded good/warn/bad, in front of a list row's name so rows can be scanned by eye. */
 .row-avatar {
   width: 36px; height: 36px; border-radius: 10px; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
@@ -260,11 +217,7 @@ h2 { font-size: 16px; }
 .field input, .field select, .field textarea { min-width: 0; }
 .row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
 
-/* Same border color every card/kpi/tile in the app already uses, plus their
-   shadow — the 1px var(--line) border alone barely reads on this input's
-   near-white background (especially inside a white sheet), so on its own it
-   looked like the filter bar had no border at all next to the tiles around
-   it. */
+/* Same border and shadow as every card, tile and kpi. A 1px --line border alone barely shows on this near-white input, especially inside a white sheet. */
 .searchbox input { width: 100%; padding: 11px 14px; border-radius: 999px; border: 1px solid var(--line); background: #fff; box-shadow: var(--shadow-sm); }
 
 .fab {
@@ -294,32 +247,14 @@ h2 { font-size: 16px; }
 .toast.bad { background: var(--red); }
 .toast.good { background: var(--green); }
 
-/* ---------------------------------------------------------------------- */
-/* AUTH — a proper split layout on desktop (green brand panel with floating */
-/* stat cards + form) instead of a tiny centered card in a sea of empty     */
-/* page; on mobile the same panel collapses into a curved-gradient hero     */
-/* above the form, with a trust line near the bottom. Sketched against      */
-/* Kodi's own login/signup screens and approved before being wired up.      */
-/* ---------------------------------------------------------------------- */
-/* position:relative + min-height so auth-bg-fill (below) and the pinned
-   trust line both anchor to the FULL screen, not to whichever child happens
-   to be tallest. dvh (with the vh fallback first for older browsers) tracks
-   the real visible viewport on mobile, same technique used elsewhere in
-   this app's own mobile-viewport handling. */
-/* z-index:0 (not just position:relative) is what actually matters here —
-   without it .auth-wrap never forms its own stacking context, so the
-   z-index:-1 background below escapes upward and paints behind the PAGE's
-   own background instead of behind just auth-wrap's in-flow content, which
-   is what made the whole green fill invisible the first time this was
-   wired up. */
+/* ---- AUTH ----
+   Split layout on desktop (green brand panel with floating stat cards, and the
+   form). On mobile the panel becomes a curved green hero above the form, with
+   a trust line near the bottom. */
+/* position:relative and min-height anchor auth-bg-fill and the pinned trust line to the FULL screen, not the tallest child. dvh tracks the real visible height on mobile (vh is the fallback first). */
+/* z-index:0 makes .auth-wrap its own stacking context. Without it the z-index:-1 background escapes and paints behind the page background, hiding the green fill. */
 .auth-wrap { position: relative; z-index: 0; min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; padding-bottom: 74px; }
-/* One continuous green background behind auth-brand AND auth-form-col, so
-   the hero text, the floating card and the trust line all read as ONE green
-   screen — matching the approved sketch — instead of auth-brand's own green
-   box ending right after its text and the card floating in a separately
-   colored section below it. Desktop (900px query below) turns this off and
-   lets auth-brand paint its own green instead, since desktop is a genuine
-   two-color split (green left / paper right), not one continuous screen. */
+/* One continuous green background behind auth-brand and auth-form-col, so the hero text, card and trust line read as one green screen. The desktop query below turns it off and lets auth-brand paint its own green. */
 .auth-bg-fill {
   position: absolute; inset: 0; z-index: -1;
   background: linear-gradient(160deg, #17945C 0%, var(--green) 55%, var(--green-dark) 100%);
@@ -329,21 +264,16 @@ h2 { font-size: 16px; }
 .auth-brand .brand-badge { margin: 0 auto 16px; background: #fff; color: var(--green); box-shadow: none; }
 .auth-form-col { flex: 1; display: flex; align-items: center; justify-content: center; padding: 8px 20px 0; }
 .auth-card { width: 100%; max-width: 380px; }
-/* The sign-in card itself: a soft tint instead of plain white, per direct
-   feedback — reuses --green-light rather than a new one-off color. */
+/* The sign-in card: a soft --green-light tint instead of plain white. */
 .auth-form-col .card { background: var(--green-light); }
-/* auth-toggle sits below the card, on the continuous green fill on mobile
-   (see auth-bg-fill above) — so it needs light/white text there. Desktop
-   resets it back to dark-on-beige, since auth-form-col is plain paper
-   background there instead (see the 900px query below). */
+/* auth-toggle sits below the card, on the green fill on mobile, so it needs light text. Desktop resets it to dark on beige. */
 .auth-toggle { text-align: center; margin-top: 14px; font-size: 13px; color: rgba(255,255,255,0.85); }
 .auth-toggle a { color: #fff; font-weight: 700; text-decoration: underline; }
 .error-text { color: var(--red); font-size: 13px; margin-top: 6px; }
 .tiny { font-size: 12px; color: var(--ink-soft); }
 .spacer { height: 8px; }
 
-/* Simple one-off screens (startup error, password recovery): centered card,
-   no split panel — there's nothing to browse, just one thing to do. */
+/* Simple one-off screens (startup error, password recovery): a centred card, no split panel. */
 .auth-wrap-simple { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
 .auth-wrap-simple .auth-card { text-align: center; }
 .auth-wrap-simple .brand-badge { margin: 0 auto 10px; }
@@ -351,9 +281,7 @@ h2 { font-size: 16px; }
 .auth-wrap-simple .tag { font-size: 13px; color: var(--ink-soft); margin-top: 2px; }
 .auth-wrap-simple .card { text-align: left; }
 
-/* A row of auxiliary action buttons (Sync/Import/Excel/Print — secondary
-   to the page's one primary action) as a single bordered, dividered strip
-   instead of separate boxes that wrap unevenly when a label runs long. */
+/* A row of secondary action buttons (Sync / Import / Excel / Print) as one bordered strip with dividers, instead of separate boxes that wrap unevenly. */
 .toolbar-row { display: flex; align-items: stretch; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
 .toolbar-row .btn { width: auto; flex: 1 1 auto; min-width: 0; white-space: nowrap; }
 .toolbar-segment {
@@ -367,10 +295,7 @@ h2 { font-size: 16px; }
 .toolbar-segment .btn:last-child { border-right: none; }
 .toolbar-segment .btn:hover { background: #F5F2EA; }
 .toolbar-primary { flex-shrink: 0; width: auto; }
-/* Pushes the Excel/Print segment (or any trailing toolbar item) to the
-   right edge of its .toolbar-row, leaving any primary/left-hand actions
-   in place — an auto left-margin absorbs all remaining row width, so it
-   works whether it's the only child or has siblings before/after it. */
+/* Pushes the Excel/Print segment (or any trailing item) to the right edge of .toolbar-row. The auto left margin takes all spare width, whether it is the only child or has siblings. */
 .toolbar-end { margin-left: auto; }
 .inline-notice {
   display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 700;
@@ -378,11 +303,9 @@ h2 { font-size: 16px; }
 }
 .inline-notice a { color: inherit; text-decoration: none; }
 
-/* ---------------------------------------------------------------------- */
-/* DESKTOP LAYOUT — the bottom tab bar becomes a full-height branded       */
-/* sidebar (dark green, gold active state), and the topbar becomes a      */
-/* slim white utility strip beside it rather than a second brand bar.     */
-/* ---------------------------------------------------------------------- */
+/* ---- DESKTOP LAYOUT ----
+   The bottom tab bar becomes a full-height dark-green sidebar (gold active
+   state) and the top bar becomes a slim white strip beside it. */
 @media (min-width: 860px) {
   .topbar {
     margin-left: var(--sidebar-w); padding-left: 28px; padding-right: 28px;
@@ -403,10 +326,7 @@ h2 { font-size: 16px; }
   }
   .navbar-brand .brand-badge { width: 32px; height: 32px; font-size: 15px; background: #fff; color: var(--green); }
   .navbar-brand .word { font-size: 14px; font-weight: 800; color: #fff; letter-spacing: 0.2px; }
-  /* A narrower column (halved from 264px per feedback) has no room for an
-     icon beside a full-width label without wrapping or overflow — icon
-     stacked above a small label reads cleanly at this width and still shows
-     the full word, just vertically instead of side by side. */
+  /* A narrow column has no room for an icon beside a full-width label, so the icon sits above a small label. */
   .navbar button {
     flex: none; flex-direction: column; justify-content: center; gap: 4px;
     padding: 9px 4px; font-size: 10.5px; font-weight: 700; border-radius: 12px;
@@ -423,33 +343,16 @@ h2 { font-size: 16px; }
   .navbar-foot .who { font-size: 13.5px; font-weight: 700; color: #fff; }
   .navbar-foot .role { font-size: 12px; color: rgba(255,255,255,0.62); }
 
-  /* FIX (PHARMA_PROJECT_STATUS.md item 29 — desktop right-margin bug): the base .content rule below is written
-     for mobile, where "width:100%; margin:0 auto" is correct (no sidebar,
-     just center a capped column). On desktop, only margin-left got
-     overridden here (to clear the fixed sidebar) while width stayed a
-     literal 100% of the FULL #app width and margin-right stayed the base
-     rule's inherited "auto" — so the box was 100%-of-full-width-wide,
-     shifted right by the sidebar, and every last pixel of the resulting
-     overflow got absorbed into margin-right as one large empty gap on the
-     right instead of the content actually using that space. Fixed by
-     sizing width explicitly against the space actually left after the
-     sidebar (calc, not 100%) and zeroing margin-right instead of
-     inheriting auto. max-width raised from 900 to 1200 so wide desktop
-     monitors show more (inventory rows, dashboard cards) instead of
-     capping unnecessarily narrow. */
+  /* Desktop width fix. The base .content rule suits mobile (width:100%; margin:0 auto). On desktop only margin-left was overridden (to clear the fixed sidebar), so width stayed 100% of #app and margin-right stayed auto. Both are set explicitly here. */
   .content { margin-left: var(--sidebar-w); margin-right: 0; width: calc(100% - var(--sidebar-w)); max-width: 1200px; padding: 24px 32px 60px; }
   .kpi-grid { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
 }
 
-/* ---------------------------------------------------------------------- */
-/* DASHBOARD — redesigned dashboard: real date-range filter, an axis'd    */
-/* sales trend + rush-hours chart, capped/click-through lists, and fixed  */
-/* card sizes so a brand-new pharmacy with zero data sees clean           */
-/* placeholders instead of a layout that jumps once real data arrives.    */
-/* ---------------------------------------------------------------------- */
-/* Item 33 (mobile dashboard redesign, approved via sketch): the urgent
-   alerts strip from the first sketch — out-of-stock/soonest-expiry, tap
-   through to Inventory. */
+/* ---- DASHBOARD ----
+   Date-range filter, sales trend chart, capped click-through lists and
+   fixed card sizes, so a new pharmacy with no data sees clean placeholders
+   instead of a layout that jumps. */
+/* Urgent alerts strip: out-of-stock and soonest expiry, linking to Inventory. */
 .dash-alert {
   display: flex; align-items: center; gap: 10px; background: var(--red-light); border: 1px solid #f3c7c2;
   border-radius: 12px; padding: 10px 12px; margin-bottom: 10px; font-size: 12.5px; font-weight: 600;
@@ -457,15 +360,11 @@ h2 { font-size: 16px; }
 }
 .dash-alert svg { flex-shrink: 0; }
 
-/* Item 27/33: Sell + Restock side by side, then the live "is this drug in
-   stock?" search below (was Sell + search sharing one row). */
+/* Sell and Restock side by side, with the live "is this drug in stock?" search below. */
 .dash-actions { display: flex; gap: 8px; margin-bottom: 10px; }
 .dash-actions .btn { width: auto; flex: 1; }
 .dash-quick-search { position: relative; margin-bottom: 12px; }
-/* Colored to match the tinted-tile treatment below (Sales/Stock
-   value/Debt owed) rather than a neutral gray border — violet since this
-   search is a neutral lookup, not tied to money in/out or stock value, the
-   same meaning --d-violet already carries for Rush hours' bars. */
+/* Search box coloured like the tinted tiles. Violet because it is a neutral lookup, not money or stock value (same meaning as --d-violet on the rush-hours bars). */
 .dash-quick-search input {
   width: 100%; padding: 11px 14px; border-radius: 999px; border: 2px solid var(--d-violet); background: var(--d-violet-light);
 }
@@ -488,12 +387,7 @@ h2 { font-size: 16px; }
 .dash-quick-result-row .meta { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
 .dash-quick-result-row .right { display: flex; align-items: center; white-space: nowrap; }
 
-/* Item 33: was plain underlined text tabs with a redundant period label —
-   now a rounded segmented pill control (also reused as-is by Expenses'
-   own date filter, so that gets the same polish for free), plus a
-   calendar button opening a real custom-range picker. .dash-period-label
-   stays defined for Expenses, which still uses it; the dashboard itself
-   no longer renders it. */
+/* Segmented pill control for the date range (also used by Expenses' date filter) plus a calendar button for a custom range. .dash-period-label stays for Expenses; the dashboard no longer renders it. */
 .dash-filter-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .dash-tabs { flex: 1; display: flex; gap: 2px; background: #F1EEEA; border-radius: 999px; padding: 3px; flex-wrap: wrap; }
 .dash-tab {
@@ -511,33 +405,13 @@ h2 { font-size: 16px; }
 
 .dash-row { display: flex; flex-direction: column; gap: 16px; align-items: stretch; margin-bottom: 16px; }
 @media (min-width: 860px) { .dash-row { flex-direction: row; } }
-/* .dash-row's align-items:stretch already gives Top sellers/Expiring soon's
-   .dash-col wrappers equal height on desktop (row layout) — but a wrapper
-   being taller doesn't make the .card living inside it any taller, since
-   .card is only ever as tall as its own content. Making .dash-col a column
-   flex box and letting its one .card child grow (flex:1) is what actually
-   carries that equal height down to the visible bordered box, so the two
-   cards' borders line up bottom-to-bottom instead of whichever has fewer
-   rows/no "View all" link stopping short. No effect on mobile's stacked
-   layout, where each .dash-col's height is only ever its own content's. */
+/* align-items:stretch on .dash-row makes the .dash-col wrappers equal height, but the .card inside only grows if .dash-col is a column flex box and the card has flex:1. */
 .dash-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .dash-col > .card { flex: 1; }
 
-/* Item 33: the Sales graph card is solo now (Rush hours dropped from this
-   layout), so it's no longer height-matched to a sibling — content decides
-   its height instead of a fixed 300px that used to leave a lot of empty
-   space under a short chart. Card header is now .dash-card-head (compact,
-   shared with Stock health/Top sellers/Expiring soon below) instead of
-   the old centered section-title + big headline + centered chip row. */
+/* The Sales graph card stands alone, so its height follows its content instead of a fixed 300px. Its header is .dash-card-head (compact, shared with Stock health, Top sellers and Expiring soon). */
 .dash-graph-card { display: flex; flex-direction: column; }
-/* Item 30/31's tinted-tile + accent-border treatment (light tint fill,
-   solid-colored border — same mechanism as .kpi.t-*, .dash-stat), now
-   reused on the plain white cards too so every card on the dashboard reads
-   as one consistent, clearly-bordered family instead of some tiles being
-   colorful and others fading into the page. Colors follow the app's
-   existing meaning convention: green = sales/money in, orange = stock,
-   blue = a neutral ranking (matches the Top sellers bars' own blue),
-   red = needs urgent attention. */
+/* Tinted fill plus solid accent border (same as .kpi.t-* and .dash-stat), reused on the plain white cards so every dashboard card looks like one family. Colours: green = sales/money in, and so on. */
 .dash-graph-card.t-sales { background: var(--d-sales-light); border-color: var(--d-sales); }
 .dash-list-card.t-orange { background: var(--d-orange-light); border-color: var(--d-orange); }
 .dash-list-card.t-blue { background: var(--d-blue-light); border-color: var(--d-blue); }
@@ -545,10 +419,7 @@ h2 { font-size: 16px; }
 .dash-graph-head { text-align: center; }
 .dash-graph-headline { font-size: 28px; font-weight: 800; color: var(--ink); margin-top: 4px; }
 .dash-graph-chip-row { margin-top: 6px; display: flex; justify-content: flex-start; }
-/* Item 30: a chip that filled with the card's own light tint would
-   disappear into it — chips are a solid white pill with a hairline ring
-   instead, which stays legible on any card color (and on the plain white
-   cards item 33 introduced). */
+/* Chips are a solid white pill with a hairline ring, so they stay readable on any tinted card and on plain white cards. */
 .dash-chip { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; background: #fff; box-shadow: 0 0 0 1px rgba(32,30,27,0.08); }
 .dash-chip.up { color: var(--d-sales); }
 .dash-chip.down { color: var(--d-critical); }
@@ -557,19 +428,12 @@ h2 { font-size: 16px; }
 .dash-axis-label-row { display: flex; margin-top: 6px; }
 .dash-axis-label { flex: 1; text-align: center; font-size: 10.5px; color: var(--ink-soft); font-weight: 600; }
 
-/* Item 33: a compact label/value header row shared by the sales graph card,
-   Stock health, Top sellers and Expiring soon — replaces the old centered
-   .section-title used on each, which took up more vertical space than the
-   number it introduced needed. */
+/* Compact label/value header row shared by the sales graph, Stock health, Top sellers and Expiring soon. */
 .dash-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 2px; }
 .dash-card-head .t { font-size: 11.5px; font-weight: 800; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.3px; }
 .dash-card-head .v { font-size: 17px; font-weight: 800; color: var(--ink); }
 
-/* Item 33: replaces the old single-file dash-pill-row — a 2-up grid on
-   phone (Sales+Profit, then Stock value+Debt owed), 4-up on desktop. Same
-   item-30/31 tinted-tile + accent-border treatment as before, just no
-   colored dot, and grid instead of flex so pairing is exact regardless of
-   content width. */
+/* Stat tiles: a 2-up grid on phone (Sales + Profit, then Stock value + Debt owed), 4-up on desktop. A grid keeps the pairing exact whatever the content width. */
 .dash-stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
 @media (min-width: 860px) { .dash-stat-grid { grid-template-columns: repeat(4, 1fr); } }
 .dash-stat { border: 1px solid transparent; border-left: 4px solid transparent; border-right: 4px solid transparent; border-radius: var(--radius); padding: 12px 14px; }
@@ -577,10 +441,7 @@ h2 { font-size: 16px; }
 .dash-stat .val { font-size: 16px; font-weight: 800; color: var(--ink); margin-top: 3px; }
 .dash-stat .sub { font-size: 10px; font-weight: 700; color: var(--ink-soft); margin-top: 2px; }
 
-/* Item 33: no more fixed min-height — the old 268px was tuned for a
-   two-column desktop pairing and, once cards mostly run 3-4 rows deep on
-   phone, just left a lot of dead space below "View all". Cards now hug
-   their own content at any width. */
+/* No fixed min-height: cards hug their content at any width. */
 .dash-list-card { }
 .dash-bar-row { display: flex; align-items: center; gap: 10px; margin-top: 11px; }
 .dash-bar-row.placeholder { opacity: 0.4; }
@@ -593,10 +454,7 @@ h2 { font-size: 16px; }
 .dash-bar-status { width: 52px; text-align: right; font-size: 10px; font-weight: 700; flex-shrink: 0; }
 .dash-view-all { display: block; width: 100%; margin-top: 12px; padding: 8px; background: none; border: none; border-top: 1px dashed var(--line); font-size: 12px; font-weight: 700; color: var(--green); text-align: center; cursor: pointer; font-family: inherit; }
 
-/* Item 33: was a wrapping flex row (three items could drop to a second
-   line at phone width); a fixed 3-column grid keeps Out/Low/Healthy on
-   one row always, and shorter labels ("Out 18" not "Out of stock (18)")
-   are what make that fit comfortably. */
+/* A fixed 3-column grid keeps Out / Low / Healthy on one row; short labels ("Out 18") make that fit on a phone. */
 .dash-health-legend { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 8px; }
 .dash-health-legend .sw { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dash-health-legend .dot { width: 7px; height: 7px; border-radius: 2px; flex-shrink: 0; }
@@ -606,10 +464,9 @@ h2 { font-size: 16px; }
 .dash-profit-legend .dot { width: 8px; height: 8px; border-radius: 2px; }
 .dash-profit-margin { font-size: 11px; color: var(--ink-soft); font-weight: 700; }
 
-/* ---------------------------------------------------------------------- */
-/* PRINT — reports and receipts print on their own, with a business       */
-/* letterhead, independent of whatever screen is currently open.          */
-/* ---------------------------------------------------------------------- */
+/* ---- PRINT ----
+   Reports and receipts print on their own with a business letterhead,
+   independent of the open screen. */
 .print-only { display: none; }
 @media print {
   body * { visibility: hidden; }
@@ -628,9 +485,7 @@ h2 { font-size: 16px; }
   .print-footer { margin-top: 16px; font-size: 11px; color: #000; }
 }
 
-/* ---------------------------------------------------------------------- */
-/* UI polish pass (Oct 2026)                                               */
-/* ---------------------------------------------------------------------- */
+/* ---- UI polish (Oct 2026) ---- */
 /* Cart lines: price line was rendering at full body size, same as the name */
 .cart-line .name { font-weight: 600; }
 .cart-line .meta { font-size: 12px; margin-top: 2px; }
@@ -684,31 +539,18 @@ h2 { font-size: 16px; }
   .content.has-cart-bar { padding-bottom: 110px; }
 }
 
-/* ---------------------------------------------------------------------- */
-/* PHONE MENU DRAWER — ported from Kodi (app/style.css, "Top-left menu     */
-/* drawer"), which is David's own project; the geometry, timing curve and  */
-/* drawn scrollbar are copied as-is, repainted in Pharma's green/gold.     */
-/*                                                                         */
-/* Why it exists: the phone bottom bar can only carry about five thumb-    */
-/* sized targets, and Pharma has seven destinations plus five report sub-  */
-/* screens. Kodi solved exactly this — a short bottom bar for the hot      */
-/* paths, and a hamburger drawer holding every module.                     */
-/*                                                                         */
-/* Phone only. Pharma's desktop sidebar (the min-width:860px block above)  */
-/* already shows every destination, so the hamburger, the scrim and the    */
-/* drawer are all hidden there. 860px — not Kodi's 900px — because that is */
-/* where Pharma's sidebar already appears; using 900 would leave 860-899px */
-/* showing the sidebar AND the phone bars at the same time.                */
-/*                                                                         */
-/* The panel is inset from the top bar and the tab bar rather than running */
-/* the full height: on a phone both bars stay visible and tappable while   */
-/* the menu is open, so there is always a way out that is not the scrim.   */
-/* --ph-topbar-h/--ph-tabbar-h are the two measurements the insets are     */
-/* built from — change those, not the calc()s.                             */
-/* ---------------------------------------------------------------------- */
+/* ---- PHONE MENU DRAWER ----
+   The bottom bar fits about five thumb-sized buttons, and Pharma has seven
+   destinations plus five report sub-screens, so a hamburger drawer holds
+   every module. Phone only: the desktop sidebar already lists everything, so
+   the hamburger, scrim and drawer are hidden at 860px+ (using 900 would show
+   the sidebar and the phone bars together between 860 and 899px).
+   The panel is inset from the top bar and tab bar so both stay tappable while
+   the menu is open. --ph-topbar-h and --ph-tabbar-h are the measurements the
+   insets are built from: change those, not the calc()s. */
 :root { --ph-topbar-h: 60px; --ph-tabbar-h: 62px; --ph-safe-top: env(safe-area-inset-top, 0px); }
 
-/* Below .mask (z-index 50) on purpose: opening a sheet from a drawer row  */
+/* Below .mask (z-index 50) on purpose: a sheet opened from a drawer row must cover the drawer. */
 /* must cover the drawer, not slide under it.                              */
 .navscrim {
   position: fixed; inset: 0; background: rgba(14,22,19,0.45);
@@ -729,13 +571,9 @@ body.nav-open .navscrim { opacity: 1; visibility: visible; }
 }
 body.nav-open .navdrawer { transform: none; }
 
-/* The scrollbar is DRAWN (.nd-sb), not the browser's own. On a phone the
-   native one is an overlay — it fades in while a finger is moving and is
-   invisible the rest of the time, so there is nothing on screen to say the
-   list continues, which is the one thing this menu most needs to show. */
+/* The scrollbar is drawn (.nd-sb), not the browser's. On a phone the native one is an overlay that is invisible most of the time, so nothing would show that the list continues. */
 .nd-navwrap { position: relative; flex: 1 1 0; min-height: 0; display: flex; }
-/* Every row is only as wide as the widest label, so the active-row pill is a
-   short pill rather than a band across the whole drawer. */
+/* Rows are only as wide as the widest label, so the active-row pill is short rather than a full-width band. */
 .nd-nav {
   display: grid; grid-template-columns: max-content; grid-auto-rows: max-content;
   justify-content: start; align-content: start;
@@ -748,8 +586,7 @@ body.nav-open .navdrawer { transform: none; }
   background: rgba(255,255,255,0.12); opacity: 0; transition: opacity 0.2s; pointer-events: none;
 }
 .nd-sb.on { opacity: 1; }
-/* Arrow caps drawn with borders rather than glyphs, so they stay crisp at any
-   pixel density. Decorative: the list is scrolled by swiping it. */
+/* Arrow caps drawn with borders, not glyphs, so they stay crisp at any pixel density. Decorative: the list is scrolled by swiping. */
 .nd-sb::before, .nd-sb::after {
   content: ''; position: absolute; left: 50%; transform: translateX(-50%);
   width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent;
@@ -760,8 +597,7 @@ body.nav-open .navdrawer { transform: none; }
   position: absolute; left: 0; right: 0; top: 0; height: 30px; min-height: 24px;
   border-radius: 5px; background: #FFFFFF;
 }
-/* Mouse/trackpad: the drawn bar can be dragged and the track clicked, so it
-   gets a little more width and reacts to hover. Not applied on touch. */
+/* Mouse/trackpad: the drawn bar can be dragged and the track clicked, so it is a little wider and reacts to hover. Not applied on touch. */
 @media (hover: hover) and (pointer: fine) {
   .nd-sb { pointer-events: auto; cursor: pointer; width: 10px; transition: opacity 0.2s, background 0.15s; }
   .nd-sb:hover { background: rgba(255,255,255,0.2); }
@@ -769,8 +605,7 @@ body.nav-open .navdrawer { transform: none; }
   .nd-sb-th:hover { background: var(--green-light); }
   .nd-sb-th.drag { cursor: grabbing; background: #CFEBDD; }
 }
-/* No-gray-text rule: these two are the drawer's quietest text, and they are
-   still a readable light green rather than a gray. */
+/* The drawer's quietest text is a readable light green, not gray. */
 .nd-grp {
   font-size: 9px; letter-spacing: 0.09em; text-transform: uppercase;
   color: #A8C9B8; padding: 10px 9px 4px; font-weight: 700;
@@ -788,8 +623,7 @@ body.nav-open .navdrawer { transform: none; }
   box-shadow: 0 2px 4px rgba(0,0,0,0.35), inset 0 1px rgba(255,255,255,0.45), inset 0 -1px 2px rgba(0,0,0,0.3);
 }
 .nd-lab { flex: 1; min-width: 0; line-height: 1.2; white-space: normal; overflow-wrap: anywhere; }
-/* Gold, matching the active tab in the bottom bar and the desktop sidebar,
-   rather than Kodi's green-on-green. */
+/* Gold, matching the active tab in the bottom bar and the desktop sidebar. */
 .nd-row.active {
   background: var(--amber); color: #241A03;
   outline: 2px dashed rgba(255,255,255,0.75); outline-offset: -2px;
@@ -802,9 +636,7 @@ body.nav-open .navdrawer { transform: none; }
   flex: 0 0 auto; padding: 11px 13px; border-top: 1px solid rgba(255,255,255,0.1);
   font-size: 10px; color: #CFE3D7;
 }
-/* The hamburger gets its own solid colour rather than the topbar's shared
-   translucent white wash, which reads as a gray smudge on the green bar —
-   the same reasoning (and the same fix) as Kodi's #btnNavMenu. */
+/* The hamburger gets its own solid colour: the top bar's translucent white wash reads as a gray smudge on green. */
 .topbar .burgerbtn {
   background: var(--green-dark); color: #fff; border-radius: 50%;
   width: 34px; height: 34px; padding: 0; display: grid; place-items: center; flex: none;
@@ -812,22 +644,16 @@ body.nav-open .navdrawer { transform: none; }
 .topbar .burgerbtn:hover { background: #072C1B; }
 .topbar-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
 
-/* Destinations that stay on the desktop sidebar but move into the drawer on a
-   phone, so the bottom bar keeps five thumb-sized targets. Declared here as
-   the mobile-first base rule and switched back on inside the 860px block
-   below — scoped as ".navbar button.nav-desktop-extra" (not the bare class)
-   so it reliably beats ".navbar button" on specificity. */
+/* Destinations that stay on the desktop sidebar but move into the drawer on a phone, so the bottom bar keeps five targets. Mobile-first base rule, switched back on in the 860px block. Scoped as ".navbar button.nav-desktop-extra" so it beats ".navbar button". */
 .navbar button.nav-desktop-extra { display: none; }
 
 /* Desktop-only parts of the menu: hidden on a phone. */
 .nd-brand, .nd-who { display: none; }
 
-/* ---------------------------------------------------------------------- */
-/* DESKTOP MENU (860px+) — the phone's menu drawer, docked open down the  */
-/* left edge (Kodi style): logo and pharmacy name, small CAPITAL group    */
-/* headings, an emoji tile then the name on every row. The old icon bar   */
-/* (.navbar) is no longer shown here.                                     */
-/* ---------------------------------------------------------------------- */
+/* ---- DESKTOP MENU (860px+) ----
+   The phone menu drawer docked open down the left edge: logo and pharmacy
+   name, small capital group headings, an emoji tile then the name on every
+   row. The old icon bar (.navbar) is not shown here. */
 @media (min-width: 860px) {
   .navscrim, .navbar, .topbar .burgerbtn { display: none; }
   .navdrawer {
@@ -852,8 +678,7 @@ body.nav-open .navdrawer { transform: none; }
   }
   .nd-row:hover { background: rgba(255,255,255,0.08); }
   .nd-chip { width: 28px; height: 28px; font-size: 15px; border-radius: 8px; }
-  /* Selected: a soft lighter panel, a gold bar on its edge and a gold tile —
-     the same marking Kodi uses, in Pharma's gold. */
+  /* Selected: a soft lighter panel, a gold bar on its edge and a gold tile. */
   .nd-row.active {
     background: rgba(255,255,255,0.12); color: #fff; outline: 0; border-left-color: #E8A317;
   }
@@ -865,15 +690,12 @@ body.nav-open .navdrawer { transform: none; }
   .nd-who { display: block; color: #fff; font-weight: 700; font-size: 11.5px; }
 }
 
-/* ---------------------------------------------------------------------- */
-/* AUTH, phone — the "dispensing label" sign-in (approved sketch): green  */
-/* aurora, hospital-cross mark, emoji benefit row, and the form as a      */
-/* cream label card (header strip, perforated edge, gold stamped button). */
-/* Same ids/handlers as desktop; everything below applies under 860px     */
-/* only, so the desktop split layout is untouched. The label chrome       */
-/* (.auth-lfoot) lives inside #authBody, which is           */
-/* display:contents here so `order` can sandwich the card between them.   */
-/* ---------------------------------------------------------------------- */
+/* ---- AUTH, phone: the "dispensing label" sign-in ----
+   Green aurora, cross mark, emoji benefit row, and the form as a cream label
+   card (header strip, perforated edge, gold stamped button). Same ids and
+   handlers as desktop; everything below applies under 860px only. The label
+   chrome (.auth-lfoot) lives inside #authBody, which is display:contents here
+   so `order` can sandwich the card between them. */
 .auth-hero, .auth-lfoot, .auth-title { display: none; }
 .auth-pre { display: none; }
 .auth-toggle b { font-weight: 700; }
@@ -882,10 +704,7 @@ body.nav-open .navdrawer { transform: none; }
 
 @media (max-width: 859px) {
   .auth-hero { display: block; }
-  /* "Daylight" background: cream paper, a curved green header that holds the logo,
-     and a gold heartbeat line across its top. A second heartbeat line runs along
-     the bottom of the screen. The header is .auth-brand itself, so it always
-     wraps the logo/tag/benefit row however tall the phone is. */
+  /* "Daylight" background: cream paper, a curved green header holding the logo with a gold heartbeat line across the top, and a second heartbeat line along the bottom. The header is .auth-brand itself, so it wraps the logo, tag and benefit row on any phone height. */
   .auth-wrap { justify-content: flex-start; padding-bottom: 76px; }
   @media (max-height: 640px) { .auth-wrap { padding-bottom: 14px; } }
   .auth-bg-fill { background: var(--paper); }
@@ -916,7 +735,7 @@ body.nav-open .navdrawer { transform: none; }
   }
   .auth-feats { display: flex; justify-content: center; gap: 6px; margin: 14px 0 0; }
   .auth-feat { width: 74px; text-align: center; font-size: 10.5px; font-weight: 600; line-height: 1.2; color: #F3EEE0; }
-  /* glass 3D chip: same recipe as Kodi's sign-in feature chips and menu icons */
+  /* glass 3D chip, shared with the menu icons */
   .auth-feat i {
     display: grid; place-items: center; width: 44px; height: 44px; margin: 0 auto 5px; border-radius: 12px;
     font-style: normal; font-size: 21px; line-height: 1;
@@ -956,7 +775,7 @@ body.nav-open .navdrawer { transform: none; }
   #authBody .field input:focus { border-color: #0F5132; box-shadow: inset 0 0 0 1px #0F5132; }
   #authBody .tiny { color: #201E1B; }
   #authBody .field input::placeholder { color: var(--green-dark); opacity: 0.6; }
-  /* short phones: shrink the mark and spacing so log-in still fits without scrolling */
+  /* short phones: shrink the mark and spacing so log-in fits without scrolling */
   @media (max-height: 640px) {
     .auth-hero-mark { width: 58px; height: 58px; margin-bottom: 8px; border-radius: 17px; }
     .auth-hero-mark svg { width: 40px; height: 40px; }
@@ -992,7 +811,7 @@ body.nav-open .navdrawer { transform: none; }
   .auth-sep { display: none; }
 }
 
-/* critical:start - the few rules the loading screen needs. index.html carries an identical copy inline so the screen draws before this file arrives; tests/critical-css.test.js fails if the two drift apart. */
+/* critical:start - the few rules the loading screen needs. index.html has an identical inline copy so the screen draws before this file arrives; tests/critical-css.test.js fails if the two differ. */
 html,body{margin:0}
 .loadscreen{box-sizing:border-box;min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;text-align:center;color:#fff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:radial-gradient(circle at 18% 0%,#1C7A52 0%,transparent 55%),linear-gradient(180deg,#0F5132 0%,#09291B 100%)}
 .loadscreen-mark{width:76px;height:76px;border-radius:22px;background:#B3261E;display:grid;place-items:center;box-shadow:0 0 0 4px #fff,0 12px 26px rgba(0,0,0,.35)}
@@ -1005,12 +824,10 @@ html,body{margin:0}
 @media (prefers-reduced-motion:reduce){.loadscreen-ecg path{animation:none;stroke-dashoffset:0}}
 /* critical:end */
 
-/* ---------------------------------------------------------------------- */
-/* PHONE BOTTOM BAR — glass 3D chips, the same look as the menu drawer's  */
-/* (.nd-chip). The flat line icon (.ic) stays for the desktop sidebar;    */
-/* the chip (.ic3d) is for phones only. The active tab's chip turns gold  */
-/* and lifts a little.                                                    */
-/* ---------------------------------------------------------------------- */
+/* ---- PHONE BOTTOM BAR ----
+   Glass 3D chips, the same look as the menu drawer's (.nd-chip). The flat line
+   icon (.ic) stays for the desktop sidebar; the chip (.ic3d) is phone only.
+   The active tab's chip turns gold and lifts a little. */
 .navbar button .ic3d { display: none; }
 @media (max-width: 859px) {
   .navbar button { padding: 8px 4px 7px; gap: 3px; color: #DCEBE8; }
@@ -1030,10 +847,8 @@ html,body{margin:0}
   }
 }
 
-/* ---------------------------------------------------------------------- */
-/* LOADING PLACEHOLDERS — shapes (no text) that shimmer while the         */
-/* dashboard numbers arrive, instead of a "Loading…" line.                */
-/* ---------------------------------------------------------------------- */
+/* ---- LOADING PLACEHOLDERS ----
+   Text-free shapes that shimmer while dashboard numbers arrive. */
 .skel {
   display: block; border-radius: 8px; background: #E4DCC8;
   background-image: linear-gradient(90deg, #E4DCC8 0%, #F4EEDF 50%, #E4DCC8 100%);
@@ -1046,8 +861,7 @@ html,body{margin:0}
 @media (min-width: 860px) { .skel-grid { grid-template-columns: repeat(4, 1fr); } }
 @media (prefers-reduced-motion: reduce) { .skel { animation: none; } }
 
-/* Thin bar across the top of the dashboard while older numbers are on screen
-   and fresh ones are loading. */
+/* Thin bar across the top of the dashboard while older numbers are shown and fresh ones load. */
 .updating-bar { height: 3px; border-radius: 3px; background: var(--green-light); overflow: hidden; margin: -4px 0 10px; position: relative; }
 .updating-bar::after {
   content: ''; position: absolute; top: 0; bottom: 0; width: 35%; border-radius: 3px; background: var(--green);
@@ -1056,11 +870,9 @@ html,body{margin:0}
 @keyframes updSlide { 0% { left: -35%; } 100% { left: 100%; } }
 @media (prefers-reduced-motion: reduce) { .updating-bar::after { animation: none; width: 100%; opacity: .5; } }
 
-/* ---------------------------------------------------------------------- */
-/* 2026-10-29: customers & credit, refills, SMS, controlled drugs,         */
-/* stock take. Reuses the existing cards, KPI tiles, badges and sheets;    */
-/* only what those did not already cover is here.                          */
-/* ---------------------------------------------------------------------- */
+/* ---- Customers, credit, refills, SMS, controlled drugs, stock take ----
+   Reuses the existing cards, KPI tiles, badges and sheets; only what they did
+   not cover is here. */
 .dash-alert.amber { background: var(--amber-light); border-color: #ecd9a0; color: var(--amber-ink); }
 .dash-alert.green { background: var(--green-light); border-color: #b9dcc8; color: var(--green); }
 .list-row > div:first-child { min-width: 0; }
@@ -1072,13 +884,11 @@ html,body{margin:0}
 .list-row .meta.wrap { white-space: normal; }
 .kpi-grid > .kpi { min-width: 0; overflow-wrap: anywhere; }
 
-/* ---------------------------------------------------------------------- */
-/* Phone sign-in is one fixed screen: it never scrolls up and down. The   */
-/* log-in page is locked to the visible screen height and its spacing     */
-/* shrinks in steps on shorter phones (and under the Android status bar)  */
-/* so the form and both links always fit. Sign-up and the other steps     */
-/* have more fields, so they may still scroll when they must.             */
-/* ---------------------------------------------------------------------- */
+/* ---- Phone sign-in is one fixed screen ----
+   The log-in page is locked to the visible height and its spacing shrinks in
+   steps on shorter phones (and under the Android status bar), so the form and
+   both links always fit. Sign-up and other steps have more fields and may
+   scroll. */
 @media (max-width: 859px) {
   html:has(.auth-wrap[data-mode="login"]),
   html:has(.auth-wrap[data-mode="login"]) body { overflow: hidden; overscroll-behavior: none; }
@@ -1117,10 +927,9 @@ html,body{margin:0}
   .auth-wrap[data-mode="login"] { height: auto; min-height: 100vh; overflow: visible; }
 }
 
-/* ---------------------------------------------------------------------- */
-/* In-app pop-ups (replace the browser's own "<site> says" boxes) and the */
-/* "Please wait, loading…" cover shown while a screen opens.               */
-/* ---------------------------------------------------------------------- */
+/* ---- In-app pop-ups and loading cover ----
+   Pop-ups replace the browser's own "<site> says" boxes. The cover shows
+   "Please wait, loading..." while a screen opens. */
 .dlg-mask {
   position: fixed; inset: 0; z-index: 70; display: flex; align-items: center; justify-content: center;
   padding: 20px; background: rgba(20,18,16,0.55);
@@ -1159,8 +968,7 @@ html,body{margin:0}
 /* Sell: search box + checkout bar */
 .searchbox input[type="search"] { -webkit-appearance: none; appearance: none; }
 .searchbox input[type="search"]::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
-/* The cart bar is the one thing on Sell that must be noticed, so it is blue
-   with white text instead of the green used by everything else. */
+/* The cart bar is the one thing on Sell that must be noticed, so it is blue with white text instead of the usual green. */
 .cart-bar {
   background: linear-gradient(160deg, #2F72D6 0%, #1B4FA3 100%); color: #fff;
   border: 2px solid #12397D; box-shadow: 0 10px 26px rgba(18,57,125,0.45);
@@ -1168,9 +976,7 @@ html,body{margin:0}
 .cart-bar .cb-n { background: #fff; color: #12397D; }
 .cart-bar .cb-go { background: #fff; color: #12397D; }
 
-/* Every pop-up floats in the middle of the screen: it keeps a gap from the
-   screen edges (all four sides) instead of sitting flat against the bottom, and
-   has rounded corners all the way round. (The slide-out menu is unchanged.) */
+/* Every pop-up floats in the middle with a gap to all four screen edges and rounded corners all round. (The slide-out menu is unchanged.) */
 .mask {
   align-items: center; justify-content: center;
   padding: 12px; padding-top: calc(12px + env(safe-area-inset-top, 0px));
@@ -1182,8 +988,7 @@ html,body{margin:0}
   max-height: 100%; min-height: 0;
 }
 
-/* Stock Valuation: each drug is a name + value line and a quantity / cost / price line that
-   stays on ONE line (it takes the whole row width and shrinks a little on narrow phones). */
+/* Stock Valuation: each drug is a name + value line and a quantity / cost / price line that stays on ONE line (full row width, a little smaller on narrow phones). */
 .val-row { padding: 12px 0; border-bottom: 1px solid var(--line); }
 .val-row:last-child { border-bottom: none; }
 .val-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
@@ -1195,13 +1000,11 @@ html,body{margin:0}
 }
 .val-meta::-webkit-scrollbar { display: none; }
 
-/* ---------------------------------------------------------------------- */
-/* AUTH, desktop (860px and up) — the same "dispensing label" sign-in as   */
-/* the phone, as a split screen: green hero on the left (cross mark,       */
-/* "Pharma", "Know your stock", four glass feature chips, gold heartbeat   */
-/* line), the cream label card on the right with the two links under it.   */
-/* Applies to every sign-in step (log in, sign up, staff, reset).          */
-/* ---------------------------------------------------------------------- */
+/* ---- AUTH, desktop (860px and up) ----
+   The same "dispensing label" sign-in as the phone, as a split screen: green
+   hero on the left (cross mark, "Pharma", "Know your stock", four glass chips,
+   gold heartbeat line) and the cream label card on the right with the two links
+   under it. Applies to every sign-in step (log in, sign up, staff, reset). */
 @media (min-width: 860px) {
   .auth-wrap { flex-direction: row; min-height: 100vh; min-height: 100dvh; padding-bottom: 0; background: var(--paper); }
   .auth-bg-fill { display: none; }
@@ -1288,3 +1091,70 @@ html,body{margin:0}
   .auth-pre { display: inline; }
   .auth-sep { display: none; }
 }
+
+/* ---- APP THEME: white page, black top bar, red Restock-style buttons ----
+   Inside the app only (the sign-in screens and the dashboard tiles and graphs keep their colours). The app shell is the only screen that has a .topbar, so ":has(.topbar)" keeps all of this off the sign-in pages. Only the page background, the top bar (phone and desktop), the phone bottom bar, the buttons and the filter boxes change; the desktop menu, badges, tiles, toasts and the rest keep their green. Same near-black (#221F1D), warm white (#FAF9F7) and soft-blue phone bottom bar as the Kodi app. */
+html:has(.topbar), body:has(.topbar) { --paper: #FAF9F7; background: #FAF9F7; }
+
+/* Top bar: black, with the menu button and Log out in green and no "P" badge before the pharmacy name. */
+body:has(.topbar) .topbar { background: #221F1D; }
+body:has(.topbar) .topbar .topbar-id .brand-badge { display: none; }
+body:has(.topbar) .topbar .burgerbtn { background: var(--green); border-radius: 50%; }
+body:has(.topbar) .topbar .burgerbtn:hover { background: var(--green-dark); }
+body:has(.topbar) .topbar button { background: var(--green); color: #fff; }
+
+/* Buttons: Sell-style main buttons black, Restock-style secondary buttons red. */
+body:has(.topbar) .btn.primary { background: #221F1D; box-shadow: 0 3px 10px rgba(34,31,29,0.28); }
+body:has(.topbar) .btn.secondary { background: var(--red); color: #fff; }
+body:has(.topbar) .cart-bar, body:has(.topbar) .fab { background: #221F1D; }
+
+/* Date filter (Today, 7 Days, ...) and the "Check if a drug is in stock" box: stronger background and the same 12px corners as the Sell and Restock buttons. */
+body:has(.topbar) .dash-tabs { background: #DDD8CE; border-radius: 12px; }
+body:has(.topbar) .dash-tab { border-radius: 9px; }
+body:has(.topbar) .dash-cal-btn { background: #DDD8CE; border-radius: 12px; }
+body:has(.topbar) .dash-quick-search input { border-radius: 12px; }
+
+/* Phone bottom bar: Kodi's soft blue, plain emoji with no tile behind them, current tab dark green and bold. */
+@media (max-width: 859px) {
+  body:has(.topbar) .navbar { background: #DCE8F6; border-top: 1px solid #BCD0E8; }
+  body:has(.topbar) .navbar button, body:has(.topbar) .navbar button.active { color: #221F1D; }
+  body:has(.topbar) .navbar button.active { color: var(--green-dark); font-weight: 800; }
+  body:has(.topbar) .navbar button .ic3d, body:has(.topbar) .navbar button.active .ic3d {
+    background: none; box-shadow: none; width: auto; height: 26px; font-size: 20px; border-radius: 0;
+  }
+}
+@media (min-width: 860px) {
+  /* The desktop top strip is black too, with white text (the base desktop rule makes it white with dark text). */
+  body:has(.topbar) .topbar { background: #221F1D; color: #fff; border-bottom: none; }
+  body:has(.topbar) .topbar .sub { color: #fff; }
+  body:has(.topbar) .topbar button { background: var(--green); color: #fff; }
+  /* The desktop menu stays green; it no longer shows the signed-in user's name. */
+  body:has(.topbar) .nd-who { display: none; }
+}
+/* The phone menu is parked off screen when closed; its shadow must not show as a dark smear down the left edge of the white page. */
+body:has(.topbar):not(.nav-open) .navdrawer { box-shadow: none; }
+
+/* Kodi's type: Inter first, then the phone's own font; softer heading weight and tighter spacing. Inside the app only. */
+body:has(.topbar), body:has(.topbar) button, body:has(.topbar) input, body:has(.topbar) select, body:has(.topbar) textarea {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+body:has(.topbar) { line-height: 1.5; }
+body:has(.topbar) h1, body:has(.topbar) h2, body:has(.topbar) h3, body:has(.topbar) h4 { font-weight: 650; letter-spacing: -.015em; }
+
+/* ---- PROFILE and GET SUPPORT (js/profile.js) ---- */
+.topbar .profbtn { width: 38px; height: 38px; padding: 0; border-radius: 50%; display: grid; place-items: center; flex: none; }
+.prof-head { display: flex; gap: 12px; align-items: center; margin-bottom: 14px; }
+.prof-name { font-weight: 800; font-size: 16px; }
+.prof-meta { font-size: 13px; margin-top: 1px; }
+.prof-card { display: flex; gap: 12px; align-items: center; width: 100%; text-align: left; padding: 12px; margin-bottom: 10px; border: 1px solid var(--line); border-radius: 12px; background: #fff; color: var(--ink); }
+.prof-card .t1 { font-weight: 700; }
+.prof-card .t2 { font-size: 12.5px; margin-top: 1px; }
+.prof-ic { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; background: #EFEDEA; font-size: 18px; flex: none; }
+.support-note { background: #F4F2EF; border: 1px solid #E8E4DE; border-radius: 12px; padding: 12px 14px; font-size: 13.5px; line-height: 1.45; margin-bottom: 12px; }
+.support-on { background: #E3F3E3; border: 1.5px solid var(--d-sales); border-radius: 12px; padding: 12px 14px; font-size: 14px; margin-bottom: 12px; line-height: 1.45; }
+.support-hours { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin: 6px 0 14px; }
+.support-hours button { border: 1.5px solid #D8D3C9; background: #fff; border-radius: 12px; padding: 12px 0; font-weight: 700; font-size: 15px; color: var(--ink); }
+.support-hours button.on { background: #221F1D; border-color: #221F1D; color: #fff; }
+.support-banner { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 16px; background: #F2C14E; color: #201E1B; font-size: 13px; position: sticky; top: 56px; z-index: 9; }
+.support-banner button { background: #221F1D; color: #fff; border: none; border-radius: 9px; padding: 6px 12px; font-weight: 700; }
+@media (min-width: 860px) { .support-banner { margin-left: var(--sidebar-w); top: 60px; } }

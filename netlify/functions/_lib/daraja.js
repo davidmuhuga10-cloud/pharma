@@ -101,7 +101,7 @@ function parseCallback(body) {
   };
 }
 
-/** Plain words for the landlord when a payment did not go through. */
+// Plain words for the pharmacist when a payment did not go through.
 function friendlyResult(code, desc) {
   switch (Number(code)) {
     case 0: return 'Paid.';

@@ -1,8 +1,7 @@
-// js/controlled-stocktake.js - Controlled drugs register, Stock take, and small dashboard/drug-detail strips for them.
-// (One of the files app.js was split into. All of them share one global scope, so
-// order in index.html matters: see the list there.)
-// CONTROLLED DRUGS — register and ledger
-// ---------------------------------------------------------------------------
+// js/controlled-stocktake.js - controlled drugs register, stock take, and the
+// small dashboard / drug-detail strips for them.
+//
+// --- Controlled drugs: register and ledger ---
 
 var CONTROL_LABEL = { dda: 'DDA', psy: 'Psychotropic', none: 'Not controlled' };
 var CONTROL_LONG = { dda: 'Dangerous drug (DDA)', psy: 'Psychotropic substance', none: 'Not controlled' };
@@ -52,7 +51,7 @@ async function openMarkControlled() {
   var body = sheet('Mark a drug as controlled', '<div class="empty">Loading…</div>');
   var list = [];
   try {
-    var r = await sb.from('v_drug_stock').select('drug_id,name,control_class').order('name');
+    var r = await fetchAllRows(function () { return sb.from('v_drug_stock').select('drug_id,name,control_class').order('name'); }, 'drug_id');
     if (r.error) throw r.error;
     list = (r.data || []).filter(function (d) { return d.control_class === 'none'; });
   } catch (e) { $('#sheetBody').innerHTML = '<div class="empty">' + esc(friendlyError(e)) + '</div>'; return; }
@@ -141,9 +140,7 @@ function printControlledLedger() {
     '<p style="margin:4px 0">Balance now: <b>' + esc(qtyUnit(d.ledger_qty, d.unit)) + '</b></p>' + tableHtml(['Date', 'Movement', 'Qty', 'Balance', 'Details', 'By'], rows));
 }
 
-// ---------------------------------------------------------------------------
-// STOCK TAKE — count the shelf, see the differences, approve
-// ---------------------------------------------------------------------------
+// --- Stock take: count the shelf, see the differences, approve ---
 
 var stockTakes = [];        // recent stock takes, newest first
 var stOpen = null;          // the open one, if any
@@ -168,7 +165,7 @@ async function renderStockTake() {
     if (stOpen) {
       var res = await Promise.all([
         sb.from('stock_take_items').select('drug_id,system_qty,counted_qty').eq('take_id', stOpen.id),
-        sb.from('v_drug_stock').select('drug_id,name,unit,qty_in_stock,qty_expired,stock_value_cost').order('name')
+        fetchAllRows(function () { return sb.from('v_drug_stock').select('drug_id,name,unit,qty_in_stock,qty_expired,stock_value_cost').order('name'); }, 'drug_id')
       ]);
       if (res[0].error) throw res[0].error;
       if (res[1].error) throw res[1].error;
@@ -345,9 +342,7 @@ function drawStockTakeView() {
     }).join('') : '<div class="empty">No differences.</div>') + '</div>';
 }
 
-// ---------------------------------------------------------------------------
-// Drug detail: controlled status
-// ---------------------------------------------------------------------------
+// --- Drug detail: controlled status ---
 
 function drugControlHtml(drugRow) {
   var cls = (drugRow && drugRow.control_class) || 'none';
@@ -367,9 +362,7 @@ function saveDrugControl(btn, drugId) {
   });
 }
 
-// ---------------------------------------------------------------------------
-// Dashboard: small strip for the new modules
-// ---------------------------------------------------------------------------
+// --- Dashboard: small strip for these modules ---
 
 function dashExtrasHtml(snap) {
   var x = (snap && snap.extras) || {};

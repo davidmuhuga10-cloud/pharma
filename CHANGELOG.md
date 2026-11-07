@@ -2,6 +2,64 @@
 
 Newest first. The detailed story for each item is in `PHARMA_PROJECT_STATUS.md`.
 
+## 2026-11-07 (night, last+): admin opens any pharmacy directly
+
+- Like "Login as School" in Shule Web, but with no password, no code and no email link: on a pharmacy's page the admin taps **Open this pharmacy** and works inside it as a co-owner (view and fix), with a "Leave" banner to come back. Shule Web signs in as the school's own admin through a server function; Pharma does not need one because its pharmacy data is already filtered by one database rule, so the admin simply acts as that pharmacy.
+- **Get support stays** as built (owner grants 1 to 24 hours, can stop, sees history). It is now a courtesy, not a requirement. When the owner did grant it, the owner's history shows each open; a direct open is logged for the admin but not shown to the owner.
+- A direct session closes by itself after 8 hours. Only the platform admin can open a pharmacy; owners and staff cannot.
+- `migrations/2026-11-07_admin_direct_access.sql` (folded into `schema.sql`): `admin_open_support` no longer needs a grant, `my_pharmacy_id/my_role/my_subscription/support_context` accept the admin's open session, and `support_access_events` can log a direct open. No data changed. SQL tests: 378 pass; `tests/support-profile.test.js` extended.
+
+## 2026-11-07 (night, last): Profile button and Get support
+
+- The top-bar "Log out" is now a **Profile** button (person icon). It opens: change password (asks for the current one), **Get support**, and Sign out.
+- **Get support:** the owner or a co-owner reads "Pharma admin will get access to your pharmacy", picks 1, 2, 4, 8 or 24 hours and grants access. They can stop it any time and see past grants. The admin opens that pharmacy from the pharmacy page ("Open this pharmacy (support view)"), can view and fix, and sees a banner with "Leave". Access ends by itself when the time is up. A grant opens only the pharmacy that gave it.
+- Database (applied to the live project, nothing deleted): new `support_access`, `support_session`, `support_access_events` (closed to the public API), 7 new functions, and `my_pharmacy_id()`, `my_role()`, `my_subscription()` gained one admin-only first step; everyone else behaves exactly as before. Admin account got a home profile "Pharma Admin" (co-owner) in Demo Pharmacy. `migrations/2026-11-07_support_access.sql`, folded into `schema.sql`.
+- The Get support notice now uses Kodi's warm light background (not the peach one), and inside the app the font is Kodi's (Inter first, then the phone's own font; headings slightly lighter and tighter). Sign-in pages untouched.
+- Pop-ups (forms and confirm boxes) copy the Kodi style: white card with a header band and divider, light square close button, bold labels, 12px boxes, green save button, solid red for destructive actions like Reverse, blurred backdrop. Inside the app only. Cache bumped to `hodhi-shell-v3g`.
+- New `tests/support-profile.test.js`; SQL tests: 367 pass. Service worker cache is now `hodhi-shell-v3g`.
+
+## 2026-11-07 (night, later): less green inside the app
+
+- White page background; black top bar on phone and desktop with green menu button and Log out, and no "P" badge before the pharmacy name.
+- Phone bottom bar: Kodi's soft blue, plain emoji with no tiles, and six tabs (Customers added).
+- Black Sell-style buttons, red Restock-style buttons, black checkout bar. Darker background and 12px corners on the date filter and the "Check if a drug is in stock" box.
+- Desktop left menu stays green and no longer shows the user's name.
+- Sign-in screens, tiles, graphs, badges and the other greens are unchanged. Service worker cache is now `hodhi-shell-v3e`. New `tests/app-theme.test.js`.
+
+## 2026-11-07 (night): admin console redesign
+
+- **Sign-in:** the admin console now looks like the pharmacy app's sign-in and uses an email and password (not a phone number), with a show/hide eye on every password box.
+- **Password reset:** "Forgot password?" emails a reset link; the link opens a "Choose a new password" screen. The Account page changes the password after checking the current one.
+- **Side menu:** Overview, Pharmacies, Billing and Account in a left menu on a desktop and a bottom bar on a phone. Overview adds "Needs your attention" and "Newest pharmacies". Billing lists every plan, soonest to end first, with one-tap "+30 days" and "Mark paid / Renew". The pharmacy page is unchanged apart from its back link.
+- **One admin:** `migrations/2026-11-07_single_admin.sql` keeps `kinyuadavid2003@gmail.com` as the only platform admin and adds a unique index so a second one is refused (folded into `schema.sql`; applied to the live project on 7 Nov 2026 after the owner confirmed the new login works - the old admin row was removed, its pharmacy login and data were left alone). New account added live; no data deleted.
+- New `tests/admin-shell.test.js`; SQL tests: 331 pass. Admin pages are not in the service-worker cache, so no cache bump.
+
+## 2026-11-07 (later): login boxes
+
+- Password boxes no longer auto-capitalise or auto-correct, so showing the password with the eye cannot turn "abc" into "Abc" and cause a false "incorrect". Service worker cache is now `hodhi-shell-v3d`. New `tests/login-inputs.test.js`.
+- Checked the slow login: the database answers in 3 to 12 ms; the wait is the network to the Frankfurt server and about 1 s for Supabase to sign in.
+
+## 2026-11-07 (late): Sales graph line is dark navy
+
+- The line on the Dashboard Sales graph was green on a green card and hard to see. It is now dark navy (`#14367A`); the card, tiles and chip stay green. Service worker cache is now `hodhi-shell-v3c`. New `tests/dashboard-chart.test.js`.
+
+## 2026-11-07 (evening): self-running demo pharmacy
+
+- **Demo account:** "Demo Pharmacy" (login 0700000000) now has 39 drugs, 12 customers and 3 months of sales, payments, restocks and expenses, and its plan runs to 31 Dec 2027.
+- **Stays busy by itself:** an hourly database job (08:05 to 20:05 Nairobi) posts 3 to 10 sales a day, KES 2,000 to 8,000 in total, restocks anything that runs low, collects on-account payments and posts small expenses. Roughly 60 small rows a day.
+- **Safe:** works on the one pharmacy listed in the new `demo_config` table and nothing else; not callable from the app or API; demo customers are never texted.
+- **Every stock state is always visible:** 3 drugs out of stock, 4 low, 3+ expired batches, 2+ expiring within 30 days and 5+ within 90, the rest healthy. Refreshed daily by the same job; old expired stock is written off after 60 days and replaced.
+- Migrations `2026-11-07_demo_account.sql` and `2026-11-07_demo_showcase.sql` (applied live, folded into `schema.sql`). SQL tests: 329 pass. No app files changed.
+
+## 2026-11-07: senior review (security, speed, scale, comments)
+
+- **Security:** an owner could give their pharmacy free subscription months by editing the plan fields directly. Those fields (plan end date, status, invoice numbers, SMS settings) can now only be changed by Pharma support. Staff invite codes are longer (10 random characters).
+- **SMS sign-in codes:** guess limits can no longer be beaten by sending many tries at the same instant; added per-address and platform-wide hourly limits on code SMS; no code is sent to a number that cannot use it. Password reset no longer downloads every user. (Edge functions `send-otp`, `verify-otp`, `reset-password-by-phone` must be deployed.)
+- **Speed:** the stock view is 3-4x faster on big data; duplicate indexes removed.
+- **Long lists:** stock, sell, inventory, customers, refills, expiry, expenses and report lists no longer stop at 1000 rows. New `tests/paging.test.js`.
+- **Comments:** code comments rewritten short and plain across the project; no code changed.
+- Migration `2026-11-07_senior_review_fixes.sql`. Service worker cache is now `hodhi-shell-v3b`.
+
 ## 2026-10-31 (morning): no browser pop-ups, and an open app updates itself
 
 - **Reported:** a pharmacy phone showed the browser's own box "pharmacymngt.netlify.app says: Label for this held sale (optional)…". That box was replaced on 29 Oct by an in-app pop-up ("Hold this sale"); the phone was still running an old copy of the app that had stayed open and never reloaded. The live site has no browser pop-up anywhere.

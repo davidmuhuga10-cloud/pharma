@@ -1,11 +1,7 @@
-// js/customers.js - Customers, credit (kopa), refills and SMS.
-// (One of the files app.js was split into. All of them share one global scope, so
-// order in index.html matters: see the list there.)
-// CUSTOMERS, CREDIT (KOPA), REFILLS, SMS, CONTROLLED DRUGS, STOCK TAKE
-// (2026-10-29 — see schema.sql section "2026-10-29 modules" and the matching
-// migrations; every write below goes through a database function that checks
-// the caller's role again, so the can() checks here only decide what to show.)
-// ---------------------------------------------------------------------------
+// js/customers.js - customers, credit (kopa), refills, SMS, controlled drugs
+// and stock take.
+// Every write goes through a database function that re-checks the caller's
+// role; the can() checks here only decide what to show.
 
 function rpcCall(name, args) {
   return sb.rpc(name, args).then(function (r) { if (r.error) throw r.error; return r.data; });
@@ -31,10 +27,9 @@ function backBtn(handler, label) {
   return '<div class="toolbar-row"><button class="btn ghost small" onclick="' + handler + '">&larr; ' + esc(label) + '</button></div>';
 }
 
-// ---------------------------------------------------------------------------
-// SMS — messages are written here, approved and logged by sms_queue() in the
-// database, and sent by the send-sms Edge Function.
-// ---------------------------------------------------------------------------
+// --- SMS ---
+// Messages are written here, approved and logged by sms_queue() in the database,
+// and sent by the send-sms Edge Function.
 
 function refillMessage(r) {
   return 'Hello ' + firstName(r.customer_name) + ', your ' + r.drug_name + ' is due for refill. Please visit ' +
@@ -97,9 +92,7 @@ function doSendOneSms(customerId, kind, refId) {
 }
 function refreshCustomersScreen() { if (STATE.tab === 'customers') renderCustomers(); else if (STATE.tab === 'sms') renderSmsModule(); }
 
-// ---------------------------------------------------------------------------
-// CUSTOMERS screen: Customers (with what they owe) | Refills | Messages
-// ---------------------------------------------------------------------------
+// --- Customers screen: Customers (with what they owe) | Refills | Messages ---
 
 var customersCache = [];
 var custTab = 'customers';
@@ -117,18 +110,18 @@ function canSeeCustomers() { return can('customers') || can('view_customers'); }
 
 var customersLoadedAt = 0;   // when customersCache was last fetched; 0 = stale, fetch again
 async function loadCustomers() {
-  var r = await sb.from('v_customer_balances').select('*').order('name');
+  var r = await fetchAllRows(function () { return sb.from('v_customer_balances').select('*').order('name'); }, 'customer_id');
   if (r.error) throw r.error;
   customersCache = r.data || [];
   customersLoadedAt = Date.now();
 }
 async function loadRefills() {
-  var r = await sb.from('v_refills').select('*').order('next_due');
+  var r = await fetchAllRows(function () { return sb.from('v_refills').select('*').order('next_due'); }, 'plan_id');
   if (r.error) throw r.error;
   refillsCache = r.data || [];
 }
-// The wallet is shown beside the message list; if it cannot be read the list
-// still works (sending is checked by the database either way).
+// The wallet shows beside the message list. If it can't be read the list still
+// works; the database checks sending either way.
 async function loadSmsWallet() {
   var r = await sb.rpc('my_sms_wallet');
   smsWallet = r.error ? null : r.data;
@@ -155,8 +148,8 @@ async function renderCustomers() {
   drawCustomers();
 }
 
-// The SMS menu item: the same Messages view, on its own page so the credit,
-// Buy SMS button and usage are one tap from the menu.
+// The SMS menu item: the Messages view on its own page, so credit, Buy SMS and
+// usage are one tap away.
 async function renderSmsModule() {
   var c = $('#content');
   if (!can('sms')) { c.innerHTML = '<div class="card empty">You do not have access to SMS.</div>'; return; }
@@ -172,7 +165,7 @@ async function renderSmsModule() {
 function drawSmsModule() {
   $('#content').innerHTML = '<div class="section-title" style="margin-top:0">SMS</div>' + messagesHtml();
 }
-// After a change on the Messages view, redraw whichever page it is shown on.
+// After a change on Messages, redraw whichever page it is shown on.
 function redrawMessages() { if (STATE.tab === 'sms') drawSmsModule(); else drawCustomers(); }
 
 function setCustTab(t) { custTab = t; custDetailId = null; renderCustomers(); }
@@ -231,12 +224,12 @@ function drawCustomersList() {
   });
   var el = $('#custList');
   if (el) el.innerHTML = customerRowsHtml(rows);
-  // the filter button's label changes, so redraw only that one button
+  // the filter button's label changes, so redraw only that button
   var btns = document.querySelectorAll('#content .toolbar-row .btn');
   btns.forEach(function (b) { if (/owing only/i.test(b.textContent)) { b.className = 'btn ' + (custOnlyOwing ? 'secondary' : 'ghost'); b.textContent = custOnlyOwing ? 'Showing owing only' : 'Owing only'; } });
 }
 
-// ----- add / edit a customer ------------------------------------------------
+// --- Add / edit a customer ---
 
 function openCustomerForm(id) {
   var cu = id ? customersCache.find(function (x) { return x.customer_id === id; }) : null;
@@ -270,7 +263,7 @@ function saveCustomerForm(id) {
   });
 }
 
-// ----- one customer: balance, payments, statement, refills -------------------
+// --- One customer: balance, payments, statement, refills ---
 
 function retryCustomerDetail() { if (custDetailId) openCustomerDetail(custDetailId); }
 
@@ -390,7 +383,7 @@ function printCustomerStatement() {
     '<p style="margin:4px 0">Balance owed: <b>' + esc(fmt(d.row.balance)) + '</b></p>' + tableHtml(['Date', 'Details', 'Credit given', 'Paid', 'Balance'], rows));
 }
 
-// ----- refills ---------------------------------------------------------------
+// --- Refills ---
 
 function refillStatus(p) {
   var n = Number(p.days_overdue);
@@ -441,7 +434,7 @@ async function openRefillForm(customerId, planId) {
   try {
     if (!customersCache.length) await loadCustomers();
     if (!refillDrugNames.length) {
-      var dr = await sb.from('v_drug_stock').select('drug_id,name').order('name');
+      var dr = await fetchAllRows(function () { return sb.from('v_drug_stock').select('drug_id,name').order('name'); }, 'drug_id');
       refillDrugNames = (dr.data || []).map(function (x) { return { id: x.drug_id, name: x.name }; });
     }
   } catch (e) { /* the form still works without suggestions */ }
@@ -520,7 +513,7 @@ function doBulkRefillReminder() {
   });
 }
 
-// ----- messages --------------------------------------------------------------
+// --- Messages ---
 
 function messagesHtml() {
   var p = STATE.pharmacy || {};
@@ -549,10 +542,10 @@ function messagesHtml() {
         '<div class="right">' + badge + '</div></div>';
     }).join('') : '<div class="empty">No messages yet.</div>') + '</div>';
 }
-// ----- buy SMS with M-Pesa -----------------------------------------------------
-// The Netlify function sms-topup sends the PIN prompt to the phone; the wallet
-// is credited by Safaricom's result (never by this screen), so we only watch
-// the purchase until it says paid or failed.
+// --- Buy SMS with M-Pesa ---
+// The Netlify function sms-topup sends the PIN prompt. The wallet is credited by
+// Safaricom's result, never by this screen, which only watches until the
+// purchase says paid or failed.
 function openBuySms() {
   var w = smsWallet || { price_per_sms: 2 };
   var price = Number(w.price_per_sms) || 1;
@@ -647,4 +640,3 @@ function doComposeSms() {
   });
 }
 
-// ---------------------------------------------------------------------------

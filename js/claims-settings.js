@@ -1,11 +1,8 @@
-// js/claims-settings.js - Insurance claims, and Settings (business profile).
-// (One of the files app.js was split into. All of them share one global scope, so
-// order in index.html matters: see the list there.)
-// INSURANCE CLAIMS — created automatically at checkout when a payment line
-// uses "insurance"; tracked here through to paid/rejected. Promoted from an
-// inline strip at the bottom of the Sales report (its original spot) to its
-// own full report screen as part of item 32.
-// ---------------------------------------------------------------------------
+// js/claims-settings.js - insurance claims, and Settings (business profile).
+//
+// --- Insurance claims ---
+// Created automatically at checkout when a payment line uses "insurance", and
+// tracked here until paid or rejected.
 
 var claimsCache = [];
 
@@ -36,8 +33,8 @@ function drawClaims() {
 }
 
 async function updateClaimStatus(sel, id, status) {
-  // Not a "Save" button, but the same double-fire risk applies to a select
-  // someone re-picks quickly — disable it for the round trip too.
+  // Not a Save button, but a select re-picked quickly has the same double-fire
+  // risk, so disable it for the round trip too.
   sel.disabled = true;
   var { error } = await sb.from('insurance_claims').update({ status: status, updated_at: new Date().toISOString() }).eq('id', id);
   sel.disabled = false;
@@ -64,16 +61,14 @@ function printClaimsReport() {
     claimsCache.length + ' claims · ' + fmt(pendingTotal) + ' pending');
 }
 
-// ---------------------------------------------------------------------------
-// SETTINGS — business profile (name, address, phone…) printed on every
-// report/receipt, plus the low-stock and expiry-warning thresholds.
-// ---------------------------------------------------------------------------
+// --- Settings ---
+// Business profile (name, address, phone...) printed on every report and
+// receipt, plus the low-stock and expiry-warning thresholds.
 
 async function renderSettings() {
   var c = $('#content');
   var p = STATE.pharmacy || {};
-  // Item 3: co_owner is full equal access to owner — same settings/staff
-  // capability everywhere this "isOwner" flag gates the UI.
+  // co_owner has the same settings and staff access as owner.
   var isOwner = STATE.profile.role === 'owner' || STATE.profile.role === 'co_owner';
   c.innerHTML = '<div class="empty">Loading settings…</div>';
 
@@ -85,7 +80,7 @@ async function renderSettings() {
       staff = staffRes.data || [];
       var invRes = await sb.from('staff_invites').select('*').is('used_at', null).gt('expires_at', new Date().toISOString()).order('created_at', { ascending: false });
       invites = invRes.data || [];
-    } catch (e) { /* staff panel just shows empty — not worth blocking the whole settings page over */ }
+    } catch (e) {  /* the staff panel just shows empty; not worth blocking the settings page */ }
   }
 
   c.innerHTML =
@@ -143,4 +138,3 @@ async function renderSettings() {
     '<div class="field"><label>Language</label><div class="tiny">English (Kiswahili is coming soon — turned off for now so the app doesn\'t mix half-translated screens)</div></div></div>';
 }
 
-// ---------------------------------------------------------------------------

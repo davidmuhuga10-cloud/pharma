@@ -10,6 +10,8 @@
 /netlify/*                   /404  404!
 /node_modules/*              /404  404!
 /CLAUDE.md                   /404  404!
+/SETUP.md                    /404  404!
+/PRODUCT_SPEC.md             /404  404!
 /README.md                   /404  404!
 /CHANGELOG.md                /404  404!
 /PHARMA_PROJECT_STATUS.md    /404  404!

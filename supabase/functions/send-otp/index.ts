@@ -40,6 +40,22 @@ function normalizePhone(raw: string): string {
 function toE164Phone(normalized: string): string {
   return normalized ? "+" + normalized : "";
 }
+// The login address every phone account uses - same mapping as the app, signup-by-phone
+// and reset-password-by-phone. Unchanged on purpose: renaming the domain would orphan every login.
+function phoneToAuthEmail(normalized: string): string {
+  return "p" + normalized + "@hodhi.local";
+}
+// The caller's address as seen by Supabase's edge, used only for the per-address limit.
+function callerIp(req: Request): string | null {
+  const direct = req.headers.get("cf-connecting-ip") || req.headers.get("x-real-ip");
+  if (direct) return direct.trim();
+  const chain = (req.headers.get("x-forwarded-for") || "").split(",").map((s) => s.trim()).filter(Boolean);
+  return chain.length ? chain[chain.length - 1] : null; // last entry is the one our own proxy added
+}
+function envInt(name: string, fallback: number): number {
+  const n = parseInt(Deno.env.get(name) || "", 10);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
 
 function generateCode(): string {
   const arr = new Uint32Array(1);
@@ -135,35 +151,48 @@ Deno.serve(async (req: Request) => {
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
 
-  // Rate limit against phone_otps: resend cooldown + rolling-window cap,
-  // keyed on the normalized phone.
-  const sinceWindow = new Date(Date.now() - WINDOW_MS).toISOString();
-  const { data: recent, error: recentErr } = await admin
-    .from("phone_otps")
-    .select("id, created_at")
-    .eq("phone", phone).eq("purpose", purpose)
-    .gte("created_at", sinceWindow)
-    .order("created_at", { ascending: false });
-  if (recentErr) return json({ ok: false, message: "Could not send a code right now. Try again shortly." });
-
-  const rows = recent || [];
-  if (rows.length && Date.now() - new Date(rows[0].created_at).getTime() < RESEND_COOLDOWN_MS) {
-    const waitSec = Math.ceil((RESEND_COOLDOWN_MS - (Date.now() - new Date(rows[0].created_at).getTime())) / 1000);
-    return json({ ok: false, message: `Please wait ${waitSec}s before requesting another code.` });
+  // Do not spend an SMS on a number that cannot use the code: a reset code
+  // only makes sense for a registered number, a sign-up code only for a free
+  // one. Without this check anyone could make the platform pay for texts to
+  // any Kenyan number ("SMS pumping").
+  const { data: existingId, error: lookupErr } = await admin.rpc("auth_user_id_for_email", { p_email: phoneToAuthEmail(phone) });
+  if (lookupErr) return json({ ok: false, message: "Could not send a code right now. Try again shortly." });
+  if (purpose === "password_reset" && !existingId) {
+    return json({ ok: false, message: "No Pharma account is registered with that phone number." });
   }
-  if (rows.length >= MAX_SENDS_PER_WINDOW) {
-    return json({ ok: false, message: "Too many codes requested for this number — please try again later." });
+  if (purpose === "signup" && existingId) {
+    return json({ ok: false, message: "That phone number is already registered — log in instead." });
   }
 
+  // All limits live in the database (otp_issue) and are checked and recorded
+  // in one locked step, so requests sent at the same instant cannot slip past:
+  // resend cooldown, codes per number, codes per caller address, and a
+  // platform-wide ceiling per hour.
   const code = generateCode();
   const codeHash = await hashCode(phone, purpose, code);
-  const { error: insertErr } = await admin.from("phone_otps").insert({
-    phone,
-    purpose,
-    code_hash: codeHash,
-    expires_at: new Date(Date.now() + CODE_TTL_MS).toISOString(),
+  const ip = callerIp(req);
+  const { data: issued, error: issueErr } = await admin.rpc("otp_issue", {
+    p_phone: phone,
+    p_purpose: purpose,
+    p_code_hash: codeHash,
+    p_ip: ip,
+    p_ttl_seconds: Math.round(CODE_TTL_MS / 1000),
+    p_cooldown_seconds: Math.round(RESEND_COOLDOWN_MS / 1000),
+    p_phone_max: MAX_SENDS_PER_WINDOW,
+    p_phone_window_seconds: Math.round(WINDOW_MS / 1000),
+    p_ip_max: envInt("OTP_IP_MAX_PER_HOUR", 10),
+    p_global_max: envInt("OTP_GLOBAL_MAX_PER_HOUR", 300),
   });
-  if (insertErr) return json({ ok: false, message: "Could not send a code right now. Try again shortly." });
+  if (issueErr || !issued) return json({ ok: false, message: "Could not send a code right now. Try again shortly." });
+  if (!issued.ok) {
+    if (issued.reason === "cooldown") {
+      return json({ ok: false, message: `Please wait ${issued.wait_seconds}s before requesting another code.` });
+    }
+    if (issued.reason === "phone_limit") {
+      return json({ ok: false, message: "Too many codes requested for this number — please try again later." });
+    }
+    return json({ ok: false, message: "Too many code requests right now — please try again in a little while." });
+  }
 
   const smsConfig = await loadSmsConfig(admin);
   if (!isConfigured(smsConfig)) {

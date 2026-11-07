@@ -1,27 +1,18 @@
-// js/dashboard.js - The Dashboard screen: cards, graphs, filters.
-// (One of the files app.js was split into. All of them share one global scope, so
-// order in index.html matters: see the list there.)
-// DASHBOARD — redesigned: a real Today/Week/Month/Year filter (dashRange)
-// that drives a sales trend chart and a rush-hours chart (both with a real
-// axis), four tiles (Sales / Stock value / Profit / Supplier debt owed),
-// the stock-health bar, a Sales→Cost→Profit widget, and capped Top
-// sellers / Expiring soon lists that open a full list in a sheet when
-// clicked. Backed by the dashboard_data(p_pharmacy_id, p_range) RPC
-// (schema.sql §13) for everything range-dependent; stock/expiring/supplier
-// balance are point-in-time snapshots fetched once per visit, same as the
-// old dashboard. Every chart/list renders a fixed-size placeholder when
-// there's no data yet, so a brand-new pharmacy never sees a broken or
-// jumping layout — see PHARMA_PROJECT_STATUS.md item 22.
-// ---------------------------------------------------------------------------
+// js/dashboard.js - the Dashboard screen: tiles, charts and filters.
+// A Today/Week/Month/Year filter (dashRange) drives the sales trend. Range
+// numbers come from the dashboard_data() RPC (schema.sql). Stock, expiring
+// batches and supplier debt are snapshots fetched once per visit. Every chart
+// and list keeps a fixed-size placeholder when empty, so a new pharmacy never
+// sees a broken layout.
 
 var dashRange = 'week';
 var dashLoading = false;
-var dashStale = false;   // true while older numbers are on screen and fresh ones are on their way
+var dashStale = false;  // true while old numbers are shown and fresh ones are loading
 
-// The last dashboard is also kept on this device so the next visit opens with
-// numbers on screen instead of placeholders. Cleared on log out. Skipped for
-// custom date ranges and for very large stock lists (localStorage is small).
-var DASH_CACHE_KEY = 'hodhi_dash_cache_v2'; // v2: the week view became a rolling 7 days
+// The last dashboard is also saved on this device so the next visit opens with
+// numbers instead of placeholders. Cleared on log out. Skipped for custom
+// date ranges and very large stock lists (localStorage is small).
+var DASH_CACHE_KEY = 'hodhi_dash_cache_v2';  // v2: the week view became a rolling 7 days
 function saveDashCache() {
   try {
     if (dashRange === 'custom') return;
@@ -42,9 +33,8 @@ function clearDashCache() {
   try { localStorage.removeItem(DASH_CACHE_KEY); } catch (e) {}
 }
 
-// Placeholder shapes (no text) shown while the dashboard's numbers load: four
-// small stat cards, a chart-sized card and a list card, in the same places the
-// real ones will appear, so nothing jumps when the data arrives.
+// Text-free placeholder shapes shown while loading, in the places the real
+// cards will appear, so nothing jumps when data arrives.
 function dashSkeletonHtml() {
   var stat = '<div class="skel-card"><span class="skel" style="height:10px;width:55%"></span>' +
     '<span class="skel" style="height:24px;width:75%;margin-top:12px"></span></div>';
@@ -56,22 +46,21 @@ function dashSkeletonHtml() {
     '<span class="skel" style="height:14px;margin-top:10px;width:85%"></span>' +
     '<span class="skel" style="height:14px;margin-top:10px;width:70%"></span></div>';
 }
-var dashData = null;   // last dashboard_data() RPC result for the current dashRange
-var dashSnap = null;   // point-in-time snapshot: stock value/health, expiring, supplier debt
+var dashData = null;  // last dashboard_data() result for the current dashRange
+var dashSnap = null;  // snapshot: stock value and health, expiring, supplier debt
 
 var DCOLOR = {
   sales: '#008300', salesLight: '#E3F3E3',
+  // Sales graph line: dark navy, so it stands out on the green card.
+  salesLine: '#14367A',
   blue: '#4D7AB3', blueLight: '#E7EEF6',
   violet: '#6F5FA0', violetLight: '#ECE8F7',
   orange: '#eb6834', orangeLight: '#FDEBE3',
   magenta: '#e87ba4', magentaLight: '#FCEAF1',
   critical: '#d03b3b', serious: '#ec835a', warning: '#fab219', good: '#0ca30c',
   ctxWarm: '#BE8F87',
-  // No-gray-text rule (app-wide, see style.css --ink-soft): chart axis
-  // ticks/labels and "No sales recorded yet" captions used to render in a
-  // lighter gray-brown, hard to read in daylight glare. Now the same deep
-  // near-black as regular body text (matches --ink) — only the hairline
-  // gridlines themselves stay light, since those are lines, not text.
+  // Chart text uses the same dark ink as body text (no gray text rule). Only the
+  // gridlines stay light.
   gridline: '#E7E2DC', inkSoft: '#201E1B'
 };
 var DASH_RANGE_LABELS = { today: 'Today', week: '7 Days', month: 'Month', year: 'Year', custom: 'Custom' };
@@ -79,17 +68,14 @@ var DASH_PERIOD_LABEL = { today: 'Today', week: 'Last 7 days', month: 'This mont
 var DASH_VS_LABEL = { today: 'yesterday', week: 'the 7 days before', month: 'last month', year: 'last year', custom: 'the previous period' };
 var DASH_TOPSELLERS_TITLE = { today: 'Top sellers today', week: 'Top sellers, last 7 days', month: 'Top sellers this month', year: 'Top sellers this year', custom: 'Top sellers' };
 var RUSH_LABELS = ['12-3am', '3-6am', '6-9am', '9am-12pm', '12-3pm', '3-6pm', '6-9pm', '9pm-12am'];
-// Item 33: a custom date range picked via the dashboard's calendar button.
-// Set together with dashRange = 'custom'; cleared whenever a preset range
-// tab is tapped instead. See openDashDateRangePicker()/applyDashCustomRange().
+// Custom date range from the calendar button. Set together with
+// dashRange = 'custom'; cleared when a preset tab is tapped.
 var dashCustomStart = null;
 var dashCustomEnd = null;
 
-// Item 33: branches between the original preset-range RPC and the new
-// custom-date-range one (dashboard_data_custom, schema.sql) added for the
-// dashboard's calendar picker — kept as a completely separate SQL function
-// rather than an overload, so the existing today/week/month/year path is
-// untouched. Shared by the initial load and every range switch.
+// Chooses between the preset-range RPC and dashboard_data_custom() (a separate
+// SQL function, so the presets are untouched). Used on first load and on every
+// range switch.
 function fetchDashboardData() {
   if (dashRange === 'custom' && dashCustomStart && dashCustomEnd) {
     return sb.rpc('dashboard_data_custom', { p_pharmacy_id: STATE.profile.pharmacy_id, p_start: dashCustomStart, p_end: dashCustomEnd });
@@ -99,10 +85,9 @@ function fetchDashboardData() {
 
 async function renderDashboard() {
   var c = $('#content');
-  // Show the last dashboard we had (kept in memory while the app is open, and
-  // on this device between visits) the instant the tab opens, with a thin
-  // "updating" bar, and swap in fresh numbers when they land. Only if there is
-  // nothing to show yet do we draw the shimmering placeholders.
+  // Show the last dashboard we have the moment the tab opens, with a thin
+  // "updating" bar, then swap in fresh numbers. Placeholders only when there is
+  // nothing to show yet.
   if (!dashSnap || !dashData) {
     var saved = readDashCache();
     if (saved) { dashSnap = saved.snap; dashData = saved.data; }
@@ -111,18 +96,16 @@ async function renderDashboard() {
   if (hadStale) { dashStale = true; drawDashboard(); }
   else c.innerHTML = dashSkeletonHtml();
   try {
-    // Five requests, all at once (four, plus the optional alerts one). (It used to be eight: out-of-stock and
-    // low-stock came from two more views that each re-ran the same stock
-    // calculation v_drug_stock already did, and supplier debt downloaded every
-    // supplier, delivery and payment to add them up here. Both are now worked
-    // out from what is already in hand or inside the database.)
+    // Five requests at once (the alerts one is optional). Out-of-stock and
+    // low-stock lists are worked out from v_drug_stock here, and supplier debt
+    // comes from a database function, so nothing is downloaded just to be added up.
     var results = await Promise.all([
-      sb.from('v_drug_stock').select('drug_id,name,unit,qty_in_stock,reorder_level,stock_value_retail'),
-      sb.from('v_expiring_batches').select('*').order('expiry_date'),
+      fetchAllRows(function () { return sb.from('v_drug_stock').select('drug_id,name,unit,qty_in_stock,reorder_level,stock_value_retail'); }, 'drug_id'),
+      fetchAllRows(function () { return sb.from('v_expiring_batches').select('*').order('expiry_date'); }, 'id'),
       sb.rpc('supplier_owed_summary', { p_pharmacy_id: STATE.profile.pharmacy_id }),
       fetchDashboardData(),
-      // The new alerts (customer debts, refills due, controlled-drug mismatch,
-      // open stock take). Optional: if it fails the dashboard still draws.
+      // Alerts (customer debts, refills due, controlled-drug mismatch, open stock
+      // take). Optional: the dashboard still draws if this fails.
       sb.rpc('dashboard_extras', { p_pharmacy_id: STATE.profile.pharmacy_id }).then(function (r) { return r; }, function () { return { data: null }; })
     ]);
     var stockRes = results[0], expRes = results[1], oweRes = results[2], dashRes = results[3], extrasRes = results[4];
@@ -148,9 +131,8 @@ async function renderDashboard() {
       expiring: expRes.data || [],
       supplierOwed: supplierOwed,
       suppliersOwedCount: suppliersOwedCount,
-      // Item 27 (Dashboard quick access): a lightweight name/qty list kept
-      // around purely for the "is this drug in stock?" quick-search box —
-      // avoids a second round trip on every keystroke.
+      // Name and quantity list for the "is this drug in stock?" box, kept so each
+      // keystroke needs no extra request.
       drugList: stockRes.data || [],
       extras: (extrasRes && !extrasRes.error && extrasRes.data) || null
     };
@@ -158,23 +140,23 @@ async function renderDashboard() {
     saveDashCache();
   } catch (e) {
     dashStale = false;
-    // Keep showing the last numbers if we have them; only a first-ever load shows the retry card.
+    // Keep the last numbers if we have them; only a first-ever load shows the retry card.
     if (STATE.tab !== 'dashboard') return;
     if (hadStale) { toast(friendlyError(e), 'bad'); drawDashboard(); }
     else errorCard(c, friendlyError(e), 'renderDashboard');
     return;
   }
   dashStale = false;
-  // The person may have moved to another tab while this was loading; don't paint over it.
+  // The person may have changed tab while loading; do not paint over it.
   if (STATE.tab === 'dashboard') drawDashboard();
 }
 
 async function setDashRange(r) {
   if (r === dashRange || dashLoading) return;
   dashRange = r;
-  dashCustomStart = null; dashCustomEnd = null; // a preset tab always clears any picked custom range
+  dashCustomStart = null; dashCustomEnd = null;  // a preset tab clears any custom range
   dashLoading = true;
-  drawDashboard(); // instant tab feedback; range-dependent cards stay on the previous range's data, dimmed, until the refetch lands — no skeleton flash
+  drawDashboard();  // instant feedback; range cards stay dimmed on the old data until the refetch lands
   try {
     var res = await fetchDashboardData();
     if (res.error) throw res.error;
@@ -186,8 +168,7 @@ async function setDashRange(r) {
   drawDashboard();
 }
 
-// Item 33: the calendar button on the dashboard's range control opens this
-// small from/to picker instead of being limited to the four preset tabs.
+// From/to picker opened by the calendar button.
 function openDashDateRangePicker() {
   var start = dashCustomStart || new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10);
   var end = dashCustomEnd || new Date().toISOString().slice(0, 10);
@@ -221,10 +202,8 @@ async function applyDashCustomRange() {
   });
 }
 
-// Item 33: the "Restock" quick-access button — reuses the exact same
-// reorder-list sheet/logic Inventory already has (openReorderList), just
-// fed from the dashboard's own already-loaded stock snapshot instead of
-// re-querying, so it opens instantly.
+// "Restock" shortcut: opens Inventory's reorder list (openReorderList) from the
+// stock already loaded here, so it opens instantly.
 function dashQuickRestock() {
   if (dashSnap && dashSnap.drugList && dashSnap.drugList.length) {
     STATE.drugsCache = dashSnap.drugList;
@@ -234,16 +213,10 @@ function dashQuickRestock() {
   }
 }
 
-// Item 33 (mobile dashboard redesign, approved via sketch — see
-// PHARMA_PROJECT_STATUS.md): combines pieces from three sketched concepts —
-// the urgent-alert strip and stock-check search box, a Sell+Restock action
-// pair and the 4-tile stat grid + stock health, and the sales trend graph
-// (now a compact single-line header instead of a big centered headline)
-// placed above the stat grid with plain white cards throughout — only the
-// stat grid keeps the item-30/31 tinted-tile treatment now. Rush hours and
-// the Sales→Cost→Profit breakdown were dropped from this layout (not asked
-// for in the approved sketch); their draw functions are left in place
-// below, unused, rather than deleted, in case they're wanted back.
+// Mobile layout: alert strip, search box, Sell + Restock buttons, sales trend,
+// then the 4-tile stat grid and stock health. Only the stat grid has tinted
+// tiles. The rush-hours and Sales/Cost/Profit draw functions below are
+// currently unused; kept in case they come back.
 function drawDashboard() {
   var c = $('#content');
   var refetching = dashLoading ? ' dash-refetching' : '';
@@ -262,14 +235,13 @@ function drawDashboard() {
     '</div>';
 }
 
-// The urgent-alerts strip from the first sketch — out-of-stock count and
-// the single soonest-expiring batch (if within 30 days), tap-through to
-// Inventory. Renders nothing when there's nothing urgent to flag.
+// Urgent strip: out-of-stock count and the soonest-expiring batch (within
+// 30 days), linking to Inventory. Draws nothing when nothing is urgent.
 function dashAlertHtml(snap) {
   snap = snap || {};
   var outCount = (snap.outOfStock || []).length;
   var expiring = snap.expiring || [];
-  var soonest = expiring.length ? expiring[0] : null; // v_expiring_batches is already ordered by expiry_date
+  var soonest = expiring.length ? expiring[0] : null;  // v_expiring_batches is already ordered by expiry_date
   var soonestDays = soonest ? daysUntil(soonest.expiry_date) : null;
   var parts = [];
   if (outCount) parts.push('<b>' + outCount + ' out of stock</b>');
@@ -281,9 +253,7 @@ function dashAlertHtml(snap) {
     '<div>' + parts.join(' &middot; ') + ' — tap Stock to review</div></div>';
 }
 
-// Item 27 (Dashboard quick access), redone for item 33: a Sell shortcut
-// alongside a new Restock shortcut (straight into the same reorder list
-// Inventory already has), plus the live "is this drug in stock?" search.
+// Sell and Restock shortcuts plus the live "is this drug in stock?" search.
 function dashQuickAccessHtml() {
   return '<div class="dash-actions">' +
     '<button class="btn primary" onclick="setTab(\'sell\')">' + icon('sell', 15) + ' Sell</button>' +
@@ -325,11 +295,8 @@ function dashStockCheckSell(drugId) {
   setTab('sell');
 }
 
-// Item 33: restyled as a rounded segmented pill control (was plain
-// underlined text tabs) plus a calendar button that opens a real
-// custom-date-range picker (openDashDateRangePicker/applyDashCustomRange,
-// backed by the new dashboard_data_custom() RPC in schema.sql) instead of
-// being limited to the four presets.
+// Range control: pill-style Today/Week/Month/Year tabs plus a calendar button
+// for a custom range (openDashDateRangePicker / applyDashCustomRange).
 function dashFilterRowHtml() {
   var isCustom = dashRange === 'custom';
   return '<div class="dash-filter-row"><div class="dash-tabs">' +
@@ -342,20 +309,14 @@ function dashFilterRowHtml() {
     (isCustom && dashCustomStart && dashCustomEnd ? '<div class="dash-custom-label">' + esc(fmtDate(dashCustomStart)) + ' – ' + esc(fmtDate(dashCustomEnd)) + '</div>' : '');
 }
 
-// ---- charts: real axis (hairline gridlines + comma-formatted ticks), a
-// fixed viewBox so they scale to any container width without ever
-// clipping the axis band, and an honest "No sales recorded yet" caption
-// (inside the SAME fixed-size chart, not a layout swap) when a range has
-// no data — exactly what a brand-new pharmacy sees before its first sale.
+// ---- Charts ----
+// Hairline gridlines, comma-formatted ticks, and a fixed viewBox so they scale to
+// any width without clipping the axis. With no data, an honest "No sales
+// recorded yet" caption is drawn inside the same fixed-size chart.
 
-// Bug fix: the old thresholds (1.5 / 3 / 7) could pick a step where the top
-// tick (4 * step) fell BELOW the real max value — e.g. a max of 250 rounded
-// to a 0/50/100/150/200 axis, so a data point of 250 was plotted above the
-// chart's y=0 and rendered completely off-canvas (the "graph isn't showing"
-// bug: a real point that's simply invisible, clipped outside the SVG
-// viewBox, not missing data). Correct "nice number" boundaries are 1/2/5/10
-// — i.e. the smallest of those >= norm — which guarantees 4 * step is
-// always >= maxVal, so the highest data point always lands inside the axis.
+// Round the axis step up to 1/2/5/10 times a power of ten, so 4 * step is
+// always >= the max value. With smaller steps a point like 250 on a 0-200 axis
+// was drawn outside the chart.
 function niceTicks(maxVal) {
   if (!maxVal || maxVal <= 0) return [0, 250, 500, 750, 1000];
   var rough = maxVal / 4;
@@ -368,11 +329,8 @@ function niceTicks(maxVal) {
 }
 function fmtCompact(n) { return Math.round(n).toLocaleString(); }
 
-// UI fix: the chart used to be drawn on a fixed 600-wide canvas and then
-// stretched to the card — so on a wide desktop its axis text blew up to
-// ~20px and on a phone it shrank to ~6px (unreadable), and the last x-label
-// and end dot were clipped at the right edge. It's now drawn at the card's
-// real pixel width, with right padding and thinned x-labels.
+// Drawn at the card's real pixel width (with right padding and thinned x-labels)
+// so axis text stays readable and the last label is not clipped.
 function dashChartW() {
   var c = document.getElementById('content');
   if (!c || !c.clientWidth) return 600;
@@ -382,7 +340,7 @@ function dashChartW() {
 function axisLineChart(values, labels, w, h, color, isEmpty) {
   var ticks = niceTicks(values.length ? Math.max.apply(null, values) : 0);
   var gutter = 46, padR = 20, plotW = w - gutter - padR, labelBand = 20, totalH = h + labelBand;
-  // A week (7 labels) always shows every day name, in a slightly smaller size when the screen is narrow.
+  // A week always shows every day name, a bit smaller on narrow screens.
   var labelEvery = labels.length <= 7 ? 1 : Math.max(1, Math.ceil(labels.length * 30 / Math.max(plotW, 1)));
   var labelSize = (labels.length <= 7 && plotW / Math.max(labels.length, 1) < 32) ? 10 : 11;
   var hi = ticks[ticks.length - 1] || 1;
@@ -466,7 +424,7 @@ function dashBucketLabels(trend, bucket) {
 }
 
 function deltaChipHtml(total, prev, vsLabel) {
-  if (!prev || prev <= 0) return ''; // no real previous-period baseline — omit rather than fabricate a %
+  if (!prev || prev <= 0) return '';  // no real previous period to compare: show nothing rather than an invented %
   var pct = Math.round(((total - prev) / prev) * 100);
   var up = pct >= 0;
   return '<span class="dash-chip ' + (up ? 'up' : 'down') + '">' + (up ? '↑' : '↓') + ' ' + Math.abs(pct) + '% vs ' + vsLabel + '</span>';
@@ -477,11 +435,7 @@ function dashDeltaText(total, prev, vsLabel) {
   return (pct >= 0 ? '+' : '') + pct + '% vs ' + vsLabel;
 }
 
-// Item 33: the header used to be a centered section-title + a big 28px
-// headline + a separate centered chip row, stacked tall above the chart —
-// collapsed here into one compact label/value row (matching the rest of
-// the redesigned dashboard's card headers) so the chart starts almost
-// immediately below it instead of after three stacked lines of text.
+// Compact header: label and value on one row so the chart starts right below.
 function dashSalesGraphHtml(d) {
   var total = d ? Number(d.sales_total || 0) : 0;
   var prev = d ? Number(d.sales_prev_total || 0) : 0;
@@ -493,7 +447,7 @@ function dashSalesGraphHtml(d) {
   var periodLabel = (DASH_PERIOD_LABEL[dashRange] || 'Today').toLowerCase();
   return '<div class="dash-card-head"><div class="t">Sales &mdash; ' + esc(periodLabel) + '</div><div class="v">' + fmt(total) + '</div></div>' +
     (chip ? '<div class="dash-graph-chip-row">' + chip + '</div>' : '') +
-    '<div class="dash-chart-wrap">' + axisLineChart(values, labels, dashChartW(), dashChartW() > 640 ? 180 : 140, DCOLOR.sales, isEmpty) + '</div>';
+    '<div class="dash-chart-wrap">' + axisLineChart(values, labels, dashChartW(), dashChartW() > 640 ? 180 : 140, DCOLOR.salesLine, isEmpty) + '</div>';
 }
 
 function dashRushGraphHtml(d) {
@@ -514,11 +468,8 @@ function dashRushGraphHtml(d) {
   '</div>';
 }
 
-// Item 33: replaces the old single-file dash-pill-row — now a 2-up grid
-// (4-up on desktop) with Sales and Profit paired first, Stock value and
-// Supplier debt owed second, per the approved sketch. Still the item-30/31
-// tinted-tile treatment (background + accent border in the stat's own
-// hue); just no more colored dot, to match the sketch's plainer tile face.
+// Stat tiles: 2 across (4 on desktop). Sales and Profit first, then Stock value
+// and Supplier debt. Each tile is tinted in its own colour.
 function dashStatGridHtml(d, snap) {
   snap = snap || {};
   var salesTotal = d ? Number(d.sales_total || 0) : 0;
@@ -554,11 +505,8 @@ function segmentedBarHtml(segments, h) {
   return '<div style="display:flex;width:100%;height:' + h + 'px;border-radius:' + (h / 2) + 'px;overflow:hidden;background:var(--line)">' + parts + '</div>';
 }
 
-// Item 33: compact header (was a full-width section-title) and the
-// out-of-stock/low-stock/healthy legend is now a fixed 3-column grid
-// instead of a wrapping flex row, so all three always sit on one line
-// (short labels — "Out 18" not "Out of stock (18)" — are what makes that
-// fit at phone width) instead of the third item dropping to its own line.
+// Stock health header, with the Out / Low / Healthy legend as a fixed 3-column
+// grid so all three sit on one line on a phone.
 function dashStockHealthHtml(snap) {
   snap = snap || {};
   var out = (snap.outOfStock || []).length, low = (snap.lowStock || []).length;
@@ -641,8 +589,7 @@ function dashTopSellersCard(d) {
   for (var i = top4.length; i < 4; i++) rows += dashPlaceholderRowHtml();
   var empty = all.length === 0 ? '<div class="tiny" style="text-align:center;margin-top:14px">No sales recorded yet this period.</div>' : '';
   var footer = all.length > 4 ? '<button class="dash-view-all" onclick="openTopSellersFull()">View all ' + all.length + ' &rarr;</button>' : '';
-  // Item 33: plain white card (no more blue tint) and a compact left-aligned
-  // header, matching the approved sketch — only the stat grid keeps tinting.
+  // Plain white card with a compact left-aligned header.
   return '<div class="card dash-list-card t-blue"><div class="dash-card-head"><div class="t">' + esc(DASH_TOPSELLERS_TITLE[dashRange] || 'Top sellers') + '</div></div>' + rows + empty + footer + '</div>';
 }
 
@@ -689,4 +636,3 @@ function listRow(name, meta, right) {
   return '<div class="list-row"><div><div class="name">' + esc(name) + '</div><div class="meta">' + meta + '</div></div><div class="right">' + right + '</div></div>';
 }
 
-// ---------------------------------------------------------------------------
