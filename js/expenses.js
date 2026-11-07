@@ -262,6 +262,9 @@ async function toggleStaffActive(btn, profileId, makeActive) {
 async function saveSettings() {
   var btn = $('#stSaveBtn') || $('#stSaveThresholdsBtn');
   act(btn, async function () {
+    var daysRaw = $('#stLowDays') ? $('#stLowDays').value.trim() : '';
+    var lowDays = daysRaw === '' ? null : parseInt(daysRaw, 10);
+    if (lowDays !== null && (isNaN(lowDays) || lowDays < 1 || lowDays > 90)) { toast('Enter a number of days from 1 to 90, or leave it empty.', 'bad'); return; }
     var payload = {
       name: $('#stName').value.trim(),
       address: $('#stAddress').value.trim() || null,
@@ -271,7 +274,8 @@ async function saveSettings() {
       kra_pin: $('#stKra').value.trim() || null,
       low_stock_default: parseInt($('#stLowDefault').value, 10) || 5,
       expiry_warn_days: parseInt($('#stExpiryDays').value, 10) || 90,
-      vat_rate: parseFloat($('#stVat').value) || 16
+      vat_rate: parseFloat($('#stVat').value) || 16,
+      low_stock_days: lowDays
     };
     var { error } = await sb.from('pharmacies').update(payload).eq('id', STATE.profile.pharmacy_id);
     if (error) { toast(friendlyError(error), 'bad'); return; }

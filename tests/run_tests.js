@@ -1013,7 +1013,7 @@ async function main() {
         'the billing trigger refuses the change even if the table-wide right came back', 'the trigger must block billing edits on its own');
     });
     await c.query('revoke update on pharmacies from authenticated');
-    await c.query('grant update (name, address, town, phone, email, kra_pin, low_stock_default, expiry_warn_days, vat_rate) on pharmacies to authenticated');
+    await c.query('grant update (name, address, town, phone, email, kra_pin, low_stock_default, expiry_warn_days, vat_rate, low_stock_days) on pharmacies to authenticated');
     const planAfter = (await c.query('select subscription_expires_at::text e, subscription_status s, next_invoice_no n from pharmacies where id = $1', [pharmacyId])).rows[0];
     assert(planAfter.e === planBefore.e && planAfter.s === planBefore.s && planAfter.n === planBefore.n, 'the plan and invoice counter are exactly as they were after all those attempts');
     await asUser(c, adminRes.rows[0].id);
@@ -1352,6 +1352,80 @@ async function main() {
     await asUser(c, sOwner);
     await assertThrows(c.query('select admin_support_status()'), 'a pharmacy owner cannot use the admin support functions', 'owner should not run admin_support_status');
     await assertThrows(c.query('select admin_open_support($1)', [phA]), 'a pharmacy owner cannot open support sessions', 'owner should not run admin_open_support');
+
+    // --------------------------------------------------------------
+    console.log('\n== Days-of-stock-left alert, next to the fixed reorder level ==');
+    const dUser = (await c.query('insert into auth.users default values returning id')).rows[0].id;
+    await asUser(c, dUser);
+    const dPh = (await c.query("select bootstrap_pharmacy('Days Test', 'Days Owner', '0711000009') as id")).rows[0].id;
+    const mkDrug = async (name, level, custom) => (await c.query(
+      "insert into drugs (pharmacy_id, name, form, unit, reorder_level, reorder_custom, created_at) values ($1,$2,'tablet','tablet',$3,$4, now() - interval '40 days') returning id",
+      [dPh, name, level, custom])).rows[0].id;
+    const dFast = await mkDrug('Fast Drug', 5, false), dSlow = await mkDrug('Slow Drug', 5, false);
+    const dPin = await mkDrug('Pinned Drug', 10, true), dNone = await mkDrug('No Sales Drug', 7, false), dVoid = await mkDrug('Voided Drug', 5, false);
+    for (const id of [dFast, dSlow, dPin, dNone, dVoid]) {
+      await c.query("select record_restock($1,$2,100,5,10,(current_date + interval '300 days')::date,'B1','S')", [dPh, id]);
+    }
+    const sellN = async (id, n) => (await c.query(
+      "select record_sale($1, jsonb_build_array(jsonb_build_object('drug_id',$2::text,'quantity',$3::int)), jsonb_build_array(jsonb_build_object('method','cash','amount',$4::numeric))) as id",
+      [dPh, id, n, n * 10])).rows[0].id;
+    await sellN(dFast, 70); await sellN(dSlow, 3); await sellN(dPin, 60);
+    const voidSale = await sellN(dVoid, 90);
+    await c.query("select void_sale($1,$2,'test')", [dPh, voidSale]);
+    const vds = async (id) => (await c.query('select * from v_drug_stock where drug_id = $1', [id])).rows[0];
+
+    // off (the state of every pharmacy today): the number in force is the stored number, nothing else moves
+    assert((await c.query('select low_stock_days from pharmacies where id = $1', [dPh])).rows[0].low_stock_days === null, 'the days alert is off for a pharmacy until its owner turns it on');
+    assert((await vds(dFast)).reorder_level === 5 && (await vds(dPin)).reorder_level === 10 && (await vds(dNone)).reorder_level === 7, 'with the days alert off, every drug keeps its stored reorder level');
+    assert((await vds(dFast)).days_left === null && (await vds(dFast)).daily_rate === null, 'with the days alert off, no sales speed is worked out');
+    assert(Number((await c.query('select count(*) n from v_low_stock where pharmacy_id = $1', [dPh])).rows[0].n) === 0, 'and nothing is low yet (every drug is above its stored level)');
+
+    // an owner can turn it on from the app's database role; nonsense values are refused
+    await c.query('set role authenticated');
+    await c.query('update pharmacies set low_stock_days = 5 where id = $1', [dPh]);
+    await c.query('reset role');
+    await assertThrows(c.query('update pharmacies set low_stock_days = 0 where id = $1', [dPh]), 'zero days is refused', 'zero days should be refused');
+    await assertThrows(c.query('update pharmacies set low_stock_days = 91 where id = $1', [dPh]), 'more than 90 days is refused', 'more than 90 days should be refused');
+
+    // on: 5 days. Fast sold 70 in 30 days = 2.333/day -> 12 ; Slow 3 -> 0.1/day -> 1
+    const f = await vds(dFast), sl = await vds(dSlow);
+    assert(f.reorder_level === 12, 'a drug that sells 70 in 30 days warns at 12 (5 days of sales), not at its stored 5');
+    assert(sl.reorder_level === 1, 'a drug that sells 3 in 30 days warns at 1');
+    assert(Number(f.daily_rate) === 2.333 && Number(f.days_left) === 12.9, 'days left = stock / daily sales (30 / 2.333 = 12.9)');
+    assert(f.reorder_own === 5 && f.reorder_custom === false, 'the stored number is still available as reorder_own');
+    assert((await vds(dPin)).reorder_level === 10, 'a drug with its own number keeps it, however fast it sells');
+    assert((await vds(dNone)).reorder_level === 7 && (await vds(dNone)).days_left === null, 'a drug with no sales keeps its stored level and shows no days left');
+    assert((await vds(dVoid)).reorder_level === 5, 'a voided sale does not count as sales');
+    await sellN(dFast, 18);   // 12 left; rate now 88/30
+    const f2 = await vds(dFast);
+    assert(f2.reorder_level === 15 && Number(f2.qty_in_stock) === 12, 'selling more raises the number in force (88 in 30 days -> 15)');
+    assert((await c.query('select count(*) n from v_low_stock where drug_id = $1', [dFast])).rows[0].n === '1', 'v_low_stock follows the number in force: 12 left is at or below 15');
+    const fSale = (await c.query('select si.id from sale_items si where si.drug_id = $1 limit 1', [dFast])).rows[0].id;
+    await c.query("select record_return($1,$2,10,'test')", [dPh, fSale]);
+    assert(Number((await vds(dFast)).daily_rate) === 2.6 && (await vds(dFast)).reorder_level === 13, 'a return is taken off the sales speed (78 in 30 days -> 13)');
+
+    // turning it off puts everything back exactly
+    await c.query('update pharmacies set low_stock_days = null where id = $1', [dPh]);
+    assert((await vds(dFast)).reorder_level === 5 && (await vds(dFast)).days_left === null, 'turning the days alert off restores the stored levels');
+    await c.query('update pharmacies set low_stock_days = 5 where id = $1', [dPh]);
+
+    // edit_drug: the old way of calling it still works and does not change the pin
+    const eArgs = (custom, level) => [dPh, dPin, 'Pinned Drug', null, 'tablet', 'tablet', level, false, null, null].concat(custom === undefined ? [] : [custom]);
+    await c.query('select edit_drug($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)', eArgs(undefined, 12));
+    assert((await vds(dPin)).reorder_level === 12 && (await vds(dPin)).reorder_custom === true, 'an older app calling edit_drug without the new argument still works and keeps the pin');
+    await c.query('select edit_drug($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', eArgs(false, null));
+    assert((await vds(dPin)).reorder_custom === false && (await vds(dPin)).reorder_own === 12 && (await vds(dPin)).reorder_level === 10, 'empty number + days: the drug switches to the days alert (60 sold in 30 days -> 10) and its stored number 12 is kept');
+    await assertThrows(c.query('select edit_drug($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', eArgs(true, null)), 'pinning a drug without giving a number is refused', 'a pinned drug needs a number');
+    await assertThrows(c.query('select edit_drug($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', eArgs(false, -1)), 'a negative number is refused', 'a negative number should be refused');
+    await c.query('select edit_drug($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', eArgs(true, 3));
+    assert((await vds(dPin)).reorder_level === 3 && (await vds(dPin)).reorder_custom === true, 'typing a number pins the drug to it');
+
+    // another pharmacy is not affected by this pharmacy's setting
+    const otherOwner = (await c.query('insert into auth.users default values returning id')).rows[0].id;
+    await asUser(c, otherOwner);
+    const oPh = (await c.query("select bootstrap_pharmacy('Days Other', 'Other Owner', '0711000010') as id")).rows[0].id;
+    const oDrug = (await c.query("insert into drugs (pharmacy_id, name, form, unit, reorder_level) values ($1,'Other Drug','tablet','tablet',6) returning id", [oPh])).rows[0].id;
+    assert((await vds(oDrug)).reorder_level === 6, 'a pharmacy that did not turn the days alert on is not affected by another one doing so');
   });
 
   console.log('\n' + '='.repeat(60));

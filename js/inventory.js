@@ -54,11 +54,26 @@ function drawInventory() {
         ? ' <span class="badge ' + (daysUntil(d.soonest_expiry) <= 30 ? 'bad' : 'warn') + '">exp ' + fmtDate(d.soonest_expiry) + '</span>' : '') : '';
       return '<div class="list-row" onclick="openDrugDetail(\'' + d.drug_id + '\')" style="cursor:pointer">' +
         '<div style="display:flex;align-items:center;gap:12px"><div class="row-avatar ' + (kind === 'good' ? '' : kind) + '">' + esc((d.name || '?').charAt(0).toUpperCase()) + '</div>' +
-        '<div><div class="name">' + esc(d.name) + '</div><div class="meta">' + fmt(d.stock_value_retail) + ' in stock value' + expBadge + '</div></div></div>' +
+        '<div><div class="name">' + esc(d.name) + '</div><div class="meta">' + fmt(d.stock_value_retail) + ' in stock value' + expBadge + '</div>' + daysLeftNote(d) + '</div></div>' +
         '<div class="right">' + badge + '<div class="meta">' + esc(qtyUnit(d.qty_in_stock, d.unit)) + '</div></div></div>';
     }).join('') : '<div class="empty">No drugs match. Try clearing the search or add a new one.</div>') + '</div>' +
     (allRows.length > rows.length ? '<button class="btn ghost" style="margin-top:10px" onclick="invPage++;drawInventory()">Load more (' + (allRows.length - rows.length) + ' more)</button>' : '') +
     (can('edit_inventory') ? '<button class="btn ghost small" id="hiddenDrugsBtn" style="margin-top:12px" onclick="openHiddenDrugs()">' + icon('box',15) + ' Hidden drugs</button>' : ''));
+}
+
+// "~3 days left" under a drug, shown only when the pharmacy has turned the days alert on.
+// A drug with its own number shows that number instead. No sales yet: nothing to show.
+function daysLeftLabel(days) {
+  var n = Number(days);
+  if (n < 1) return 'less than 1 day left';
+  if (n >= 90) return '90+ days left';
+  var r = Math.round(n);
+  return '~' + r + (r === 1 ? ' day' : ' days') + ' left';
+}
+function daysLeftNote(d) {
+  if (!(STATE.pharmacy && STATE.pharmacy.low_stock_days) || !(Number(d.qty_in_stock) > 0)) return '';
+  var text = d.reorder_custom ? 'Warns at ' + d.reorder_own + ' (own number)' : (d.days_left != null ? daysLeftLabel(d.days_left) : '');
+  return text ? '<div class="meta"><b>' + esc(text) + '</b></div>' : '';
 }
 
 function exportInventoryExcel() {

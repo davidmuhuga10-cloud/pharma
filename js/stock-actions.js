@@ -140,6 +140,8 @@ async function saveNewDrug() {
       unit: $('#dUnit').value.trim() || 'unit',
       category_id: $('#dCat').value || null,
       reorder_level: parseInt($('#dReorder').value, 10) || 5,
+      // a number that differs from the pharmacy default was chosen for this drug, so it stays its own
+      reorder_custom: (parseInt($('#dReorder').value, 10) || 5) !== (STATE.pharmacy.low_stock_default || 5),
       is_prescription: $('#dRx').value === 'true',
       pack_size: parseInt($('#dPackSize').value, 10) || null,
       pack_label: $('#dPackLabel').value.trim() || null
@@ -182,6 +184,10 @@ function openEditDrug(encodedDrug) {
     return '<option value="' + c.id + '"' + (c.id === drug.category_id ? ' selected' : '') + '>' + esc(c.name) + '</option>';
   }).join('');
   var forms = ['tablet', 'capsule', 'syrup', 'injection', 'cream_ointment', 'drops', 'suppository', 'inhaler', 'iv_fluid', 'other'];
+  // With the days alert on, a drug that has no number of its own shows an empty box.
+  window.__editDrugWas = { id: drug.id, custom: !!drug.reorder_custom, level: drug.reorder_level };
+  var daysOn = !!(STATE.pharmacy && STATE.pharmacy.low_stock_days);
+  var shownLevel = (daysOn && !drug.reorder_custom) ? null : drug.reorder_level;
   var body = sheet('Edit: ' + drug.name, '');
   body.innerHTML =
     '<div class="field"><label>Drug name</label><input id="eName" value="' + esc(drug.name) + '"></div>' +
@@ -191,9 +197,10 @@ function openEditDrug(encodedDrug) {
     '</select></div>' +
     '<div class="field"><label>Unit</label><input id="eUnit" value="' + esc(drug.unit || '') + '"></div></div>' +
     '<div class="field"><label>Category</label><select id="eCat"><option value="">— none —</option>' + catOptions + '</select></div>' +
-    '<div class="row-2">' +
-    '<div class="field"><label>Reorder level</label><input id="eReorder" type="number" min="0" value="' + (drug.reorder_level == null ? '' : drug.reorder_level) + '"></div>' +
-    '<div class="field"><label>Prescription only?</label><select id="eRx"><option value="false"' + (drug.is_prescription ? '' : ' selected') + '>No</option><option value="true"' + (drug.is_prescription ? ' selected' : '') + '>Yes</option></select></div></div>' +
+    (daysOn ? '' : '<div class="row-2">') +
+    '<div class="field"><label>' + (daysOn ? 'Warn me at (optional)' : 'Reorder level') + '</label><input id="eReorder" type="number" min="0" value="' + (shownLevel == null ? '' : shownLevel) + '"' + (daysOn ? ' placeholder="Empty: uses ' + STATE.pharmacy.low_stock_days + ' days left"' : '') + '>' +
+      (daysOn ? '<div class="tiny" style="margin-top:4px">A number here always wins for this drug. Leave it empty to warn when the drug will last fewer than ' + STATE.pharmacy.low_stock_days + ' days.</div>' : '') + '</div>' +
+    '<div class="field"><label>Prescription only?</label><select id="eRx"><option value="false"' + (drug.is_prescription ? '' : ' selected') + '>No</option><option value="true"' + (drug.is_prescription ? ' selected' : '') + '>Yes</option></select></div>' + (daysOn ? '' : '</div>') +
     '<div class="row-2">' +
     '<div class="field"><label>Pack size (optional)</label><input id="ePackSize" type="number" min="1" value="' + (drug.pack_size || '') + '"></div>' +
     '<div class="field"><label>Pack label (optional)</label><input id="ePackLabel" value="' + esc(drug.pack_label || '') + '"></div></div>' +
@@ -205,8 +212,20 @@ function saveEditedDrug(drugId) {
   act($('#eSaveBtn'), async function () {
     var name = $('#eName').value.trim();
     if (!name) { toast('Give the drug a name.', 'bad'); return; }
-    var reorder = parseInt($('#eReorder').value, 10);
-    if (isNaN(reorder) || reorder < 0) { toast('Enter a reorder level of 0 or more.', 'bad'); return; }
+    var daysOn = !!(STATE.pharmacy && STATE.pharmacy.low_stock_days);
+    var raw = $('#eReorder').value.trim();
+    var reorder = raw === '' ? null : parseInt(raw, 10);
+    // custom: true = this drug has its own number; false = use the days alert; null = leave as it is.
+    var custom = null;
+    if (reorder === null) {
+      if (!daysOn) { toast('Enter a reorder level of 0 or more.', 'bad'); return; }
+      custom = false;
+    } else {
+      if (isNaN(reorder) || reorder < 0) { toast('Enter a reorder level of 0 or more.', 'bad'); return; }
+      var was = window.__editDrugWas || {};
+      // Saving the box untouched must not pin a drug that was using the days alert.
+      custom = (was.id === drugId && !was.custom && reorder === was.level) ? null : true;
+    }
     await rpcCall('edit_drug', {
       p_pharmacy_id: STATE.profile.pharmacy_id,
       p_drug_id: drugId,
@@ -215,6 +234,7 @@ function saveEditedDrug(drugId) {
       p_form: $('#eForm').value,
       p_unit: $('#eUnit').value.trim(),
       p_reorder_level: reorder,
+      p_reorder_custom: custom,
       p_is_prescription: $('#eRx').value === 'true',
       p_pack_size: parseInt($('#ePackSize').value, 10) || null,
       p_pack_label: $('#ePackLabel').value.trim() || null

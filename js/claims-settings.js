@@ -101,6 +101,8 @@ async function renderSettings() {
 
     '<div class="section-title">Alert thresholds</div>' +
     '<div class="card">' +
+    '<div class="field"><label>Warn me when a drug will last fewer than (days)</label><input id="stLowDays" type="number" min="1" max="90" placeholder="Off" value="' + (p.low_stock_days || '') + '" ' + (isOwner ? '' : 'disabled') + '>' +
+    '<div class="tiny" style="margin-top:4px">Worked out from each drug\'s sales over the last 30 days. A drug with its own number (Edit details) uses that number instead. Leave empty to use only the numbers set on each drug.</div></div>' +
     '<div class="row-2">' +
     '<div class="field"><label>Default reorder level (new drugs)</label><input id="stLowDefault" type="number" value="' + (p.low_stock_default || 5) + '" ' + (isOwner ? '' : 'disabled') + '></div>' +
     '<div class="field"><label>"Expiring soon" window (days)</label><input id="stExpiryDays" type="number" value="' + (p.expiry_warn_days || 90) + '" ' + (isOwner ? '' : 'disabled') + '></div></div>' +

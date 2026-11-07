@@ -2,6 +2,13 @@
 
 Newest first. The detailed story for each item is in `PHARMA_PROJECT_STATUS.md`.
 
+## 2026-11-07 (night, last+++++++): days-of-stock-left alert
+
+- Settings > Alert thresholds: new box "Warn me when a drug will last fewer than (days)". Empty = off, and it is off for every pharmacy until the owner types a number, so nothing changes for anyone today.
+- When on, each drug's warning number is worked out from its sales in the last 30 days (voided sales and returns taken off). A drug with its own number (typed in Edit details) always keeps it. A drug with no sales yet keeps its stored number.
+- Edit details: the reorder box becomes "Warn me at (optional)"; empty = use the days alert. Stock list shows "~N days left" under each drug (or "Warns at N (own number)").
+- Database: `migrations/2026-11-07_days_left_alert.sql` (folded into schema.sql). `v_drug_stock.reorder_level` is now the number in force, so low stock, the reorder list and the dashboard follow with no other change. New: `pharmacies.low_stock_days`, `drugs.reorder_custom`, view columns `reorder_own`, `daily_rate`, `days_left`; `edit_drug` takes an optional `p_reorder_custom`. Existing drugs whose number differs from the pharmacy default are marked as having their own number. Cache `hodhi-shell-v3m`.
+
 ## 2026-11-07 (night, last++++++): Kiswahili note removed
 
 - Settings > Account: the "Language: English (Kiswahili is coming soon...)" line is gone. Nothing else changed. Cache `hodhi-shell-v3l`.
