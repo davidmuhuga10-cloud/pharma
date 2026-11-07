@@ -33,5 +33,9 @@ const sels = (block.replace(/\/\*[\s\S]*?\*\//g, '').match(/[^{}]+(?=\{)/g) || [
 sels.forEach(s => s.split(',').forEach(p => check(/:has\(\.topbar\)/.test(p), 'scoped to the app only: ' + p.trim())));
 check(!/\.auth|#authBody|\.kpi|\.dash-graph|\.dash-stat|\.dash-list-card|\.dash-chart|\.dash-card-head|\.t-green/.test(sels.join(' ')), 'sign-in screens, tiles and graphs are not touched by the theme');
 
+// The out-of-stock / expiry strip on the dashboard is plain red, not brown.
+const alertRule = (css.match(/\n\.dash-alert\s*\{([^}]*)\}/) || [])[1] || '';
+check(/[^-]color:\s*var\(--red\)/.test(alertRule) && !/#8a2a22/i.test(alertRule), 'the dashboard out-of-stock strip text is red, not brown');
+
 if (failed) process.exit(1);
 console.log('app theme: ok');

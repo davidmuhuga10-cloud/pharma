@@ -51,4 +51,8 @@ check(/interval '8 hours'/.test(dm), 'a direct session closes by itself after 8 
 check(/grant_support_access/.test(prof) && /Get support/.test(prof), 'Get support is still in the owner\'s Profile');
 check(!/password|service_role|SERVICE_ROLE/i.test(dm.replace(/--[^\n]*/g, '')), 'no password or service key is used to open a pharmacy');
 check(/Folded in from migrations\/2026-11-07_admin_direct_access\.sql/.test(schema), 'schema.sql carries the direct-access change');
+
+// No "Kiswahili coming soon" line anywhere in the app screens.
+['js/claims-settings.js','js/profile.js','js/shell.js','index.html'].forEach(f => check(!/kiswahili|coming soon/i.test(read(f)), f + ' has no "Kiswahili coming soon" text'));
+if (failed) process.exit(1);
 console.log('support and profile: ok');

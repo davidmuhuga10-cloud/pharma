@@ -2,6 +2,14 @@
 
 Newest first. The detailed story for each item is in `PHARMA_PROJECT_STATUS.md`.
 
+## 2026-11-07 (night, last++++++): Kiswahili note removed
+
+- Settings > Account: the "Language: English (Kiswahili is coming soon...)" line is gone. Nothing else changed. Cache `hodhi-shell-v3l`.
+
+## 2026-11-07 (night, last+++++): red out-of-stock strip
+
+- Dashboard: the "N out of stock" strip text is now plain red instead of brown. Colour only. Service worker cache bumped to v3k.
+
 ## 2026-11-07 (night, last++++): space under the heart line
 
 - Phone sign-in: the logo and everything under it sit 16px lower, so the heartbeat line no longer touches the logo. Checked at six phone sizes with the install bar showing: everything still fits without cutting off the bottom. Cache `hodhi-shell-v3j`.

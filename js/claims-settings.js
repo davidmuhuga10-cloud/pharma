@@ -134,7 +134,6 @@ async function renderSettings() {
     '<div class="section-title">Account</div>' +
     '<div class="card">' +
     '<div class="tiny" style="margin-bottom:10px">Signed in as ' + esc(STATE.profile.full_name || '') + ' (' + esc(roleLabel(STATE.profile.role)) + ')' +
-    (STATE.profile.account_expires_at ? ' · temporary access, expires ' + fmtDate(STATE.profile.account_expires_at) : '') + '</div>' +
-    '<div class="field"><label>Language</label><div class="tiny">English (Kiswahili is coming soon — turned off for now so the app doesn\'t mix half-translated screens)</div></div></div>';
+    (STATE.profile.account_expires_at ? ' · temporary access, expires ' + fmtDate(STATE.profile.account_expires_at) : '') + '</div></div>';
 }
 
