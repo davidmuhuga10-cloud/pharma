@@ -1223,12 +1223,30 @@ body:has(.topbar) .dlg-actions .btn { border-radius: 12px; padding: 14px 12px; f
   .auth-brand:has(.auth-sheet) { border-right: 4px solid #A6D63C; }
 }
 
-/* Inventory action tiles: a two-column grid, each tile with a coloured icon badge. Green = stock counting, blue = bringing drugs in, red = controlled drugs, plain = Excel/Print. */
-.action-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 14px; }
-.tile { display: flex; align-items: center; gap: 10px; padding: 12px; background: #fff; border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow-sm); color: var(--ink); font-weight: 700; font-size: 14px; text-align: left; line-height: 1.2; }
-.tile .ic-svg { flex: none; box-sizing: content-box; padding: 8px; border-radius: 10px; }
-.tile.tone-green .ic-svg { background: var(--green-light); color: var(--green); }
-.tile.tone-blue .ic-svg { background: var(--d-blue-light); color: #2F5A8F; }
-.tile.tone-red .ic-svg { background: var(--red-light); color: var(--red); }
-.tile.tone-plain .ic-svg { background: #EFEDEA; color: var(--ink); }
-.tile:active { transform: scale(0.98); }
+/* ---- SQUARE BUTTONS ----
+   Flat, square-cornered, thin, uppercase bars with a solid background colour, everywhere inside the app.
+   Black = main/neutral actions (also Excel/Print/back), red = secondary and danger, green = counting,
+   blue = bringing drugs in, lime = the one big "add" button. Badges and tags match. Scoped to the app
+   shell only, so the sign-in screens keep their own look. */
+body:has(.topbar) .btn { border-radius: 0 !important; text-transform: uppercase; letter-spacing: .05em; font-weight: 700; font-size: 12px; min-height: 34px; padding-top: 8px; padding-bottom: 8px; box-shadow: none !important; }
+body:has(.topbar) .btn.small { min-height: 30px; padding: 6px 12px; font-size: 11.5px; }
+body:has(.topbar) .btn.ghost, body:has(.topbar) .btn:not(.primary):not(.secondary):not(.danger):not(.lime):not(.sq-green):not(.sq-blue):not(.sq-red) { background: #221F1D; color: #fff; }
+body:has(.topbar) .btn.danger { background: var(--red); color: #fff; }
+body:has(.topbar) .btn.lime { background: #A6D52F; color: #1B2A0A; }
+body:has(.topbar) .btn.sq-green { background: #0F5132; color: #fff; }
+body:has(.topbar) .btn.sq-blue { background: #2F5A8F; color: #fff; }
+body:has(.topbar) .btn.sq-red { background: var(--red); color: #fff; }
+body:has(.topbar) .toolbar-segment .btn:hover { background: #221F1D; }
+body:has(.topbar) .toolbar-segment .btn.secondary:hover { background: var(--red); }
+.sq-grid { display: grid; gap: 6px; margin-bottom: 6px; }
+.sq-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.sq-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.sq-grid .btn { width: 100%; }
+body:has(.topbar) .badge { border-radius: 0; text-transform: uppercase; letter-spacing: .05em; font-weight: 700; }
+body:has(.topbar) .badge.good { background: #0F5132; color: #fff; }
+body:has(.topbar) .badge.warn { background: #F2C94C; color: #3B2A00; }
+body:has(.topbar) .badge.bad { background: var(--red); color: #fff; }
+body:has(.topbar) .badge.muted { background: #221F1D; color: #fff; }
+body:has(.topbar) .searchbox input { border-radius: 0; border-color: var(--ink); box-shadow: none; }
+body:has(.topbar) .dash-tabs, body:has(.topbar) .dash-tab { border-radius: 0; }
+body:has(.topbar) .sq-grid .btn { padding-left: 4px; padding-right: 4px; font-size: 11px; letter-spacing: .03em; white-space: nowrap; }
