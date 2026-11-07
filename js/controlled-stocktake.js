@@ -367,6 +367,13 @@ function saveDrugControl(btn, drugId) {
 function dashExtrasHtml(snap) {
   var x = (snap && snap.extras) || {};
   var rows = [];
+  // A sale recorded offline that came out short, went over a credit limit, or
+  // didn't quite match today's price (see record_offline_sale() in schema.sql) -
+  // the owner should see this the moment the app opens, not only on a trip to the
+  // Sales Report. can('void') is owner/co-owner/pharmacist only, same as who can
+  // actually do something about a flagged sale.
+  if (Number(x.sales_needing_review) > 0 && can('void')) rows.push(["goReport('sales')", '', 'warn',
+    '<b>' + x.sales_needing_review + ' sale' + (Number(x.sales_needing_review) === 1 ? '' : 's') + ' need' + (Number(x.sales_needing_review) === 1 ? 's' : '') + ' a look</b> — recorded offline with something to check']);
   if (Number(x.credit_owed) > 0.5 && canSeeCustomers()) rows.push(["custTab='customers';custOnlyOwing=true;setTab('customers')", 'amber', 'wallet',
     '<b>' + fmt(x.credit_owed) + '</b> owed by ' + x.credit_customers + (Number(x.credit_customers) === 1 ? ' customer' : ' customers')]);
   if (Number(x.refills_due) > 0 && canSeeCustomers()) rows.push(["custTab='refills';refillFilter='due';setTab('customers')", 'amber', 'calendar',

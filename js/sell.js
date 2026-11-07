@@ -244,9 +244,16 @@ async function openCheckout() {
     if (error) throw error;
     quote = data;
   } catch (e) {
-    body.innerHTML = '<div class="card empty">' + esc(friendlyError(e)) +
-      '<div style="margin-top:12px"><button class="btn secondary small" onclick="openCheckout()">Try again</button></div></div>';
-    return;
+    if (!looksOffline(e)) {
+      body.innerHTML = '<div class="card empty">' + esc(friendlyError(e)) +
+        '<div style="margin-top:12px"><button class="btn secondary small" onclick="openCheckout()">Try again</button></div></div>';
+      return;
+    }
+    // No connection to ask the database for the real FEFO-batch price - price
+    // from the cached shelf price instead, so the sale can still be rung up.
+    // If the real price turns out to differ once this syncs, it is flagged
+    // automatically for a look (see record_offline_sale()).
+    quote = offlineIndicativeQuote(STATE.cart);
   }
 
   if (!quote || quote.ok === false) {
@@ -271,6 +278,7 @@ async function openCheckout() {
   try { if (Date.now() - customersLoadedAt > 60000) await loadCustomers(); } catch (e) { /* keep whatever was loaded before */ }
   body.dataset.total = total;
   body.dataset.priceNote = Math.abs(total - indicative) > 0.01 ? '1' : '';
+  body.dataset.offlineQuote = quote.offlineEstimate ? '1' : '';
   var head = document.querySelector('.mask .sheet-head h2');
   if (head) head.textContent = 'Checkout — ' + fmt(total);
   drawCheckoutPayments();
@@ -319,7 +327,9 @@ function drawCheckoutPayments() {
   var canConfirm = balance === 0 && overBy <= 0.005 && !needCustomer;
   redrawKeepingFocus(body,
     '<div class="section-title" style="margin-top:0">Payment</div>' +
-    (body.dataset.priceNote
+    (body.dataset.offlineQuote
+      ? '<div class="tiny" style="margin-bottom:8px">' + icon('warn', 13) + ' No connection right now — this total is an estimate from the shelf price. The sale will still go through, print a receipt and sync automatically once you are back online.</div>'
+      : body.dataset.priceNote
       ? '<div class="tiny" style="margin-bottom:8px">This total is priced from the batches the sale will actually come out of — soonest expiry first, with any markdown applied — so it differs from the shelf price shown in the cart.</div>'
       : '') +
     checkoutPayments.map(function (p, i) {
@@ -363,8 +373,15 @@ function removePaymentLine(i) {
 async function completeSale() {
   var btn = $('#pSaveBtn');
   act(btn, async function () {
+    var body = $('#checkoutBody');
+    // Already known to be offline from openCheckout() (quote_sale could not even
+    // be reached) - go straight to the queue instead of waiting for record_sale
+    // to time out first.
+    var knownOffline = !!(body && body.dataset.offlineQuote === '1');
+
     // Re-price the receipt lines from the confirmed quote, so the receipt shows
-    // what was charged (batch price with markdown), not the shelf price.
+    // what was charged (batch price with markdown, or the shelf-price estimate
+    // if this is an offline sale), not the shelf price shown in the cart.
     var perDrug = {};
     if (lastQuote && lastQuote.lines) {
       lastQuote.lines.forEach(function (l) {
@@ -397,12 +414,21 @@ async function completeSale() {
       if (!nn) { toast('Enter the new customer\'s name.', 'bad'); return; }
       // Created first, so a failed sale (e.g. over the credit limit) does not make
       // the seller retype them.
-      customerId = await rpcCall('save_customer', {
-        p_pharmacy_id: STATE.profile.pharmacy_id, p_name: nn, p_phone: ($('#pNewPhone').value.trim() || null),
-        p_credit_limit: null, p_notes: null, p_id: null, p_sms_ok: true, p_active: true
-      });
-      checkoutCustomerId = customerId;
-      try { await loadCustomers(); } catch (e) { /* the id is what matters */ }
+      try {
+        customerId = await rpcCall('save_customer', {
+          p_pharmacy_id: STATE.profile.pharmacy_id, p_name: nn, p_phone: ($('#pNewPhone').value.trim() || null),
+          p_credit_limit: null, p_notes: null, p_id: null, p_sms_ok: true, p_active: true
+        });
+        checkoutCustomerId = customerId;
+        try { await loadCustomers(); } catch (e) { /* the id is what matters */ }
+      } catch (e) {
+        if (!looksOffline(e)) { toast(friendlyError(e), 'bad'); return; }
+        // A brand-new customer cannot be created on the server with no
+        // connection. Rather than block the sale, record it as a walk-in — the
+        // seller can add the customer properly once back online.
+        toast('No connection — recording this as a walk-in sale. Add ' + nn + ' as a customer once you are back online.');
+        customerId = null; knownOffline = true;
+      }
     }
     if (customerId) {
       var picked = customersCache.find(function (x) { return x.customer_id === customerId; });
@@ -410,24 +436,53 @@ async function completeSale() {
     }
     if (payments.some(function (p) { return p.method === 'credit'; }) && !customerId) { toast('Choose the customer who is taking this on credit.', 'bad'); return; }
     var insuranceLine = payments.find(function (p) { return p.method === 'insurance'; });
-    var { data: saleId, error } = await sb.rpc('record_sale', {
-      p_pharmacy_id: STATE.profile.pharmacy_id,
-      p_items: items,
-      p_payments: payments,
-      p_customer_name: customer,
-      p_insurance_scheme: insuranceLine ? insuranceLine.reference : null,
-      p_customer_id: customerId
-    });
-    if (error) { toast(friendlyError(error), 'bad'); return; }
-    // record_sale creates the insurance claim in the same transaction, for every
-    // insurance payment line. Doing it here as a second request could leave a sale
-    // with no claim if the connection dropped in between.
-    toast('Sale recorded.', 'good');
-    customersLoadedAt = 0;   // a credit sale changes a customer's balance
+
+    var invoiceNo = null, wasOffline = knownOffline;
+
+    if (!knownOffline) {
+      try {
+        var { data: saleId, error } = await sb.rpc('record_sale', {
+          p_pharmacy_id: STATE.profile.pharmacy_id,
+          p_items: items,
+          p_payments: payments,
+          p_customer_name: customer,
+          p_insurance_scheme: insuranceLine ? insuranceLine.reference : null,
+          p_customer_id: customerId
+        });
+        if (error) throw error;
+        // record_sale creates the insurance claim in the same transaction, for
+        // every insurance payment line. Doing it here as a second request could
+        // leave a sale with no claim if the connection dropped in between.
+        toast('Sale recorded.', 'good');
+        customersLoadedAt = 0;   // a credit sale changes a customer's balance
+        try { var { data: s } = await sb.from('sales').select('invoice_number').eq('id', saleId).single(); invoiceNo = s ? s.invoice_number : null; } catch (e) {}
+      } catch (e) {
+        if (!looksOffline(e)) { toast(friendlyError(e), 'bad'); return; }
+        wasOffline = true;   // the connection dropped partway through checkout
+      }
+    }
+
+    if (wasOffline) {
+      try {
+        await offlineQueueAdd({
+          client_ref: genClientRef(), pharmacy_id: STATE.profile.pharmacy_id,
+          sold_at: new Date().toISOString(), items: items, payments: payments,
+          customer_name: customer, insurance_scheme: insuranceLine ? insuranceLine.reference : null,
+          customer_id: customerId, queued_at: Date.now()
+        });
+      } catch (e) {
+        // The device itself could not store it either (very rare) — say so
+        // plainly rather than pretending the sale is safe.
+        toast('Could not save this sale on this device. Please try again, or write it down and ring it up once you have a connection.', 'bad');
+        return;
+      }
+      toast('No connection — this sale is saved on the device and will sync automatically.');
+      offlineQueueRefreshBadge();
+      syncOfflineQueue();   // in case a connection actually exists after all
+    }
+
     STATE.cart = [];
-    var invoiceNo = null;
-    try { var { data: s } = await sb.from('sales').select('invoice_number').eq('id', saleId).single(); invoiceNo = s ? s.invoice_number : null; } catch (e) {}
-    showReceipt(soldItems, payments, customer, invoiceNo, quotedTotal);
+    showReceipt(soldItems, payments, customer, invoiceNo, quotedTotal, wasOffline);
     lastQuote = null;
     renderSell();
   });
@@ -435,15 +490,16 @@ async function completeSale() {
 
 var pendingReceipt = null; // holds the last completed sale for the print button below
 
-function showReceipt(items, payments, customer, invoiceNo, chargedTotal) {
+function showReceipt(items, payments, customer, invoiceNo, chargedTotal, offline) {
   // chargedTotal is what record_sale billed (see openCheckout). Fall back to
   // summing the lines only if it is missing.
   var total = (chargedTotal == null)
     ? items.reduce(function (a, c) { return a + c.qty * c.price; }, 0)
     : chargedTotal;
-  pendingReceipt = { items: items, payments: payments, customer: customer, invoiceNo: invoiceNo, total: total };
+  pendingReceipt = { items: items, payments: payments, customer: customer, invoiceNo: invoiceNo, total: total, offline: !!offline };
   var body = sheet('Sale complete' + (invoiceNo ? ' — ' + invoiceNo : ''), '');
   body.innerHTML =
+    (offline ? '<div class="tiny" style="margin-bottom:8px">' + icon('warn', 13) + ' Recorded offline — no invoice number yet. This will sync and get one automatically once there is a connection.</div>' : '') +
     // listRow() escapes its first argument, so patient_name is passed raw here
     // (escaping twice printed an apostrophe as "&#39;").
     '<div class="card">' + items.map(function (it) {
@@ -462,6 +518,7 @@ function printReceipt() {
   if (!d) return;
   var extra = [];
   if (d.invoiceNo) extra.push('Invoice: ' + esc(d.invoiceNo));
+  else if (d.offline) extra.push('Recorded offline — pending sync');
   if (d.customer) extra.push('Customer: ' + esc(d.customer));
   var itemsHtml = d.items.map(function (it) {
     return '<div class="r80-row"><div class="r80-name">' + esc(it.name + (it.patient_name ? ' (' + it.patient_name + ')' : '')) + '</div>' +
