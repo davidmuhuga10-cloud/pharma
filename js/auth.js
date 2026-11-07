@@ -18,6 +18,13 @@ function authHeroHtml() {
     '<div class="auth-feat"><i>&#9200;</i><span>Expiry<br>alerts</span></div>' +
     '<div class="auth-feat"><i>&#128202;</i><span>Daily<br>reports</span></div>' +
     '<div class="auth-feat"><i>&#129534;</i><span>Printed<br>receipts</span></div>' +
+    '</div>' +
+    '<div class="auth-sheet"><h3>What Pharma does</h3><ul>' +
+    '<li><span>Batch tracking</span><u></u><b>By batch</b></li>' +
+    '<li><span>Expiry alerts</span><u></u><b>Early</b></li>' +
+    '<li><span>Daily reports</span><u></u><b>Auto</b></li>' +
+    '<li><span>Printed receipts</span><u></u><b>Ready</b></li>' +
+    '</ul><p>Counted, tracked and sold.</p></div>' +
     '</div></div>';
 }
 // Tells style.css which auth screen is showing (the benefit row is for log-in

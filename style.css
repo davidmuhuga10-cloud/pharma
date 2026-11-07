@@ -1141,6 +1141,25 @@ body:has(.topbar), body:has(.topbar) button, body:has(.topbar) input, body:has(.
 body:has(.topbar) { line-height: 1.5; }
 body:has(.topbar) h1, body:has(.topbar) h2, body:has(.topbar) h3, body:has(.topbar) h4 { font-weight: 650; letter-spacing: -.015em; }
 
+/* Pop-ups in Kodi's style: white card, header band with a divider and a light square close button, bold labels, 12px boxes, green save button, red for destructive. Inside the app only. */
+body:has(.topbar) .mask { background: rgba(16, 32, 45, .45); backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); }
+body:has(.topbar) .sheet { padding: 0; border: 0; border-radius: 16px; box-shadow: 0 12px 36px rgba(16, 32, 45, .22); }
+body:has(.topbar) .sheet-head { position: sticky; top: 0; z-index: 2; background: #fff; margin: 0; padding: 16px 20px; border-bottom: 1px solid #E8E4DE; gap: 10px; }
+body:has(.topbar) .sheet-head h2 { font-size: 17px; font-weight: 700; color: #0B3D27; line-height: 1.3; }
+body:has(.topbar) .sheet-head button { width: 34px; height: 34px; padding: 0; border-radius: 10px; background: #F1EFEC; color: #221F1D; align-items: center; justify-content: center; flex: none; }
+body:has(.topbar) #sheetBody { padding: 20px; }
+body:has(.topbar) .sheet .field label { color: #221F1D; font-weight: 700; font-size: 13px; }
+body:has(.topbar) .sheet .field input, body:has(.topbar) .sheet .field select, body:has(.topbar) .sheet .field textarea { border-radius: 12px; border: 1px solid #E8E4DE; padding: 12px 14px; }
+body:has(.topbar) .sheet .btn.primary, body:has(.topbar) .dlg .btn.primary { background: #0F5132; box-shadow: none; border-radius: 12px; padding: 14px 16px; font-weight: 700; }
+body:has(.topbar) .sheet .btn.danger, body:has(.topbar) .dlg .btn.danger { background: var(--red); color: #fff; border-radius: 12px; padding: 14px 16px; font-weight: 700; }
+body:has(.topbar) .dlg-mask { background: rgba(16, 32, 45, .45); backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); }
+body:has(.topbar) .dlg { background: #fff; border: 0; border-radius: 16px; padding: 0 0 20px; box-shadow: 0 12px 36px rgba(16, 32, 45, .22); }
+body:has(.topbar) .dlg-title { margin: 0 0 16px; padding: 16px 20px; border-bottom: 1px solid #E8E4DE; font-size: 17px; font-weight: 700; color: #0B3D27; }
+body:has(.topbar) .dlg-msg, body:has(.topbar) .dlg-input, body:has(.topbar) .dlg-actions { margin-left: 20px; margin-right: 20px; }
+body:has(.topbar) .dlg-input { width: calc(100% - 40px); border: 1px solid #E8E4DE; border-radius: 12px; padding: 12px 14px; }
+body:has(.topbar) .dlg .btn.secondary, body:has(.topbar) .dlg .btn.ghost { background: #EFEDEA; color: #221F1D; }
+body:has(.topbar) .dlg-actions .btn { border-radius: 12px; padding: 14px 12px; font-weight: 700; }
+
 /* ---- PROFILE and GET SUPPORT (js/profile.js) ---- */
 .topbar .profbtn { width: 38px; height: 38px; padding: 0; border-radius: 50%; display: grid; place-items: center; flex: none; }
 .prof-head { display: flex; gap: 12px; align-items: center; margin-bottom: 14px; }
@@ -1158,3 +1177,22 @@ body:has(.topbar) h1, body:has(.topbar) h2, body:has(.topbar) h3, body:has(.topb
 .support-banner { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 16px; background: #F2C14E; color: #201E1B; font-size: 13px; position: sticky; top: 56px; z-index: 9; }
 .support-banner button { background: #221F1D; color: #fff; border: none; border-radius: 9px; padding: 6px 12px; font-weight: 700; }
 @media (min-width: 860px) { .support-banner { margin-left: var(--sidebar-w); top: 60px; } }
+
+/* ---- AUTH: the feature card on the app sign-in, DESKTOP ONLY (like the eatery app's menu card) ----
+   On a phone nothing changes: the four icon tiles stay. From 860px up the tiles are replaced by this card.
+   The admin console keeps its own tiles on every screen. */
+.auth-sheet { display: none; }
+@media (min-width: 860px) {
+  .auth-hero:has(.auth-sheet) .auth-feats { display: none; }
+  .auth-wrap:not([data-mode="login"]) .auth-sheet { display: none; }
+  .auth-sheet { display: block; position: relative; width: 100%; max-width: 400px; margin: 34px auto 0; padding: 24px 26px 18px; border-radius: 3px; background: #FBF7EC; color: #201E1B; text-align: left; box-shadow: 0 18px 34px -14px rgba(0, 0, 0, .6); }
+  .auth-sheet::before { content: ''; position: absolute; inset: 5px; border: 1px solid #E1DACB; border-radius: 2px; pointer-events: none; }
+  .auth-sheet h3 { margin: 0 0 8px; text-align: center; font-size: 11px; font-weight: 800; letter-spacing: .26em; text-transform: uppercase; color: #0F5132; }
+  .auth-sheet ul { list-style: none; margin: 0; padding: 0; }
+  .auth-sheet li { display: flex; align-items: baseline; gap: 8px; padding: 7px 0; font-size: 17px; }
+  .auth-sheet li u { flex: 1; text-decoration: none; border-bottom: 2px dotted #9DB0A1; transform: translateY(-3px); }
+  .auth-sheet li b { font-family: Georgia, 'Playfair Display', serif; font-weight: 600; font-size: 17px; }
+  .auth-sheet p { margin: 10px 0 0; text-align: center; font-family: Georgia, 'Playfair Display', serif; font-style: italic; font-size: 14px; }
+  .auth-hero:has(.auth-sheet) .auth-hero-tag { font-family: Georgia, 'Playfair Display', serif; font-style: italic; font-weight: 500; font-size: 20px; letter-spacing: 0; text-transform: none; color: #BDE45E; }
+  .auth-brand:has(.auth-sheet) { border-right: 4px solid #A6D63C; }
+}

@@ -119,7 +119,8 @@
       '#pxBarTxt{flex:1;font-size:14px;font-weight:700;line-height:1.2;min-width:0}' +
       '#pxBarBtn{flex:none;border:0;border-radius:8px;background:#0F5132;color:#fff;font:inherit;font-size:13px;font-weight:700;padding:7px 16px;cursor:pointer}' +
       '#pxBarBtn:active{opacity:.85}' +
-      'html.pxPush .auth-wrap{margin-top:44px;min-height:calc(100vh - 44px);min-height:calc(100dvh - 44px)}';
+      'html.pxPush .auth-wrap{margin-top:calc(44px + env(safe-area-inset-top));min-height:calc(100vh - 44px - env(safe-area-inset-top));min-height:calc(100dvh - 44px - env(safe-area-inset-top))}' +
+      'html.pxPush .auth-wrap[data-mode="login"]{height:calc(100vh - 44px - env(safe-area-inset-top));height:calc(100dvh - 44px - env(safe-area-inset-top))}';
     document.head.appendChild(s);
   }
 
@@ -211,7 +212,7 @@
       if (bar && bar.parentNode) bar.parentNode.removeChild(bar);
       bar = null; document.documentElement.classList.remove('pxPush'); return;
     }
-    if (isDesktop) document.documentElement.classList.add('pxPush');   // computers: move the page down instead of covering its top
+    document.documentElement.classList.add('pxPush');   // computers and phones: move the page down instead of covering its top
     if (!bar) {
       addStyle();
       bar = document.createElement('div');

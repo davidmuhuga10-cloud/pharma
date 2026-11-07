@@ -29,5 +29,9 @@ const cap = JSON.parse(read('capacitor.config.json'));
 check(man.theme_color.toLowerCase() === cap.plugins.StatusBar.backgroundColor.toLowerCase(), 'manifest theme_color matches the Android status bar');
 check(man.background_color.toLowerCase() === cap.plugins.SplashScreen.backgroundColor.toLowerCase(), 'manifest background_color matches the Android splash');
 check(/rel="apple-touch-icon"/.test(html) && /apple-mobile-web-app-capable/.test(html), 'index.html has the iPhone home-screen tags');
+// The install bar must never cover the top of the sign-in page, on phones as well as computers.
+const inst = read('install.js');
+check(/classList\.add\('pxPush'\)/.test(inst) && !/if \(isDesktop\) document\.documentElement\.classList\.add\('pxPush'\)/.test(inst), 'the page moves down under the install bar on phones too, not only on computers');
+check(/html\.pxPush \.auth-wrap\[data-mode="login"\]\{height:calc\(100vh - 44px/.test(inst), 'the log-in screen gets shorter by the bar height so its bottom is not cut off');
 if (failed) { console.error(failed + ' check(s) failed'); process.exit(1); }
 console.log('PASS install: popup and bar wired in, installable manifest, matches the Android app colours');

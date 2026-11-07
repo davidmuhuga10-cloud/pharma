@@ -2,6 +2,19 @@
 
 Newest first. The detailed story for each item is in `PHARMA_PROJECT_STATUS.md`.
 
+## 2026-11-07 (night, last++++): space under the heart line
+
+- Phone sign-in: the logo and everything under it sit 16px lower, so the heartbeat line no longer touches the logo. Checked at six phone sizes with the install bar showing: everything still fits without cutting off the bottom. Cache `hodhi-shell-v3j`.
+
+## 2026-11-07 (night, last+++): install bar no longer covers the sign-in on phones
+
+- On a phone the "Install Pharma app" bar at the top sat on top of the sign-in page and hid the heart line and the top of the green header. The page now moves down by the bar's height (as it already did on computers) and the log-in screen gets that much shorter, so nothing is hidden and the bottom is not cut off. When the bar goes, the page goes back up.
+- Also fixed a stray closing tag I had left in the sign-in hero code. New checks in `tests/auth-desktop.test.js` (balanced tags) and `tests/install.test.js`. Service worker cache is now `hodhi-shell-v3i`.
+
+## 2026-11-07 (night, last++): desktop sign-in feature card
+
+- On a computer, the four icon tiles on the app sign-in (Batch tracking, Expiry alerts, Daily reports, Printed receipts) are replaced by a cream card with dotted lines, copied from the eatery app's "Today's menu" card; the tagline is a green italic line and a green stripe divides the two halves. **Phones and tablets under 860px are unchanged** (checked pixel for pixel at five sizes). The admin console sign-in is unchanged. Service worker cache is now `hodhi-shell-v3h`. `tests/auth-desktop.test.js` updated.
+
 ## 2026-11-07 (night, last+): admin opens any pharmacy directly
 
 - Like "Login as School" in Shule Web, but with no password, no code and no email link: on a pharmacy's page the admin taps **Open this pharmacy** and works inside it as a co-owner (view and fix), with a "Leave" banner to come back. Shule Web signs in as the school's own admin through a server function; Pharma does not need one because its pharmacy data is already filtered by one database rule, so the admin simply acts as that pharmacy.
