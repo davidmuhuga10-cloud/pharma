@@ -441,18 +441,22 @@ function supportBadge(id) {
 }
 function supportCard(p) {
   var g = A.support[p.id];
+  var openBtn = '<button class="btn primary small" id="btnOpenSupport">Open this pharmacy</button>';
   if (!g) {
-    return '<div class="card"><div class="card-head"><div><h2>Support access</h2>' +
-      '<div class="sub">Not given. The pharmacy owner can give it from Profile, then Get support, for 1 to 24 hours. You will see it here.</div></div></div></div>';
+    return '<div class="card"><div class="card-head"><div><h2>Open this pharmacy</h2>' +
+      '<div class="sub">Work inside it as a co-owner to look at a problem and fix it. No password or code is needed.</div></div></div>' +
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">' + openBtn +
+      '<span class="tiny">It closes on its own after 8 hours.</span></div>' +
+      '<div class="foot-note">Use “Leave” at the top of the app to come back here. Every time you open a pharmacy it is logged.</div></div>';
   }
   var mins = Math.max(0, Math.round((toDate(g.expires_at) - new Date()) / 60000));
   var left = (mins >= 60 ? Math.floor(mins / 60) + ' h ' : '') + (mins % 60) + ' min left';
-  return '<div class="card" style="border-color:var(--d-sales);background:var(--d-sales-light)"><div class="card-head"><div><h2>Support access</h2>' +
-    '<div class="sub">The pharmacy owner let you in to look at a problem and fix it.</div></div>' +
-    '<span class="badge good"><span class="dot"></span>Until ' + esc(hm(toDate(g.expires_at))) + '</span></div>' +
-    '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><button class="btn primary small" id="btnOpenSupport">Open this pharmacy (support view)</button>' +
-    '<span class="tiny">' + esc(left) + '. It ends on its own, and the owner can stop it sooner.</span></div>' +
-    '<div class="foot-note">Each time you open it, the owner can see that in their access history. Use “Leave” at the top of the app to come back here.</div></div>';
+  return '<div class="card" style="border-color:var(--d-sales);background:var(--d-sales-light)"><div class="card-head"><div><h2>Open this pharmacy</h2>' +
+    '<div class="sub">The pharmacy owner has also let you in through Get support.</div></div>' +
+    '<span class="badge good"><span class="dot"></span>Owner access until ' + esc(hm(toDate(g.expires_at))) + '</span></div>' +
+    '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">' + openBtn +
+    '<span class="tiny">' + esc(left) + ' on the owner\'s access. Your own session closes after 8 hours.</span></div>' +
+    '<div class="foot-note">Each time you open it with the owner\'s access, the owner can see that in their access history. Use “Leave” at the top of the app to come back here.</div></div>';
 }
 function wireSupport(p) {
   var b = $('#btnOpenSupport');

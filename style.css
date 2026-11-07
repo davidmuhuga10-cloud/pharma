@@ -894,7 +894,7 @@ html,body{margin:0}
   html:has(.auth-wrap[data-mode="login"]) body { overflow: hidden; overscroll-behavior: none; }
   html:has(.auth-wrap[data-mode="login"]) body { padding-bottom: 0; }
   .auth-wrap[data-mode="login"] { height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; }
-  .auth-wrap[data-mode="login"] .auth-brand { padding-top: calc(clamp(24px, 7vh, 80px) + env(safe-area-inset-top, 0px)); }
+  .auth-wrap[data-mode="login"] .auth-brand { padding-top: calc(clamp(24px, 7vh, 80px) + 16px + env(safe-area-inset-top, 0px)); } /* +16px: clear air between the heartbeat line and the logo */
 }
 @media (max-width: 859px) and (max-height: 820px) {
   .auth-wrap[data-mode="login"] { padding-bottom: 40px; }

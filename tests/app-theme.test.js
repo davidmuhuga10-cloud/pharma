@@ -24,6 +24,9 @@ check(/font-family:\s*'Inter',\s*-apple-system/.test(block), 'the app uses the K
 check(/h1[^{]*\{[^}]*font-weight:\s*650[^}]*letter-spacing:\s*-\.015em/.test(block), 'headings use the Kodi weight and spacing');
 const noteRule = (css.match(/\.support-note\s*\{([^}]*)\}/) || [])[1] || '';
 check(/background:\s*#F4F2EF/i.test(noteRule) && !/amber/.test(noteRule), 'the Get support notice uses the warm light Kodi background, not the amber/reddish one');
+check(/\.sheet-head \{[^}]*border-bottom: 1px solid #E8E4DE/.test(block), 'pop-ups have a header band with a divider (Kodi style)');
+check(/\.sheet-head button \{[^}]*width: 34px[^}]*background: #F1EFEC/.test(block), 'pop-ups have a light square close button');
+check(/\.sheet \.btn\.danger[^{]*\{[^}]*background: var\(--red\)/.test(block), 'destructive buttons in pop-ups are solid red');
 
 // Every selector in the block is scoped to the app shell, so sign-in pages cannot be touched.
 const sels = (block.replace(/\/\*[\s\S]*?\*\//g, '').match(/[^{}]+(?=\{)/g) || []).map(s => s.trim()).filter(s => s && !s.startsWith('@'));

@@ -25,7 +25,7 @@ function authHeroHtml() {
     '<li><span>Daily reports</span><u></u><b>Auto</b></li>' +
     '<li><span>Printed receipts</span><u></u><b>Ready</b></li>' +
     '</ul><p>Counted, tracked and sold.</p></div>' +
-    '</div></div>';
+    '</div>';
 }
 // Tells style.css which auth screen is showing (the benefit row is for log-in
 // only). Returns '' so it can start each body.innerHTML string.
