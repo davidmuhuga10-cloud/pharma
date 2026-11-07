@@ -34,7 +34,7 @@ var STATE = {
 // A person with no profile row has no access at all.
 var PHARMACIST_ACTIONS = ['sell', 'view_dashboard', 'view_inventory', 'view_reports', 'print', 'export',
   'edit_inventory', 'restock', 'write_off', 'correct_stock', 'return', 'void', 'discount', 'claims', 'suppliers', 'expenses',
-  'customers', 'sms', 'credit_limit', 'controlled', 'view_controlled', 'stock_take', 'approve_stock_take', 'cash_close', 'cash_review'];
+  'customers', 'sms', 'credit_limit', 'controlled', 'view_controlled', 'stock_take', 'approve_stock_take', 'undo_stock_sheet', 'cash_close', 'cash_review'];
 var ATTENDANT_ACTIONS = ['sell', 'view_dashboard', 'view_inventory', 'view_reports', 'print', 'export', 'customers', 'cash_close'];
 // Readable role names for anywhere a role is shown to a person.
 var ROLE_LABELS = { owner: 'Owner', co_owner: 'Co-owner', pharmacist: 'Pharmacist', stock_taker: 'Stock taker', attendant: 'Seller', accountant: 'Accountant' };

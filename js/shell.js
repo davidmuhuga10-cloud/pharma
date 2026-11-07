@@ -65,7 +65,6 @@ async function init() {
 }
 
 function finishInit() {
-  startOfflineSync();
   sb.auth.onAuthStateChange(async function (evt, session) {
     STATE.session = session;
     if (evt === 'PASSWORD_RECOVERY') { STATE.recoveryMode = true; render(); return; }
@@ -230,14 +229,12 @@ function render() {
     '</div>' +
     '<button class="profbtn" onclick="openProfile()" title="Profile" aria-label="Profile">' + icon('user', 20) + '</button></div>' +
     supportBannerHtml() +
-    '<div id="offlineBanner"></div>' +
     '<div class="content" id="content"></div>' +
     navBar() +
     navDrawerHtml();
   var newNav = document.querySelector('.nd-nav');
   if (newNav && navScroll) newNav.scrollTop = navScroll;
   wireNavDrawer();
-  renderOfflineBadge();  // the banner div above was just rebuilt empty - fill it back in
   return renderTab();
 }
 

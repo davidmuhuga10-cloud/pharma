@@ -473,6 +473,7 @@ function openStockSheetMenu() {
   var editor = can('edit_inventory');
   var body = sheet('Count or edit in Excel', '');
   body.innerHTML =
+    '<div id="shLastUpload"></div>' +
     '<div class="field"><label>1. Download the stock sheet</label>' +
     '<div class="tiny" style="margin-bottom:8px">Every drug, with what the system has now.</div>' +
     '<button class="btn secondary" onclick="downloadStockSheet()">' + icon('download', 15) + ' Download stock sheet</button></div>' +
@@ -481,6 +482,22 @@ function openStockSheetMenu() {
     '<div class="field"><label>3. Upload it</label>' +
     '<div class="tiny" style="margin-bottom:8px">You see every change before anything is saved. If any row is wrong, nothing is saved and you get the list to fix.</div>' +
     '<button class="btn primary" onclick="closeSheet();openStockSheetUpload()">' + icon('upload', 15) + ' Upload filled sheet</button></div>';
+  loadLastStockSheetUpload();
+}
+
+// Shows an "Undo" button for the most recent applied sheet, same rule as right
+// after applying one: only while it is still the latest, not-yet-undone upload.
+async function loadLastStockSheetUpload() {
+  if (!can('undo_stock_sheet')) return;   // same set the database lets undo a sheet
+  var { data, error } = await sb.from('stock_sheet_uploads').select('id,applied_at,changed,counted')
+    .eq('pharmacy_id', STATE.profile.pharmacy_id).is('undone_at', null).order('applied_at', { ascending: false }).limit(1);
+  var el = $('#shLastUpload');
+  if (error || !el || !data || !data.length) return;
+  var u = data[0];
+  el.innerHTML =
+    '<div class="inline-notice" style="margin-bottom:14px">' + icon('clipboard', 15) +
+    '<span>Last upload: ' + fmtDateTime(u.applied_at) + ' (' + (u.changed || 0) + ' change' + (u.changed === 1 ? '' : 's') + (u.counted ? ', ' + u.counted + ' counted' : '') + ').' +
+    '<button class="btn ghost small" style="margin-top:8px" onclick="undoStockSheetNow(this,\'' + u.id + '\')">Undo this upload</button></span></div>';
 }
 
 async function currentStockForSheet() {
@@ -634,14 +651,44 @@ function applyStockSheetNow(encoded) {
     clearDashCache();
     closeSheet();
     renderInventory();
+    // upload_id is only there when something was actually changed or counted -
+    // same thing an Undo button would need to put back. The 'undo_stock_sheet'
+    // action is exactly the same owner/co-owner/pharmacist set the database
+    // allows to undo a sheet, so it doubles as the gate for showing this button.
+    var undoBtn = (res.data.upload_id && can('undo_stock_sheet')) ?
+      '<button class="btn ghost" style="margin-top:10px" onclick="undoStockSheetNow(this,\'' + res.data.upload_id + '\')">Undo this upload</button>' : '';
     if (res.data.take_id) {
       var body = sheet('Sheet applied', '');
       body.innerHTML =
         '<div class="inline-notice">' + icon('clipboard', 15) + '<span>' + res.data.counted + (res.data.counted === 1 ? ' count is' : ' counts are') + ' waiting in a new stock take. Open Stock Take to review the differences and approve. Stock changes only when you approve.</span></div>' +
         (res.data.changed ? '<div class="tiny" style="margin-bottom:10px">' + res.data.changed + ' other change' + (res.data.changed === 1 ? '' : 's') + ' saved.</div>' : '') +
-        (can('stock_take') ? '<button class="btn primary" onclick="closeSheet();setTab(\'stocktake\')">Open Stock Take</button>' : '');
+        (can('stock_take') ? '<button class="btn primary" onclick="closeSheet();setTab(\'stocktake\')">Open Stock Take</button>' : '') +
+        undoBtn;
+    } else if (undoBtn) {
+      var body2 = sheet('Sheet applied', '');
+      body2.innerHTML =
+        '<div class="tiny" style="margin-bottom:10px">Saved ' + res.data.changed + ' change' + (res.data.changed === 1 ? '' : 's') + '.</div>' + undoBtn;
     } else {
       toast('Saved ' + res.data.changed + ' changes.', 'good');
     }
+  });
+}
+
+// Puts back the sheet just applied - only while it is still the most recent
+// upload, and only the fields nothing else has touched again since (see
+// undo_stock_sheet() in schema.sql for exactly what that means).
+function undoStockSheetNow(btn, uploadId) {
+  act(btn, async function () {
+    var res = await sb.rpc('undo_stock_sheet', { p_pharmacy_id: STATE.profile.pharmacy_id, p_upload_id: uploadId });
+    if (res.error) { toast(friendlyError(res.error), 'bad'); return; }
+    clearDashCache();
+    closeSheet();
+    renderInventory();
+    var leftAlone = res.data.left_alone || [];
+    var msg = res.data.reverted + (res.data.reverted === 1 ? ' change' : ' changes') + ' undone.' +
+      (res.data.count_status === 'cancelled' ? ' The stock take it opened was cancelled too.' : '') +
+      (res.data.count_status === 'already_approved' ? ' Its stock take was already approved, so that count was left as it is.' : '') +
+      (leftAlone.length ? ' ' + leftAlone.length + (leftAlone.length === 1 ? ' drug was' : ' drugs were') + ' left alone because something changed it again since.' : '');
+    toast(msg, 'good');
   });
 }

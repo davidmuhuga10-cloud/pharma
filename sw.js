@@ -4,14 +4,13 @@
 // available, since a stale "in stock" answer at the counter is worse than a slow
 // one. Bump CACHE_NAME on every deploy so returning users get the new shell.
 
-const CACHE_NAME = 'hodhi-shell-v3w';
+const CACHE_NAME = 'hodhi-shell-v4a';
 // The vendored libraries must be listed here, or a first-ever offline open
 // fails: index.html comes from the cache but vendor-supabase.js does not.
 const SHELL_FILES = [
   './', './index.html', './style.css', './nativeShell.js', './install.js', './config.js', './manifest.json',
   './vendor-supabase.js',
   './js/core.js',
-  './js/offline-sale.js',
   './js/barcode.js',
   './js/shell.js',
   './js/profile.js',

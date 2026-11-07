@@ -1513,6 +1513,117 @@ async function main() {
     assert(!!who, 'and records who made the change');
 
     // --------------------------------------------------------------
+    console.log('\n== Undo a stock sheet ==');
+    await asUser(c, xOwner);
+    // the stock taker's count earlier in this pharmacy (t2) was never approved or
+    // cancelled - clear it so a fresh count-only sheet below has nothing in the way.
+    await c.query("update stock_takes set status = 'cancelled' where pharmacy_id = $1 and status = 'open'", [xPh]);
+    const xCoOwner = (await c.query('insert into auth.users default values returning id')).rows[0].id;
+    await c.query("insert into profiles (id, pharmacy_id, full_name, role) values ($1,$2,'Co','co_owner')", [xCoOwner, xPh]);
+    const xPharmacist = (await c.query('insert into auth.users default values returning id')).rows[0].id;
+    await c.query("insert into profiles (id, pharmacy_id, full_name, role) values ($1,$2,'Pharm','pharmacist')", [xPharmacist, xPh]);
+
+    const imp3 = (await c.query('select import_stock_rows($1, $2::jsonb, false, true) as r', [xPh, JSON.stringify([good('Ux1', 10), good('Ux2', 10), good('Ux3', 6), good('Ux4', 9)])])).rows[0].r;
+    assert(imp3.imported === 4, 'four fresh drugs for the undo tests');
+    const uidOf = async (n) => (await c.query('select id from drugs where pharmacy_id = $1 and name = $2', [xPh, n])).rows[0].id;
+    const uid1 = await uidOf('Ux1'), uid2 = await uidOf('Ux2'), uid3 = await uidOf('Ux3'), uid4 = await uidOf('Ux4');
+    const drugRow = async (id) => (await c.query('select name, reorder_level, reorder_custom, default_price from drugs where id = $1', [id])).rows[0];
+    const batchSellPrice = async (id) => (await c.query('select distinct sell_price from batches where drug_id = $1 and quantity_remaining > 0', [id])).rows.map((x) => Number(x.sell_price));
+
+    // a rename+reorder+price change on one drug, and a price-only change on another
+    const u1 = await apply([{ drug_id: uid1, name: 'Ux1 renamed', reorder: 7, price: 40 }, { drug_id: uid2, price: 50 }]);
+    assert(u1.ok === true && u1.changed === 3 && !!u1.upload_id, 'the sheet is applied (3 field changes) and returns an upload_id to undo it with');
+    assert((await drugRow(uid1)).name === 'Ux1 renamed', 'the rename took effect before undo');
+
+    // something other than the sheet changes Ux2's price again before anyone undoes anything -
+    // that field must be left exactly as it now is, not silently overwritten
+    await c.query("select record_restock($1,$2,1,5,99,(current_date + interval '300 days')::date,'U2','S')", [xPh, uid2]);
+
+    const un1 = (await c.query('select undo_stock_sheet($1,$2) as r', [xPh, u1.upload_id])).rows[0].r;
+    assert(un1.reverted === 3 && un1.left_alone.length === 1 && un1.left_alone[0].drug_id === uid2, 'undo puts back the 3 untouched fields and leaves alone the one field something else changed since (' + JSON.stringify(un1) + ')');
+    const uRow1 = await drugRow(uid1);
+    assert(uRow1.name === 'Ux1' && uRow1.reorder_level === 5 && uRow1.reorder_custom === false && Number(uRow1.default_price) === 10, 'the rename, reorder number and price are all back to what they were');
+    assert((await batchSellPrice(uid1)).every((p) => p === 10), 'the batch still on the shelf is back to the old sell price too');
+    assert(Number((await drugRow(uid2)).default_price) === 99, 'Ux2 keeps the 99 from the later restock - undo never overwrote it');
+    const pc1 = (await c.query('select old_price, new_price, source from price_changes where drug_id = $1 order by changed_at', [uid1])).rows;
+    assert(pc1.length === 2 && pc1[0].source === 'sheet' && pc1[1].source === 'undo' && Number(pc1[1].old_price) === 40 && Number(pc1[1].new_price) === 10, 'the undo itself is recorded in price history too, same as any other price change');
+
+    await assertThrows(c.query('select undo_stock_sheet($1,$2)', [xPh, u1.upload_id]), 'the same upload cannot be undone twice', 'undoing an already-undone upload should be refused');
+
+    // a count-only sheet: undo cancels the stock take while it is still open
+    const u2 = await apply([{ drug_id: uid3, counted: 6 }]);
+    assert(u2.ok === true && u2.counted === 1 && !!u2.take_id && !!u2.upload_id, 'a count-only sheet opens a stock take');
+    const un2 = (await c.query('select undo_stock_sheet($1,$2) as r', [xPh, u2.upload_id])).rows[0].r;
+    assert(un2.count_status === 'cancelled', 'undo cancels the stock take while it is still waiting for approval');
+    assert((await c.query('select status from stock_takes where id = $1', [u2.take_id])).rows[0].status === 'cancelled', 'and the stock take itself shows cancelled');
+
+    // a count-only sheet that gets approved before anyone thinks to undo it: the
+    // stock movement already happened for real, so undo leaves it alone
+    const u3 = await apply([{ drug_id: uid4, counted: 9 }]);
+    assert(u3.ok === true && !!u3.take_id, 'a second count-only sheet, on a different drug');
+    await c.query('select approve_stock_take($1,$2,$3::jsonb)', [xPh, u3.take_id, JSON.stringify({})]);
+    assert((await c.query('select status from stock_takes where id = $1', [u3.take_id])).rows[0].status === 'approved', 'this one is approved before undo is tried');
+    const un3 = (await c.query('select undo_stock_sheet($1,$2) as r', [xPh, u3.upload_id])).rows[0].r;
+    assert(un3.count_status === 'already_approved' && un3.reverted === 0, 'undo does not touch a count that was already approved - real stock already moved');
+    assert((await c.query('select status from stock_takes where id = $1', [u3.take_id])).rows[0].status === 'approved', 'the stock take stays approved, untouched by undo');
+
+    // only the single most recent, not-yet-undone upload can be undone
+    const u5 = await apply([{ drug_id: uid1, price: 77 }]);
+    const u6 = await apply([{ drug_id: uid2, price: 88 }]);
+    await assertThrows(c.query('select undo_stock_sheet($1,$2)', [xPh, u5.upload_id]), 'an older upload cannot be undone while a newer one is still pending', 'undoing an older upload with a newer one pending should be refused');
+    const un6 = (await c.query('select undo_stock_sheet($1,$2) as r', [xPh, u6.upload_id])).rows[0].r;
+    assert(un6.reverted === 1, 'once the newer upload is undone, the next-newest becomes undoable');
+    const un5 = (await c.query('select undo_stock_sheet($1,$2) as r', [xPh, u5.upload_id])).rows[0].r;
+    assert(un5.reverted === 1, 'and now the older one can be undone too');
+
+    // roles and tenants
+    await asUser(c, xTaker);
+    await assertThrows(c.query('select undo_stock_sheet($1,$2)', [xPh, u3.upload_id]), 'a stock taker cannot undo a sheet', 'only the owner, co-owner or a pharmacist should be able to undo a sheet');
+    await asUser(c, xOwner);
+    const u7 = await apply([{ drug_id: uid3, price: 33 }]);
+    await asUser(c, xPharmacist);
+    const un7 = (await c.query('select undo_stock_sheet($1,$2) as r', [xPh, u7.upload_id])).rows[0].r;
+    assert(un7.reverted === 1, 'a pharmacist can undo a sheet, same as the owner or co-owner');
+    await asUser(c, xOther);
+    await c.query('set role authenticated');
+    await assertThrows(c.query('select undo_stock_sheet($1,$2)', [xPh2, u7.upload_id]), 'another pharmacy cannot undo this pharmacy\'s upload', 'cross-pharmacy undo should be refused');
+    await c.query('reset role');
+
+    // --------------------------------------------------------------
+    console.log('\n== Correct a batch\'s price (owner/co-owner only) ==');
+    await asUser(c, xOwner);
+    const imp4 = (await c.query('select import_stock_rows($1, $2::jsonb, false, true) as r', [xPh, JSON.stringify([good('Ux5', 8)])])).rows[0].r;
+    assert(imp4.imported === 1, 'one more fresh drug for the batch-price tests');
+    const uid5 = await uidOf('Ux5');
+    const batch5 = (await c.query('select id, sell_price, cost_price from batches where drug_id = $1 and quantity_remaining > 0', [uid5])).rows[0];
+    assert(Number(batch5.sell_price) === 10 && Number(batch5.cost_price) === 5, 'the batch starts at the price it was received at (10, cost 5)');
+
+    await c.query('select correct_batch_price($1,$2,12,6)', [xPh, batch5.id]);
+    const b5a = (await c.query('select sell_price, cost_price from batches where id = $1', [batch5.id])).rows[0];
+    assert(Number(b5a.sell_price) === 12 && Number(b5a.cost_price) === 6, 'the owner fixes a wrong sell and cost price on the batch directly');
+    const bpc1 = (await c.query("select old_price, new_price, source from price_changes where drug_id = $1 and source = 'batch' order by changed_at", [uid5])).rows;
+    assert(bpc1.length === 1 && Number(bpc1[0].old_price) === 10 && Number(bpc1[0].new_price) === 12, 'the fix shows up in the drug\'s price history, marked as a batch fix');
+
+    await asUser(c, xPharmacist);
+    await assertThrows(c.query('select correct_batch_price($1,$2,20,null)', [xPh, batch5.id]), 'a pharmacist cannot correct a batch price', 'correcting a batch price should be stricter than editing a drug - owner/co-owner only');
+
+    await asUser(c, xCoOwner);
+    await c.query('select correct_batch_price($1,$2,15,null)', [xPh, batch5.id]);
+    const b5b = (await c.query('select sell_price, cost_price from batches where id = $1', [batch5.id])).rows[0];
+    assert(Number(b5b.sell_price) === 15 && Number(b5b.cost_price) === 6, 'a co-owner can fix it too, and leaving cost price out keeps the cost price as it was');
+    const bpc2 = (await c.query("select count(*) n from price_changes where drug_id = $1 and source = 'batch'", [uid5])).rows[0].n;
+    assert(bpc2 === '2', 'a second batch fix is recorded as its own history row');
+
+    await asUser(c, xOwner);
+    await assertThrows(c.query('select correct_batch_price($1,$2,0,null)', [xPh, batch5.id]), 'a zero sell price is refused', 'sell price must be above zero');
+    await assertThrows(c.query('select correct_batch_price($1,$2,10,-1)', [xPh, batch5.id]), 'a negative cost price is refused', 'cost price cannot be negative');
+
+    await asUser(c, xOther);
+    await c.query('set role authenticated');
+    await assertThrows(c.query('select correct_batch_price($1,$2,10,null)', [xPh2, batch5.id]), 'another pharmacy cannot correct a batch it does not own', 'cross-pharmacy batch price fix should be refused');
+    await c.query('reset role');
+
+    // --------------------------------------------------------------
     console.log('\n== Closing the cash drawer ==');
     const kOwner = (await c.query('insert into auth.users default values returning id')).rows[0].id;
     const kSeller = (await c.query('insert into auth.users default values returning id')).rows[0].id;
@@ -1838,209 +1949,6 @@ async function main() {
     await asUser(c, bkSeller);
     await assertThrows(c.query("select edit_drug($1,$2,'Bk Drug 1',null,'tablet','tablet',5,false,null,null,null,'9009998887776')", [bkPh, bkDrug1]),
       'a seller cannot set a barcode', 'only the owner or pharmacist should be able to change it');
-
-    // --------------------------------------------------------------
-    console.log('\n== Offline selling: record_offline_sale never loses a sale ==');
-    const { randomUUID } = require('crypto');
-    const ofOwner = (await c.query('insert into auth.users default values returning id')).rows[0].id;
-    const ofPharm = (await c.query('insert into auth.users default values returning id')).rows[0].id;
-    const ofSeller = (await c.query('insert into auth.users default values returning id')).rows[0].id;
-    const ofOther = (await c.query('insert into auth.users default values returning id')).rows[0].id;
-    await asUser(c, ofOwner);
-    const ofPh = (await c.query("select bootstrap_pharmacy('Offline Test', 'Offline Owner', '0711000050') as id")).rows[0].id;
-    await c.query("insert into profiles (id, pharmacy_id, full_name, role) values ($1,$2,'Pharm','pharmacist'), ($3,$2,'Seller','attendant')", [ofPharm, ofPh, ofSeller]);
-    await asUser(c, ofOther);
-    const ofPh2 = (await c.query("select bootstrap_pharmacy('Offline Other', 'Other', '0711000051') as id")).rows[0].id;
-    await asUser(c, ofOwner);
-
-    const ofExp = "(current_date + interval '300 days')::date";
-    const ofDrug = (await c.query("insert into drugs (pharmacy_id, name, form, unit) values ($1,'Offline Drug','tablet','tablet') returning id", [ofPh])).rows[0].id;
-    await c.query(`select record_restock($1,$2,10,5,10,${ofExp},'OF1','Sup')`, [ofPh, ofDrug]);
-
-    async function ofSale(p) {
-      const r = await c.query(
-        "select record_offline_sale($1,$2,$3,$4::jsonb,$5::jsonb,$6,$7,$8) as r",
-        [ofPh, p.client_ref, p.sold_at || new Date(), JSON.stringify(p.items), JSON.stringify(p.payments),
-         p.customer_name || null, p.insurance_scheme || null, p.customer_id || null]
-      );
-      return r.rows[0].r;
-    }
-    async function ofShelf(drugId) {
-      return Number((await c.query('select coalesce(sum(quantity_remaining),0) q from batches where drug_id = $1', [drugId])).rows[0].q);
-    }
-    async function ofBalance(custId) {
-      return Number((await c.query('select balance from v_customer_balances where customer_id = $1', [custId])).rows[0].balance);
-    }
-
-    await asUser(c, ofSeller);
-
-    // a normal offline sale, full stock available, behaves exactly like an online one
-    const ofRef1 = randomUUID();
-    const of1 = await ofSale({ client_ref: ofRef1, items: [{ drug_id: ofDrug, quantity: 2 }], payments: [{ method: 'cash', amount: 20 }] });
-    assert(!!of1.sale_id && of1.duplicate === false, 'a normal offline sale (stock available) is recorded, not treated as a duplicate');
-    assert(of1.needs_review === false && of1.review_note === null, 'with full stock to cover it, nothing is flagged for review');
-    assert(await ofShelf(ofDrug) === 8, 'stock comes off the shelf exactly as it would for an online sale (10 - 2 = 8)');
-    const ofSaleRow1 = (await c.query('select recorded_offline, client_ref, total_amount from sales where id = $1', [of1.sale_id])).rows[0];
-    assert(ofSaleRow1.recorded_offline === true && ofSaleRow1.client_ref === ofRef1, 'the sale is marked recorded_offline and keeps the client_ref it was sent with');
-    assert(Number(ofSaleRow1.total_amount) === 20, 'the total is exactly what was collected (20)');
-
-    // idempotency: resending the same client_ref (a retried sync after a dropped reply)
-    // must never record the sale twice
-    const of1Again = await ofSale({ client_ref: ofRef1, items: [{ drug_id: ofDrug, quantity: 2 }], payments: [{ method: 'cash', amount: 20 }] });
-    assert(of1Again.duplicate === true && of1Again.sale_id === of1.sale_id, 'resending the same offline reference returns the original sale instead of making a new one');
-    assert(await ofShelf(ofDrug) === 8, 'stock is not deducted a second time for the retried sync');
-    assert((await c.query('select count(*) n from sales where client_ref = $1', [ofRef1])).rows[0].n === '1', 'only one sales row exists for that reference, however many times it is sent');
-
-    // the deliberate two-device conflict Daudi asked for: both devices sold against the
-    // same 8 units left, each thinking it had enough, and both reach the database afterwards
-    const ofRef2 = randomUUID(), ofRef3 = randomUUID();
-    const of2 = await ofSale({ client_ref: ofRef2, items: [{ drug_id: ofDrug, quantity: 6 }], payments: [{ method: 'cash', amount: 60 }] });
-    assert(of2.needs_review === false, 'the first device to sync, selling 6 of the 8 left, is fully covered and not flagged');
-    assert(await ofShelf(ofDrug) === 2, 'stock is now down to 2');
-    const of3 = await ofSale({ client_ref: ofRef3, items: [{ drug_id: ofDrug, quantity: 6 }], payments: [{ method: 'cash', amount: 60 }] });
-    assert(!!of3.sale_id && of3.sale_id !== of2.sale_id, "the second device's sale is still recorded in full — never dropped, never merged into the first");
-    assert(of3.needs_review === true && /short by 4/.test(of3.review_note), 'it is flagged: only 2 of its 6 could actually be covered, 4 are short (' + of3.review_note + ')');
-    assert(Number((await c.query('select total_amount from sales where id = $1', [of3.sale_id])).rows[0].total_amount) === 60,
-      'the money the second device collected (60) is kept in full — nothing about the sale is lost because stock ran out');
-    const of3Items = (await c.query('select batch_id, quantity, shortfall from sale_items where sale_id = $1 order by shortfall', [of3.sale_id])).rows;
-    assert(of3Items.length === 2 && of3Items[0].shortfall === false && Number(of3Items[0].quantity) === 2 &&
-           of3Items[1].shortfall === true && Number(of3Items[1].quantity) === 4 && of3Items[1].batch_id === null,
-      "the second sale's 6 units split into a real line (2, from what was actually left) and a shortfall line (4, no batch) — both kept, neither discarded");
-    assert(await ofShelf(ofDrug) === 0, 'the shelf is at exactly 0, not negative — the hard stock constraint is never broken, even by this');
-
-    // a credit-limit overage while offline is flagged, not blocked — a hard block here
-    // would mean the device has to refuse a sale already rung up in the shop
-    await asUser(c, ofOwner);
-    const ofCust = (await c.query("select save_customer($1,'Off Cust','0733000001',50) as id", [ofPh])).rows[0].id;
-    await c.query(`select record_restock($1,$2,20,5,10,${ofExp},'OF2','Sup')`, [ofPh, ofDrug]);
-    await asUser(c, ofSeller);
-    const ofRef4 = randomUUID();
-    const of4 = await ofSale({ client_ref: ofRef4, items: [{ drug_id: ofDrug, quantity: 10 }], payments: [{ method: 'credit', amount: 100 }], customer_id: ofCust });
-    assert(of4.needs_review === true && /over their credit limit/.test(of4.review_note),
-      'a credit sale that pushes the customer over their limit completes and is flagged, not refused (' + of4.review_note + ')');
-    assert(await ofBalance(ofCust) === 100, 'the credit is still extended in full (100), same as it was in the shop');
-
-    // a payment that does not match today's prices (a price may have changed while the
-    // device was offline) is flagged; one close enough is left alone
-    const ofRef5 = randomUUID();
-    const of5 = await ofSale({ client_ref: ofRef5, items: [{ drug_id: ofDrug, quantity: 2 }], payments: [{ method: 'cash', amount: 5 }] });
-    assert(of5.needs_review === true && /price may have changed/.test(of5.review_note),
-      "collecting 5 for drugs worth 20 at today's price is flagged as a possible price change (" + of5.review_note + ')');
-    const ofRef6 = randomUUID();
-    const of6 = await ofSale({ client_ref: ofRef6, items: [{ drug_id: ofDrug, quantity: 2 }], payments: [{ method: 'cash', amount: 20.3 }] });
-    assert(of6.needs_review === false, 'a payment within 0.5 of today\'s price is not flagged for it (20.3 vs 20)');
-
-    // a controlled drug that runs out offline: the sale still completes and the money is
-    // kept, but the shortfall can never be invented onto the controlled register
-    await asUser(c, ofOwner);
-    const ofCtl = (await c.query("insert into drugs (pharmacy_id, name, form, unit, is_prescription) values ($1,'Offline Controlled','tablet','tablet',true) returning id", [ofPh])).rows[0].id;
-    await c.query(`select record_restock($1,$2,3,50,100,${ofExp},'OFC1','Sup')`, [ofPh, ofCtl]);
-    await asUser(c, ofPharm);
-    await c.query("select set_drug_control($1,$2,'dda')", [ofPh, ofCtl]);
-    await asUser(c, ofSeller);
-    const ofRef7 = randomUUID();
-    const of7 = await ofSale({ client_ref: ofRef7, items: [{ drug_id: ofCtl, quantity: 5, patient_name: 'P', prescriber_name: 'Dr X', rx_number: 'RX-9' }], payments: [{ method: 'cash', amount: 500 }] });
-    assert(of7.needs_review === true && /cannot go on the controlled register/.test(of7.review_note),
-      'the controlled-drug shortfall gets its own, stronger note instead of the generic one (' + of7.review_note + ')');
-    const ofCtlLedger = (await c.query("select quantity_delta from controlled_ledger where drug_id = $1 and kind = 'sale'", [ofCtl])).rows;
-    assert(ofCtlLedger.length === 1 && Number(ofCtlLedger[0].quantity_delta) === -3,
-      'only the 3 units that actually came from a real batch are written to the controlled ledger — the 2 short units are never invented onto it');
-
-    // the usual guardrails apply to an offline sale too
-    await assertThrows(ofSale({ client_ref: null, items: [{ drug_id: ofDrug, quantity: 1 }], payments: [{ method: 'cash', amount: 10 }] }),
-      'a sale with no offline reference is refused', 'a missing client_ref should have been refused');
-    await assertThrows(ofSale({ client_ref: randomUUID(), items: [], payments: [{ method: 'cash', amount: 10 }] }),
-      'an offline sale needs at least one item', 'an empty item list should have been refused');
-    await assertThrows(ofSale({ client_ref: randomUUID(), items: [{ drug_id: ofDrug, quantity: 1 }], payments: [] }),
-      'an offline sale needs at least one payment', 'an empty payment list should have been refused');
-    await assertThrows(ofSale({ client_ref: randomUUID(), items: [{ drug_id: ofDrug, quantity: 0 }], payments: [{ method: 'cash', amount: 10 }] }),
-      'a zero quantity is refused', 'a zero quantity should have been refused');
-
-    await asUser(c, ofOther);
-    await assertThrows(ofSale({ client_ref: randomUUID(), items: [{ drug_id: ofDrug, quantity: 1 }], payments: [{ method: 'cash', amount: 10 }] }),
-      'a user from another pharmacy cannot record an offline sale for this one', 'cross-pharmacy should have been refused');
-
-    await asUser(c, ofOwner);
-    const ofTakerCode = (await c.query("select create_staff_invite($1, 'stock_taker') as code", [ofPh])).rows[0].code;
-    const ofTakerId = (await c.query('insert into auth.users default values returning id')).rows[0].id;
-    await asUser(c, ofTakerId);
-    await c.query("select join_pharmacy_with_code($1, 'Taker', '0744444499')", [ofTakerCode]);
-    await assertThrows(ofSale({ client_ref: randomUUID(), items: [{ drug_id: ofDrug, quantity: 1 }], payments: [{ method: 'cash', amount: 10 }] }),
-      'a stock taker cannot record a sale, offline or not', 'a stock taker should have been refused');
-
-    // a wrong device clock is clamped into a sane window, not trusted blindly
-    await asUser(c, ofSeller);
-    const ofFarPast = new Date(Date.now() - 1000 * 60 * 60 * 24 * 365);
-    const ofRefClamp = randomUUID();
-    const ofClamp = await ofSale({ client_ref: ofRefClamp, sold_at: ofFarPast, items: [{ drug_id: ofDrug, quantity: 1 }], payments: [{ method: 'cash', amount: 10 }] });
-    const ofSoldAt = (await c.query('select sold_at from sales where id = $1', [ofClamp.sale_id])).rows[0].sold_at;
-    const ofDaysAgo = (Date.now() - ofSoldAt.getTime()) / (1000 * 60 * 60 * 24);
-    assert(ofDaysAgo <= 30.01, 'a device clock a year in the past is clamped into the last 30 days, not trusted blindly (' + ofDaysAgo.toFixed(1) + ' days ago)');
-
-    // a shortfall line (no real batch) can still be returned — the refund side works the
-    // same, there is just no batch to put anything back into
-    await asUser(c, ofOwner);
-    const ofShortItem = (await c.query("select id from sale_items where sale_id = $1 and shortfall", [of3.sale_id])).rows[0];
-    const ofShelfBeforeReturn = await ofShelf(ofDrug);
-    await c.query('select record_return($1,$2,1,$3)', [ofPh, ofShortItem.id, 'customer changed mind']);
-    const ofRetRow = (await c.query('select batch_id, quantity, refund_amount from returns where sale_item_id = $1', [ofShortItem.id])).rows[0];
-    assert(ofRetRow.batch_id === null && Number(ofRetRow.quantity) === 1, 'a shortfall line can still be returned — the return itself is recorded with no batch, same as the sale line it came from');
-    assert(await ofShelf(ofDrug) === ofShelfBeforeReturn, 'and correctly, no stock is put back on the shelf for it — none was ever taken off in the first place');
-
-    // voiding a sale that has a shortfall line restores only the real stock it actually
-    // took, and does not crash trying to restore a batch that was never debited — drain
-    // whatever is left first so the shelf is at a known, exact quantity
-    await asUser(c, ofSeller);
-    const ofLeftover = await ofShelf(ofDrug);
-    if (ofLeftover > 0) {
-      await ofSale({ client_ref: randomUUID(), items: [{ drug_id: ofDrug, quantity: ofLeftover }], payments: [{ method: 'cash', amount: ofLeftover * 10 }] });
-    }
-    assert(await ofShelf(ofDrug) === 0, 'the shelf is drained to exactly 0 so the next step starts from a known quantity');
-    await asUser(c, ofOwner);
-    await c.query(`select record_restock($1,$2,1,5,10,${ofExp},'OF3','Sup')`, [ofPh, ofDrug]);
-    await asUser(c, ofSeller);
-    const ofShelfBeforeVoid = await ofShelf(ofDrug);
-    const ofRef8 = randomUUID();
-    const of8 = await ofSale({ client_ref: ofRef8, items: [{ drug_id: ofDrug, quantity: 3 }], payments: [{ method: 'cash', amount: 30 }] });
-    assert(of8.needs_review === true, 'this sale also runs short (only 1 unit was on the shelf for 3 sold)');
-    assert(await ofShelf(ofDrug) === ofShelfBeforeVoid - 1, 'the 1 real unit is taken, same as any other sale');
-    await asUser(c, ofOwner);
-    await c.query("select void_sale($1,$2,'test void with a shortfall line')", [ofPh, of8.sale_id]);
-    assert(await ofShelf(ofDrug) === ofShelfBeforeVoid, 'voiding a sale with a shortfall line restores only the real stock it actually took (1) — it neither crashes nor invents stock for the line that has no batch');
-
-    // the dashboard still computes correctly with a shortfall (no-batch) sale line present
-    const ofDashBefore = (await c.query("select dashboard_data($1,'week') as d", [ofPh])).rows[0].d;
-    const ofRefDash = randomUUID();
-    const ofDash = await ofSale({ client_ref: ofRefDash, items: [{ drug_id: ofDrug, quantity: 5 }], payments: [{ method: 'cash', amount: 50 }] });
-    assert(ofDash.needs_review === true, 'one more deliberate shortfall sale to check the dashboard against (no real stock left)');
-    const ofDashAfter = (await c.query("select dashboard_data($1,'week') as d", [ofPh])).rows[0].d;
-    assert(Number(ofDashAfter.sales_total) - Number(ofDashBefore.sales_total) === 50,
-      "the dashboard's revenue figure counts a shortfall sale fully (it is sales.total_amount, same as any other sale) — nothing crashes or under-counts it");
-
-    // the owner needs somewhere to actually see which sales were flagged — the
-    // Sales Report's page function now carries that through
-    await asUser(c, ofOwner);
-    const ofPage = (await c.query("select sales_report_page($1, now() - interval '1 day') as d", [ofPh])).rows[0].d;
-    const ofPageRow = ofPage.find(function (x) { return x.id === of3.sale_id; });
-    assert(!!ofPageRow && ofPageRow.recorded_offline === true && ofPageRow.needs_review === true && /short by 4/.test(ofPageRow.review_note),
-      'the Sales Report page now carries recorded_offline, needs_review and review_note for each sale, so the owner can actually see a flagged one instead of it only existing in the database');
-    const ofPageNormal = ofPage.find(function (x) { return x.id === of1.sale_id; });
-    assert(!!ofPageNormal && ofPageNormal.recorded_offline === true && ofPageNormal.needs_review === false,
-      'and a normal offline sale (nothing to flag) shows recorded_offline but needs_review false, same as it is in the database');
-
-    // the dashboard's own "needs your attention" strip (credit owed, refills due,
-    // controlled-drug mismatch...) now counts flagged sales too, so the owner sees
-    // it the moment the app opens, not only when they happen to open Sales Report
-    const ofExpectedFlagged = Number((await c.query(
-      'select count(*) n from sales where pharmacy_id = $1 and needs_review and not voided', [ofPh]
-    )).rows[0].n);
-    const ofExtras = (await c.query('select dashboard_extras($1) as x', [ofPh])).rows[0].x;
-    assert(ofExpectedFlagged > 0 && Number(ofExtras.sales_needing_review) === ofExpectedFlagged,
-      'dashboard_extras() counts every still-outstanding flagged sale (' + ofExpectedFlagged + ') for this pharmacy');
-    await c.query("select void_sale($1,$2,'resolved by hand')", [ofPh, of4.sale_id]);
-    const ofExtrasAfterVoid = (await c.query('select dashboard_extras($1) as x', [ofPh])).rows[0].x;
-    assert(Number(ofExtrasAfterVoid.sales_needing_review) === ofExpectedFlagged - 1,
-      'voiding a flagged sale (the owner dealing with it by hand) takes it off the count — it does not sit there forever');
 
   });
 

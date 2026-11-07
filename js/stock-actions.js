@@ -362,7 +362,7 @@ async function openDrugDetail(drugId) {
       return '<div class="batch-row"><div class="batch-head"><div class="name">' + esc(b.batch_no || 'Batch') + ' · ' + expiryLabel + discountBadge + '</div>' +
         '<span class="badge ' + kind + '">' + b.quantity_remaining + ' left</span></div>' +
         '<div class="meta">Received ' + fmtDate(b.received_at) + (b.supplier ? ' from ' + esc(b.supplier) : '') + '</div>' +
-        ((can('write_off') || can('correct_stock') || can('edit_expiry')) && b.quantity_remaining > 0 ? '<div class="batch-actions">' +
+        ((can('write_off') || can('correct_stock') || can('edit_expiry') || can('edit_price')) && b.quantity_remaining > 0 ? '<div class="batch-actions">' +
           (can('write_off') ? '<button class="btn ghost small" onclick="openWriteOff(\'' + b.id + '\',\'' + esc(d.name).replace(/'/g, "\\'") + '\',' + b.quantity_remaining + ')">Write off</button>' : '') +
           // "Correct count" is record_correction, which has its own permission
           // (correct_stock), separate from write_off. A stock_taker can correct but not
@@ -373,6 +373,10 @@ async function openDrugDetail(drugId) {
           // Owner only: fixes a batch with a real but wrong expiry date (e.g. already
           // past by mistake), which otherwise drops out of "in stock" with no way back.
           (can('edit_expiry') ? '<button class="btn ghost small" onclick="openEditExpiry(\'' + b.id + '\',\'' + esc(d.name).replace(/'/g, "\\'") + '\',\'' + (b.expiry_unknown ? '' : b.expiry_date) + '\')">Edit expiry</button>' : '') +
+          // Owner only, same reasoning as Edit expiry: fixes a batch that was
+          // typed in at the wrong price, without voiding a sale or going
+          // through Correct count + a fresh restock.
+          (can('edit_price') ? '<button class="btn ghost small" onclick="openEditBatchPrice(\'' + b.id + '\',\'' + esc(d.name).replace(/'/g, "\\'") + '\',' + Number(b.sell_price) + ',' + (b.cost_price == null ? 'null' : Number(b.cost_price)) + ')">Edit price</button>' : '') +
           '</div>' : '') +
         '</div>';
     }).join('') + usedUpNote : '<div class="empty">No batches yet.</div>') +
@@ -382,7 +386,7 @@ async function openDrugDetail(drugId) {
 // The last price changes of a drug: old price, new price, when, who, and where it came from.
 function priceHistoryHtml(rows) {
   if (!rows || !rows.length) return '';
-  var how = { sheet: 'Excel sheet', restock: 'Restock' };
+  var how = { sheet: 'Excel sheet', restock: 'Restock', batch: 'Batch fix', undo: 'Undo' };
   return '<div class="section-title">Price history</div><div class="card">' + rows.map(function (r) {
     var who = r.profiles && r.profiles.full_name ? ' · ' + esc(r.profiles.full_name) : '';
     return '<div class="list-row"><div><div class="name">' + fmt(r.old_price) + ' to ' + fmt(r.new_price) + '</div>' +
@@ -617,6 +621,38 @@ async function saveEditExpiry(batchId) {
     });
     if (error) { toast(friendlyError(error), 'bad'); return; }
     toast('Expiry date corrected.', 'good');
+    closeSheet();
+    renderInventory();
+  });
+}
+
+// Owner only: fixes a batch that was typed in at the wrong sell or cost price,
+// in one step - no voiding a sale, no Correct count, no fresh restock. Reopens
+// the drug's detail sheet afterwards so the fix shows immediately, same as
+// Edit expiry.
+function openEditBatchPrice(batchId, drugName, currentSell, currentCost) {
+  var body = sheet('Edit price: ' + drugName, '');
+  body.innerHTML =
+    '<div class="tiny" style="margin-bottom:10px">Only use this to correct a wrongly-typed price on this batch. A deliberate price change for everything still on the shelf is the Excel stock sheet or a fresh restock.</div>' +
+    '<div class="row-2">' +
+    '<div class="field"><label>Cost price / unit</label><input id="epCost" type="number" step="0.01" value="' + (currentCost == null ? '' : currentCost) + '"></div>' +
+    '<div class="field"><label>Sell price / unit</label><input id="epSell" type="number" step="0.01" value="' + currentSell + '"></div></div>' +
+    '<button class="btn primary" id="epSaveBtn" onclick="saveEditBatchPrice(\'' + batchId + '\')">Save</button>';
+}
+
+async function saveEditBatchPrice(batchId) {
+  var btn = $('#epSaveBtn');
+  act(btn, async function () {
+    var sell = parseFloat($('#epSell').value);
+    if (!sell || sell <= 0) { toast('Enter a sell price above zero.', 'bad'); return; }
+    var costText = $('#epCost').value.trim();
+    var cost = costText === '' ? null : parseFloat(costText);
+    if (cost != null && (isNaN(cost) || cost < 0)) { toast('Cost price cannot be negative.', 'bad'); return; }
+    var { error } = await sb.rpc('correct_batch_price', {
+      p_pharmacy_id: STATE.profile.pharmacy_id, p_batch_id: batchId, p_new_sell_price: sell, p_new_cost_price: cost
+    });
+    if (error) { toast(friendlyError(error), 'bad'); return; }
+    toast('Price corrected.', 'good');
     closeSheet();
     renderInventory();
   });

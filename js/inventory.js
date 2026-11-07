@@ -56,23 +56,17 @@ function drawInventory() {
     '<input id="invSearchInput" placeholder="Search drugs, or scan a barcode…" value="' + esc(invFilter) + '" oninput="invFilter=this.value;invPage=1;drawInventory()" onkeydown="invSearchKeydown(event)" style="flex:1">' +
     (barcodeCameraSupported() ? '<button class="btn secondary" title="Scan barcode" aria-label="Scan barcode" onclick="invScanBarcode()">' + icon('barcode', 18) + '</button>' : '') +
     '</div>' +
-    '<div class="toolbar-row">' +
-    (can('edit_inventory') || can('stock_take') ? '<div class="toolbar-segment">' +
-      '<button class="btn" onclick="openStockSheetMenu()">' + icon('clipboard',15) + ' Count / edit in Excel</button>' +
-      '</div>' : '') +
-    (can('edit_inventory') ? '<div class="toolbar-segment">' +
-      '<button class="btn" onclick="openSyncMasterDrugs()">' + icon('box',15) + ' Sync common drugs</button>' +
-      '<button class="btn" onclick="openImportExcel()">' + icon('upload',15) + ' Import</button>' +
-      '</div>' : '') +
-    (can('stock_take') || canSeeControlled() ? '<div class="toolbar-segment">' +
-      (can('stock_take') ? '<button class="btn" onclick="setTab(\'stocktake\')">' + icon('clipboard',15) + ' Stock Take</button>' : '') +
-      (canSeeControlled() ? '<button class="btn" onclick="setTab(\'controlled\')">' + icon('warn',15) + ' Controlled</button>' : '') +
-      '</div>' : '') +
-    '<div class="toolbar-segment toolbar-end">' +
-    '<button class="btn" onclick="exportInventoryExcel()">' + icon('download',15) + ' Excel</button>' +
-    '<button class="btn" onclick="printInventory()">' + icon('printer',15) + ' Print</button>' +
+    (can('edit_inventory') ? '<button class="btn lime" style="margin-bottom:6px" onclick="openAddDrug()">' + t('addDrug') + '</button>' : '') +
+    '<div class="sq-grid sq-2">' +
+    (can('edit_inventory') || can('stock_take') ? '<button class="btn sq-green" onclick="openStockSheetMenu()">Count / edit in Excel</button>' : '') +
+    (can('stock_take') ? '<button class="btn sq-green" onclick="setTab(\'stocktake\')">Stock Take</button>' : '') +
+    (can('edit_inventory') ? '<button class="btn sq-blue" onclick="openImportExcel()">Import</button>' : '') +
+    (can('edit_inventory') ? '<button class="btn sq-blue" onclick="openSyncMasterDrugs()">Sync common drugs</button>' : '') +
     '</div>' +
-    (can('edit_inventory') ? '<button class="btn primary toolbar-primary" onclick="openAddDrug()">' + t('addDrug') + '</button>' : '') +
+    '<div class="sq-grid sq-3">' +
+    (canSeeControlled() ? '<button class="btn sq-red" onclick="setTab(\'controlled\')">Controlled</button>' : '') +
+    '<button class="btn" onclick="exportInventoryExcel()">Excel</button>' +
+    '<button class="btn" onclick="printInventory()">Print</button>' +
     '</div>' +
     (can('restock') && reorderCount ? '<div class="inline-notice">' + icon('clipboard',15) +
       '<a href="#" onclick="openReorderList();return false;">' + reorderCount + (reorderCount === 1 ? ' drug needs' : ' drugs need') + ' reordering — view list</a></div>' : '') +

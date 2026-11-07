@@ -126,9 +126,7 @@ async function exportReportExcel() {
       'Reference(s)': pays.map(function (p) { return p.reference || ''; }).filter(Boolean).join('; '),
       'Customer': s.customer_name || '',
       'Insurance scheme': s.insurance_scheme || '',
-      'Voided': s.voided ? 'Yes' : '',
-      'Recorded offline': s.recorded_offline ? 'Yes' : '',
-      'Needs a look': s.needs_review ? (s.review_note || 'Yes') : ''
+      'Voided': s.voided ? 'Yes' : ''
     };
   });
   exportExcel((STATE.pharmacy.name || 'Pharma') + ' - sales - ' + reportRange + ' - ' + todayStr() + '.xlsx', 'Sales', rows);
@@ -243,8 +241,7 @@ function drawReportBody() {
       var methodLabel = pays.length > 1 ? 'split' : (pays[0] ? pays[0].method : s.payment_method);
       return '<div class="list-row" style="cursor:pointer" onclick="openSaleDetail(\'' + s.id + '\')">' +
         '<div><div class="name">' + (s.invoice_number ? esc(s.invoice_number) + ' · ' : '') + fmt(s.total_amount) +
-        (s.voided ? ' <span class="badge bad">Voided</span>' : '') +
-        (s.needs_review ? ' <span class="badge bad" title="' + esc(s.review_note || '') + '">Needs a look</span>' : (s.recorded_offline ? ' <span class="badge warn">Offline</span>' : '')) + '</div>' +
+        (s.voided ? ' <span class="badge bad">Voided</span>' : '') + '</div>' +
         '<div class="meta">' + new Date(s.sold_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) + ' · ' + esc(payLabel(methodLabel)) + '</div></div>' +
         '<div class="right">' + (s.customer_name ? '<span class="tiny">' + esc(s.customer_name) + '</span>' : '') + '</div></div>';
     }).join('') : '<div class="empty">Nothing recorded yet.</div>') + '</div>' +
@@ -265,9 +262,8 @@ async function openSaleDetail(saleId) {
   if (itemsRes.error) { body.innerHTML = '<div class="empty">' + esc(friendlyError(itemsRes.error)) + '</div>'; return; }
   var items = itemsRes.data || [];
   body.innerHTML =
-    '<div class="tiny" style="margin-bottom:8px">' + new Date(s.sold_at).toLocaleString('en-GB') + (s.customer_name ? ' · ' + esc(s.customer_name) : '') + (s.recorded_offline ? ' · recorded offline' : '') + '</div>' +
+    '<div class="tiny" style="margin-bottom:8px">' + new Date(s.sold_at).toLocaleString('en-GB') + (s.customer_name ? ' · ' + esc(s.customer_name) : '') + '</div>' +
     (s.voided ? '<div class="badge bad" style="margin-bottom:10px">Voided' + (s.void_reason ? ': ' + esc(s.void_reason) : '') + '</div>' : '') +
-    (s.needs_review ? '<div class="inline-notice" style="margin-bottom:10px">' + icon('warn', 15) + '<span><b>Needs a look:</b> ' + esc(s.review_note || '') + '</span></div>' : '') +
     '<div class="section-title" style="margin-top:0">Items</div>' +
     '<div class="card">' + items.map(function (it) {
       var name = it.drugs ? it.drugs.name : 'Unknown';

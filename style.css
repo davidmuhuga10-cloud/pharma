@@ -283,19 +283,21 @@ h2 { font-size: 16px; }
 .auth-wrap-simple .tag { font-size: 13px; color: var(--ink-soft); margin-top: 2px; }
 .auth-wrap-simple .card { text-align: left; }
 
-/* A row of secondary action buttons (Sync / Import / Excel / Print) as one bordered strip with dividers, instead of separate boxes that wrap unevenly. */
+/* A row of toolbar buttons, grouped into "segments" (e.g. Sync / Import, or Excel / Print).
+   Each plain button is its own rounded chip with a little room around it, so a group wraps
+   onto a new line cleanly at phone width instead of two different buttons being squeezed
+   into one shared bordered box, stacked on top of each other. A button that already carries
+   its own colour (.primary/.secondary/.danger/.ghost) keeps that colour here too - this used
+   to flatten every button in a segment to the same plain style, which also meant a primary
+   button's text and background could both land on the same dark colour and disappear. */
 .toolbar-row { display: flex; align-items: stretch; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
 .toolbar-row .btn { width: auto; flex: 1 1 auto; min-width: 0; white-space: nowrap; }
-.toolbar-segment {
-  display: flex; align-items: stretch; background: #fff; border: 1px solid var(--line);
-  border-radius: 12px; overflow: hidden; flex-wrap: wrap;
+.toolbar-segment { display: flex; align-items: stretch; gap: 8px; flex-wrap: wrap; }
+.toolbar-segment .btn { width: auto; flex: 1 1 auto; white-space: nowrap; }
+.toolbar-segment .btn:not(.primary):not(.secondary):not(.danger):not(.ghost) {
+  background: #EFEDEA; color: var(--ink); box-shadow: var(--shadow-sm);
 }
-.toolbar-segment .btn {
-  width: auto; flex: 1 1 auto; white-space: nowrap; background: transparent; color: var(--ink);
-  border-radius: 0; border-right: 1px solid var(--line);
-}
-.toolbar-segment .btn:last-child { border-right: none; }
-.toolbar-segment .btn:hover { background: #F5F2EA; }
+.toolbar-segment .btn:not(.primary):not(.secondary):not(.danger):not(.ghost):hover { background: #E7E3DC; }
 .toolbar-primary { flex-shrink: 0; width: auto; }
 /* Pushes the Excel/Print segment (or any trailing item) to the right edge of .toolbar-row. The auto left margin takes all spare width, whether it is the only child or has siblings. */
 .toolbar-end { margin-left: auto; }
@@ -1220,3 +1222,13 @@ body:has(.topbar) .dlg-actions .btn { border-radius: 12px; padding: 14px 12px; f
   .auth-hero:has(.auth-sheet) .auth-hero-tag { font-family: Georgia, 'Playfair Display', serif; font-style: italic; font-weight: 500; font-size: 20px; letter-spacing: 0; text-transform: none; color: #BDE45E; }
   .auth-brand:has(.auth-sheet) { border-right: 4px solid #A6D63C; }
 }
+
+/* Inventory action tiles: a two-column grid, each tile with a coloured icon badge. Green = stock counting, blue = bringing drugs in, red = controlled drugs, plain = Excel/Print. */
+.action-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 14px; }
+.tile { display: flex; align-items: center; gap: 10px; padding: 12px; background: #fff; border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow-sm); color: var(--ink); font-weight: 700; font-size: 14px; text-align: left; line-height: 1.2; }
+.tile .ic-svg { flex: none; box-sizing: content-box; padding: 8px; border-radius: 10px; }
+.tile.tone-green .ic-svg { background: var(--green-light); color: var(--green); }
+.tile.tone-blue .ic-svg { background: var(--d-blue-light); color: #2F5A8F; }
+.tile.tone-red .ic-svg { background: var(--red-light); color: var(--red); }
+.tile.tone-plain .ic-svg { background: #EFEDEA; color: var(--ink); }
+.tile:active { transform: scale(0.98); }
