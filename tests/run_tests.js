@@ -1950,6 +1950,86 @@ async function main() {
     await assertThrows(c.query("select edit_drug($1,$2,'Bk Drug 1',null,'tablet','tablet',5,false,null,null,null,'9009998887776')", [bkPh, bkDrug1]),
       'a seller cannot set a barcode', 'only the owner or pharmacist should be able to change it');
 
+    // ----------------------------------------------------------------
+    // Row-level security, exercised as the real `authenticated` role.
+    //
+    // Every other test here runs as the postgres superuser, which IGNORES
+    // row-level security — so the policies themselves were never actually
+    // run, only loaded. These tests switch to the same role a signed-in
+    // user gets through the public API key, then try the things a curious
+    // or hostile user would try by hand: read another pharmacy's stock,
+    // write a row into it, and keep working after the trial has ended.
+    // drugs, suppliers, held_sales and profiles are the only tables the
+    // key can write to directly, so they are the whole attack surface.
+    // ----------------------------------------------------------------
+    console.log('\n== Row-level security, as a signed-in user (not superuser) ==');
+
+    await c.query('reset role');
+    const rlsOwnerA = (await c.query('insert into auth.users default values returning id')).rows[0].id;
+    const rlsOwnerB = (await c.query('insert into auth.users default values returning id')).rows[0].id;
+    await asUser(c, rlsOwnerA);
+    const rlsPhA = (await c.query("select bootstrap_pharmacy('RLS A', 'Owner A', '0700300001') as id")).rows[0].id;
+    const rlsDrugA = (await c.query("insert into drugs (pharmacy_id, name, form, unit, reorder_level) values ($1,'A Secret Drug','tablet','tablet',5) returning id", [rlsPhA])).rows[0].id;
+    await c.query("insert into suppliers (pharmacy_id, name) values ($1,'A Supplier')", [rlsPhA]);
+    await asUser(c, rlsOwnerB);
+    const rlsPhB = (await c.query("select bootstrap_pharmacy('RLS B', 'Owner B', '0700300002') as id")).rows[0].id;
+
+    // B is signed in and goes looking for A's data.
+    await asUser(c, rlsOwnerB);
+    await c.query('set role authenticated');
+    assert(Number((await c.query('select count(*) n from drugs where pharmacy_id = $1', [rlsPhA])).rows[0].n) === 0,
+      'another pharmacy\'s drugs are invisible, even reading the table directly');
+    assert(Number((await c.query('select count(*) n from suppliers where pharmacy_id = $1', [rlsPhA])).rows[0].n) === 0,
+      'another pharmacy\'s suppliers are invisible too');
+    assert(Number((await c.query('update drugs set name = \'Stolen\' where id = $1 returning 1', [rlsDrugA])).rowCount) === 0,
+      'editing another pharmacy\'s drug row directly changes nothing');
+    await assertThrows(c.query("insert into drugs (pharmacy_id, name, form, unit, reorder_level) values ($1,'Planted','tablet','tablet',5)", [rlsPhA]),
+      'a drug cannot be planted in another pharmacy', 'row-level security should refuse a drug written into another pharmacy');
+    await assertThrows(c.query("insert into suppliers (pharmacy_id, name) values ($1,'Planted')", [rlsPhA]),
+      'a supplier cannot be planted in another pharmacy', 'row-level security should refuse a supplier written into another pharmacy');
+    await assertThrows(c.query("insert into held_sales (pharmacy_id, cart) values ($1,'[]'::jsonb)", [rlsPhA]),
+      'a held sale cannot be planted in another pharmacy', 'row-level security should refuse a held sale written into another pharmacy');
+    await assertThrows(c.query('update profiles set pharmacy_id = $1 where id = $2', [rlsPhA, rlsOwnerB]),
+      'you cannot move your own account into another pharmacy', 'moving a profile to another pharmacy should be refused');
+    await c.query('reset role');
+
+    // B's own pharmacy still works normally — the rules block the neighbour, not the user.
+    await asUser(c, rlsOwnerB);
+    await c.query('set role authenticated');
+    const rlsOwnB = await c.query("insert into drugs (pharmacy_id, name, form, unit, reorder_level) values ($1,'B Own Drug','tablet','tablet',5) returning id", [rlsPhB]);
+    assert(rlsOwnB.rowCount === 1, 'a pharmacy can still add its own drugs as an ordinary signed-in user');
+    await c.query('reset role');
+
+    // The trial ends. Nothing should work until the admin reactivates.
+    await c.query("update pharmacies set subscription_expires_at = now() - interval '1 day' where id = $1", [rlsPhB]);
+    await asUser(c, rlsOwnerB);
+    await c.query('set role authenticated');
+    assert(Number((await c.query('select count(*) n from drugs')).rows[0].n) === 0,
+      'once the trial has ended the pharmacy cannot even read its own stock directly');
+    await assertThrows(c.query("insert into drugs (pharmacy_id, name, form, unit, reorder_level) values ($1,'After Expiry','tablet','tablet',5)", [rlsPhB]),
+      'a locked pharmacy cannot add stock directly', 'an expired trial should block a direct insert, not just the screen');
+    await c.query('reset role');
+    await assertThrows(c.query("select record_sale($1, $2::jsonb, $3::jsonb)", [rlsPhB, JSON.stringify([]), JSON.stringify([])]),
+      'a locked pharmacy cannot record a sale', 'an expired trial should block selling');
+
+    // The admin activates it; the pharmacy works again.
+    await c.query("update pharmacies set subscription_expires_at = now() + interval '30 days', subscription_status = 'active' where id = $1", [rlsPhB]);
+    await asUser(c, rlsOwnerB);
+    await c.query('set role authenticated');
+    assert(Number((await c.query('select count(*) n from drugs')).rows[0].n) === 1,
+      'after the admin activates the pharmacy its stock is readable again');
+    await c.query('reset role');
+
+    // A signed-in user must not be able to read another pharmacy's day.
+    // evening_summary_text() takes a pharmacy id and was granted to every
+    // signed-in user with no check that it was their own pharmacy.
+    await asUser(c, rlsOwnerB);
+    await c.query('set role authenticated');
+    await assertThrows(c.query('select evening_summary_text($1)', [rlsPhA]),
+      'one pharmacy cannot read another pharmacy\'s end-of-day figures',
+      'evening_summary_text should not be callable by a signed-in user at all');
+    await c.query('reset role');
+
   });
 
   console.log('\n' + '='.repeat(60));

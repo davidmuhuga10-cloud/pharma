@@ -2,6 +2,14 @@
 
 Newest first. The detailed story for each item is in `PHARMA_PROJECT_STATUS.md`.
 
+## 2026-11-08: Pre-launch audit - security, performance, SEO
+
+- **Security fix (cross-pharmacy leak).** `evening_summary_text()` could be called by any signed-in user with any pharmacy's id, and never checked it was their own. It returned that pharmacy's day: number of sales, total takings, whether the cash drawer balanced and by how much, and low/expiring stock counts. Nothing in the app called it directly, so the grant was removed - no screen changes. Applied to the live database. New test proves a second pharmacy is refused.
+- **Checked and found sound (no change needed):** the trial/plan lockout really is enforced by the database, not only the browser - `my_pharmacy_id()` returns nothing once a plan has expired, so row-level security and every RPC that compares against it fail closed. Tests confirm a locked pharmacy cannot read its stock, cannot insert directly and cannot record a sale. The M-Pesa callback validates its secret in constant time and credits a wallet only once, for a purchase this site started. The public key in `config.js` is the publishable key, which is designed to be public; no secret key anywhere in the front end. The `demo_*` helpers and `cash_drawer_figures` are already closed to signed-in users.
+- **Performance.** Five foreign keys had no index behind them (deletes and joins on those columns would scan the whole table as data grows); one index existed twice under two names. Fixed and applied live.
+- **Shipped at last:** `robots.txt` and `sitemap.xml` existed in the project but had never been committed, so the live site was serving neither.
+- 554 SQL checks pass (13 new), full JS suite green.
+
 ## 2026-11-07 (night, last): Square flat buttons and tags across the whole app
 
 - Every button inside the app is now a flat, square-cornered, thin, uppercase bar with a solid background colour (the look the owner picked from a reference): black for normal and Excel/Print/back buttons, red for secondary and danger, green for counting, blue for bringing drugs in, lime for the big add button. Badges (OK / Low / Out and the rest) and the search box are square too. One shared block at the end of `style.css`, scoped to the signed-in app only, so the sign-in screens are untouched. Inventory's buttons were rearranged to match (Add drug on top, then Count / Stock Take, Import / Sync, then Controlled / Excel / Print). Cache bumped to `hodhi-shell-v4a`. Replaces the rounded tile layout from earlier tonight.
