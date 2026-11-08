@@ -164,7 +164,7 @@ async function renderStockTake() {
     stItems = {};
     if (stOpen) {
       var res = await Promise.all([
-        sb.from('stock_take_items').select('drug_id,system_qty,counted_qty').eq('take_id', stOpen.id),
+        fetchAllRows(function () { return sb.from('stock_take_items').select('drug_id,system_qty,counted_qty').eq('take_id', stOpen.id); }, 'drug_id'),
         fetchAllRows(function () { return sb.from('v_drug_stock').select('drug_id,name,unit,qty_in_stock,qty_expired,stock_value_cost').order('name'); }, 'drug_id')
       ]);
       if (res[0].error) throw res[0].error;
@@ -320,7 +320,7 @@ async function openStockTakeView(id) {
   var c = $('#content');
   c.innerHTML = '<div class="empty">Loading…</div>';
   try {
-    var r = await sb.from('stock_take_items').select('*, drugs(name,unit)').eq('take_id', id);
+    var r = await fetchAllRows(function () { return sb.from('stock_take_items').select('*, drugs(name,unit)').eq('take_id', id); }, 'drug_id');
     if (r.error) throw r.error;
     stViewing = { take: t, items: r.data || [] };
   } catch (e) { errorCard(c, friendlyError(e), 'renderStockTake'); return; }

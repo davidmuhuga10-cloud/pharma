@@ -39,9 +39,24 @@ check(/sb\.functions\.invoke\('send-sms', \{ body: \{ pharmacy_id: STATE\.profil
 check(/sb\.from\('pharmacies'\)\.update\(payload\)/.test(cust.slice(cust.indexOf('function saveEveningSummary'))), 'saving writes straight to the pharmacy row, same as the rest of Settings');
 check(/queueSummary/.test(sender) && /mode === "evening_summary"/.test(sender), 'the Edge Function understands the evening-summary mode');
 check(/queue_evening_summary_now/.test(idx), 'it calls the right database function for that mode');
-check(/x-cron-secret/.test(cronFn) && /got !== want/.test(cronFn), 'the cron-only sender checks a shared secret, not a person\'s login');
+check(/x-cron-secret/.test(cronFn) && /!safeEqual\(got, want\)/.test(cronFn) && /diff \|= /.test(cronFn), 'the cron-only sender checks a shared secret (compared in constant time), not a person\'s login');
+check(/ROUND_SIZE/.test(cronFn) && /BUDGET_MS/.test(cronFn) && /while \(/.test(cronFn), 'it keeps sending in rounds until the queue is empty or its time budget is used, instead of stopping at a fixed number');
 check(/kind", "summary"\)/.test(cronFn) && /status", "queued"\)/.test(cronFn), 'it only ever sends summary messages that are still queued');
-check(/from "\.\.\/send-sms\/sender\.ts"/.test(cronFn), 'it reuses the same, already-tested sending code as send-sms (no second copy to go wrong on its own)');
+// The function deploys on its own, so it carries a local copy of the sending code. The copy must stay
+// word-for-word the same as send-sms/sender.ts, or the two would send differently.
+const localSender = read('supabase/functions/send-queued-summaries/sender.ts');
+check(/from "\.\/sender\.ts"/.test(cronFn) && !/from "\.\.\//.test(cronFn), 'it imports its sender from its own folder (a function that imports outside its folder fails to deploy on its own)');
+const part = (src, re) => { const m = src.match(re); return m ? m[0].replace(/\r/g, '') : null; };
+[[/export function isConfigured[\s\S]*?\n}\n/, 'isConfigured'], [/export function apiBase[\s\S]*?\n}\n/, 'apiBase'],
+ [/const AT_STATUS_LABELS[\s\S]*?\n};\n/, 'AT_STATUS_LABELS'], [/export function friendlyDeliveryText[\s\S]*?\n}\n/, 'friendlyDeliveryText'],
+ [null, 'sendOne body']].forEach(([re, name]) => {
+  if (name === 'sendOne body') {
+    const body = (src) => { const i = src.indexOf('export async function sendOne'); const j = src.indexOf('\n', i); const k = src.indexOf('\n}\n', j); return i < 0 ? null : src.slice(j, k + 3).replace(/\r/g, ''); };
+    check(body(sender) && body(sender) === body(localSender), 'the local copy of sendOne is identical to send-sms/sender.ts');
+  } else {
+    check(part(sender, re) && part(sender, re) === part(localSender, re), 'the local copy of ' + name + ' is identical to send-sms/sender.ts');
+  }
+});
 
 // migration / schema
 check(/evening_summary_enabled boolean not null default false/.test(mig), 'off by default for every pharmacy, old and new');

@@ -8,13 +8,14 @@
 
 const assert = require('assert');
 const path = require('path');
+const { pathToFileURL } = require('url');
 
 let pass = 0;
 function ok(cond, msg) { assert.ok(cond, msg); pass++; console.log('  ✓ ' + msg); }
 
 (async () => {
   const { handle, sendOne, apiBase, isConfigured, friendlyDeliveryText } =
-    await import(path.join(__dirname, '..', 'supabase', 'functions', 'send-sms', 'sender.ts'));
+    await import(pathToFileURL(path.join(__dirname, '..', 'supabase', 'functions', 'send-sms', 'sender.ts')).href);
 
   function fakeDeps(over) {
     const marks = [];

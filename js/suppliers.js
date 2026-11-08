@@ -70,11 +70,11 @@ async function openSupplierDetail(supplierId) {
       supplier = supRow;
     }
     if (!supplier) { c.innerHTML = '<div class="card empty">Supplier not found.</div>'; return; }
-    var { data: lpos, error: lErr } = await sb.from('supplier_lpos').select('*, supplier_lpo_items(*, drugs(name, unit))').eq('supplier_id', supplierId).order('delivered_at');
+    var { data: lpos, error: lErr } = await fetchAllRows(function () { return sb.from('supplier_lpos').select('*, supplier_lpo_items(*, drugs(name, unit))').eq('supplier_id', supplierId).order('delivered_at'); }, 'id');
     if (lErr) throw lErr;
-    var { data: pays, error: pErr } = await sb.from('supplier_payments').select('*').eq('supplier_id', supplierId).order('paid_at');
+    var { data: pays, error: pErr } = await fetchAllRows(function () { return sb.from('supplier_payments').select('*').eq('supplier_id', supplierId).order('paid_at'); }, 'id');
     if (pErr) throw pErr;
-    var { data: rets, error: rErr } = await sb.from('supplier_returns').select('*, drugs(name, unit)').eq('supplier_id', supplierId).order('returned_at');
+    var { data: rets, error: rErr } = await fetchAllRows(function () { return sb.from('supplier_returns').select('*, drugs(name, unit)').eq('supplier_id', supplierId).order('returned_at'); }, 'id');
     if (rErr) throw rErr;
     STATE.currentSupplierDetail = { supplier: supplier, lpos: lpos || [], payments: pays || [], returns: rets || [] };
   } catch (e) {

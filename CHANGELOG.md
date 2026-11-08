@@ -2,6 +2,17 @@
 
 Newest first. The detailed story for each item is in `PHARMA_PROJECT_STATUS.md`.
 
+## 2026-11-08 (evening): Growth hardening, sender kept in step with live, engineering docs
+
+- **Lists that would silently stop at 1,000 rows now page.** The database returns at most 1,000 rows per request, so a long list was cut off with no error. Fixed for: the items of a stock take (one row per drug, so a pharmacy with more than 1,000 drugs lost items from its count and from the saved take), a supplier's purchase orders, payments and returns (the whole history is shown on the supplier screen and used for its statement), and the common-drugs catalogue. All use `fetchAllRows()`.
+- **Ordering from a supplier by WhatsApp** looked up each drug's last supplier with one request carrying every low-stock drug id, capped at 3,000 rows. It now sends the ids 100 at a time and reads each group newest-first, so the newest supplier is still the one chosen and a long reorder list no longer fails quietly.
+- **Evening summary sender, version 3, now in the repository.** It had been deployed live but the repository still held version 2 (200 messages per call, no retry). `supabase/functions/send-queued-summaries/` now matches what runs: it empties the whole queue in rounds of 100 inside a time budget, compares the secret in constant time, and stops if a status update fails. It carries its own copy of the sending code so it deploys on its own; `tests/evening-summary.test.js` now checks that copy is word-for-word the same as `send-sms/sender.ts`.
+- **Retry for unsent summaries.** `migrations/2026-11-08_summary_sender_retry.sql` (applied live earlier today, now recorded with `pg_net`, `nudge_summary_sender()` and the `pharma-summary-drain` job every 5 minutes between 18:00 and 19:59 Nairobi, plus its `ROLLBACK_if_needed.sql`). Folded into `schema.sql`.
+- **New test `tests/rpc-contract.test.js`** (in `npm test`): fails if the browser code calls a database function or edge function that does not exist, or an edge function imports a file outside its own folder. Shown red once by renaming a call.
+- **New docs:** `ARCHITECTURE.md`, `OPERATIONS.md` (daily and weekly checks, incident playbooks, capacity guide, open items), `MIGRATIONS.md` (rules, rollback convention, keeping repository and live project the same). `SETUP.md` rewritten: it still described the first day of the project.
+- Cache bumped to `hodhi-shell-v4c`.
+- Not changed, flagged in `OPERATIONS.md`: signed-in staff can still update some plain tables such as `drugs` directly; public sign-up and leaked-password protection settings need confirming in the Supabase dashboard; plan and backups need confirming.
+
 ## 2026-11-08 (later): Documentation corrected, offline leftovers identified
 
 - `PRODUCT_SPEC.md` still promised an **offline-first PWA where "a sale can still be recorded during a network blip"**. That was built in Nov 2026 and then deliberately removed, because syncing sales later caused duplicate sales and stock counts that disagreed with the server. The spec now says so plainly, so nobody re-plans around it.

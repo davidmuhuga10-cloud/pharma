@@ -345,7 +345,7 @@ async function openSyncMasterDrugs() {
   var body = sheet('Sync common drugs', '<div class="empty">Loading catalog…</div>');
   if (!STATE.masterDrugsCache || !STATE.masterDrugsCache.length) {
     try {
-      var { data, error } = await sb.from('master_drugs').select('*').order('category_name').order('sort_order');
+      var { data, error } = await fetchAllRows(function () { return sb.from('master_drugs').select('*').order('category_name').order('sort_order'); }, 'id');
       if (error) throw error;
       STATE.masterDrugsCache = data || [];
     } catch (e) {

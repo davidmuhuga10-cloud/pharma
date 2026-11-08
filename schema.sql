@@ -9692,3 +9692,54 @@ create index if not exists support_access_events_access_idx   on public.support_
 
 -- Identical to password_reset_attempts_phone_key_idx, which stays.
 drop index if exists public.password_reset_attempts_phone_time;
+
+
+-- ============================================================
+-- Folded in from migrations/2026-11-08_summary_sender_retry.sql
+-- ============================================================
+do $$
+begin
+  if exists (select 1 from pg_available_extensions where name = 'pg_net')
+     and exists (select 1 from pg_namespace where nspname = 'extensions') then
+    create extension if not exists pg_net with schema extensions;
+  end if;
+end $$;
+
+create or replace function public.nudge_summary_sender()
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_queued integer;
+  v_url    text;
+  v_secret text;
+begin
+  select count(*) into v_queued from sms_log where kind = 'summary' and status = 'queued';
+  if v_queued = 0 then return 0; end if;
+
+  select decrypted_secret into v_url    from vault.decrypted_secrets where name = 'pharma_cron_sender_url';
+  select decrypted_secret into v_secret from vault.decrypted_secrets where name = 'pharma_cron_shared_secret';
+  if v_url is null or v_secret is null then return v_queued; end if;
+
+  perform net.http_post(
+    url     := v_url,
+    headers := jsonb_build_object('content-type', 'application/json', 'x-cron-secret', v_secret),
+    body    := '{}'::jsonb
+  );
+  return v_queued;
+end;
+$$;
+
+revoke all on function public.nudge_summary_sender() from public, anon, authenticated;
+
+do $$
+begin
+  if exists (select 1 from pg_namespace where nspname = 'cron') then
+    if exists (select 1 from cron.job where jobname = 'pharma-summary-drain') then
+      perform cron.unschedule('pharma-summary-drain');
+    end if;
+    perform cron.schedule('pharma-summary-drain', '*/5 15-16 * * *', 'select public.nudge_summary_sender()');
+  end if;
+end $$;

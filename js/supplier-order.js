@@ -37,13 +37,22 @@ function supplierOrderLink(phone, text) {
 }
 
 // The most recent supplier of each drug, from its batches. { drug_id: supplier_id }
+// The ids go in small groups (a long .in() list makes the request too big to send), and each group
+// is read newest-first, so the first batch seen for a drug is its latest supplier.
+var SO_ID_CHUNK = 100;
 async function loadLastSuppliers(drugIds) {
   var map = {};
   if (!drugIds.length) return map;
   try {
-    var r = await sb.from('batches').select('drug_id, supplier_id, received_at').in('drug_id', drugIds)
-      .not('supplier_id', 'is', null).order('received_at', { ascending: false }).limit(3000);
-    (r.data || []).forEach(function (b) { if (!map[b.drug_id]) map[b.drug_id] = b.supplier_id; });
+    for (var i = 0; i < drugIds.length; i += SO_ID_CHUNK) {
+      var ids = drugIds.slice(i, i + SO_ID_CHUNK);
+      var r = await fetchAllRows(function () {
+        return sb.from('batches').select('id, drug_id, supplier_id, received_at').in('drug_id', ids)
+          .not('supplier_id', 'is', null).order('received_at', { ascending: false });
+      }, 'id');
+      if (r.error) continue; // this group just starts unticked
+      (r.data || []).forEach(function (b) { if (!map[b.drug_id]) map[b.drug_id] = b.supplier_id; });
+    }
   } catch (e) { /* without this the person just ticks the drugs themselves */ }
   return map;
 }

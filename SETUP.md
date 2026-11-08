@@ -1,108 +1,52 @@
-# Getting Hodhi live
+# Pharma - Setup and deployment
 
-## Done already
-Your new Supabase project is connected — **schema.sql** has already been
-run against it (all tables, views, RPC functions, and Row Level Security
-are live), and **config.js** already points at it. I also ran a full
-smoke test directly against the live database before handing this back:
-signed up two separate test pharmacies, added a drug, restocked it in two
-batches with different expiry dates, sold across both batches, and
-confirmed (a) FEFO correctly drained the soonest-expiring batch first, (b)
-one pharmacy's data is completely invisible to the other's login, and (c)
-a forged request naming a different pharmacy is rejected outright. All
-test data was deleted afterward — the database is empty and ready for a
-real signup.
+How to stand up a copy of Pharma (a new environment, or a rebuild). Running the live system day to day is in `OPERATIONS.md`; how the pieces fit is in `ARCHITECTURE.md`.
 
-Along the way I fixed two real bugs before they could reach production:
-tables had Row Level Security policies but no base GRANT to the
-`authenticated` role (would have made every request fail outright,
-regardless of RLS), and the dashboard views were missing
-`security_invoker`, which in Postgres would have let them quietly run
-with the view owner's elevated privileges instead of the caller's —
-bypassing RLS entirely. Both are fixed in the live database and in this
-schema.sql.
+## 1. Database (Supabase)
 
-## Deploy
-Same as Kodi/Shule: drag this whole folder into Netlify (or connect it to a
-git repo) as a static site. `manifest.json` + `icons/` already make it an
-installable PWA on Android/iOS home screens.
+1. Create a Supabase project.
+2. Run `schema.sql` in the SQL editor. It contains every table, view, function, policy and grant, including everything folded in from `migrations/`.
+3. Enable the `pg_cron`, `pg_net` and Vault extensions (Database -> Extensions). `pg_net` goes in the `extensions` schema.
+4. Auth settings: confirm the sign-up and password options in `OPERATIONS.md` ("Open items").
+5. Put the project URL and the public (publishable) key in `config.js`. Never put the service-role key there.
 
-## First login
-There's no seed data — the first person to sign up ("Create an account")
-becomes that pharmacy's owner, and 16 starter drug categories (the same
-ones seen in Rubao Mukothima's stock-take sheet — Antibiotics, Analgesics,
-Antimalarials, etc.) are created automatically. From there: add drugs →
-restock them with a real batch (quantity, price, expiry) → start selling.
-Then open **Settings** and fill in the pharmacy's address, town, phone and
-email — that's what appears as the letterhead on every printed report and
-receipt, so it's worth doing on day one.
+## 2. Edge functions
 
-## What's in v2
-Sign up/log in, add drugs, restock (creates a batch with its own expiry and
-price — old stock is never overwritten), sell (cart-based, FEFO stock
-deduction — oldest-expiring batch sold first automatically, with a
-printable receipt at checkout), a dashboard with stock value /
-today-week-month sales / out-of-stock / low-stock / expiring-soon, a
-reports tab (today/week/month totals, by payment method, top-selling
-drugs, transaction list), and a settings tab for the business's own
-letterhead details and alert thresholds.
+Deploy each folder in `supabase/functions/`:
 
-**Selling:** split payments (one sale can be paid across cash + M-Pesa +
-insurance in one checkout, each with its own reference — the sale won't
-confirm until the lines add up to the total), prescription capture (drugs
-flagged Rx prompt for patient/prescriber name at the point of sale), and
-held/parked sales (set a cart aside and resume it later — nothing is
-deducted from stock until checkout actually happens).
+| Function | JWT verification |
+|---|---|
+| `send-otp`, `verify-otp`, `signup-by-phone`, `reset-password-by-phone` | off (the person is not signed in yet) |
+| `send-sms` | on |
+| `send-queued-summaries` | off (protected by the `x-cron-secret` header) |
 
-**After a sale:** every transaction has a detail view from Reports showing
-its items, payments and invoice number. Individual items can be returned
-(restores stock, logs a refund) without touching the rest of the sale, and
-a whole sale can be voided — refused if any item on it was already
-returned, so stock never gets credited twice.
+Secrets (Edge Functions -> Secrets): `CRON_SHARED_SECRET` (a long random value), `OTP_TOKEN_SECRET`, and optionally `OTP_GLOBAL_MAX_PER_HOUR`.
 
-**Insurance claims:** a claim is created automatically whenever a payment
-line uses "insurance," and can be tracked from pending through
-submitted/paid/rejected in Reports, with its own Excel export.
+Store the same cron secret and the sender's URL in Vault so the database can call it:
 
-**Stock:** bulk import from Excel for an initial stock-take (handles the
-same messy `12.2027`-style expiry format seen in a real pharmacy's sheet),
-a reorder list built from out-of-stock/low-stock drugs that exports to
-Excel or prints for a supplier, suppliers as their own record with
-autocomplete at restock time, and markdowns — a near-expiry batch can be
-discounted instead of written off, applied automatically at sale time.
+```sql
+select vault.create_secret('<the same value as CRON_SHARED_SECRET>', 'pharma_cron_shared_secret');
+select vault.create_secret('https://<project-ref>.supabase.co/functions/v1/send-queued-summaries', 'pharma_cron_sender_url');
+```
 
-**Staff access:** the owner generates a short invite code for a role
-(pharmacist or attendant) from Settings; the staff member redeems it on
-signup. The owner can deactivate a staff account or change its role at any
-time — no separate admin system, it's all inside the app.
+Text messages: put the Africa's Talking username, API key and sender id in the `sms_platform_config` row with `id = 1`. Until it is filled in, queued messages are marked failed with "SMS is not set up on this server yet."
 
-**Desktop and mobile:** the layout isn't just a phone screen stretched
-wide — above ~860px it switches to a left sidebar with a proper
-multi-column dashboard, same as a desktop POS; below that it's the
-thumb-friendly bottom-nav layout for a phone at the counter.
+## 3. Site (Netlify)
 
-**Printing:** the Stock tab, Reports tab, every completed sale, and the
-reorder list each have a "Print" button. Each one prints a clean,
-letterheaded page (pharmacy name, address, phone) via the browser's own
-print dialog — no extra app needed, works the same on desktop or a phone
-connected to a receipt/A4 printer.
+1. Connect the repository as a static site (publish directory `.`, functions directory `netlify/functions`; both are set in `netlify.toml`).
+2. Set the environment variables used by `sms-topup` and `pay-callback`: the `MPESA_*` values and `SUPABASE_SERVICE_ROLE_KEY`.
+3. The daily keep-alive runs from `netlify.toml` (`0 3 * * *`).
+4. After every deploy that changes a cached file, `CACHE_NAME` in `sw.js` must have been bumped.
 
-**Excel:** the Stock tab, Reports tab, reorder list, and insurance claims
-list all have a "⬇ Excel" button that downloads a real .xlsx (via
-SheetJS, not just a CSV) — ready to hand to an accountant or attach to an
-SHA claim.
+## 4. First pharmacy
 
-**Offline resilience:** a service worker (`sw.js`) caches the app shell
-(HTML/CSS/JS/icons) so the app still opens on a bad connection — it
-deliberately never caches live data (stock levels, prices), only the app
-itself, so a pharmacist is never shown stale stock. Every screen that
-loads data now shows a "Try again" retry card instead of a spinner that
-hangs forever if the connection drops mid-load.
+The first person to sign up ("Create an account") becomes that pharmacy's owner and starts a 90-day trial; starter drug categories are created automatically. Then: add drugs (or use "Sync common drugs" or the Excel stock sheet), restock with real batches (quantity, price, expiry), and fill in the pharmacy's address, town and phone in Settings - they appear on every printed report and receipt. Staff join with an invite code the owner creates in Settings.
 
-Not in v2 yet: automated SMS/WhatsApp alerts (needs Africa's Talking or a
-similar gateway, which isn't connected yet), direct KRA eTIMS submission,
-and M-Pesa STK push at checkout. See PRODUCT_SPEC.md section 6 for the full
-list of what shipped in v2 and the one deliberate scope change (in-app
-staff access control instead of a separate cross-pharmacy admin system).
-All of these slot into the same schema without a rebuild — exactly how
-Kodi grew from v0.1 to v0.71.
+## 5. Check it works
+
+```bash
+npm test                                       # JavaScript tests
+cd tests && npm install && node run_tests.js   # SQL tests, against a local throwaway Postgres only (tests/README.md)
+```
+
+Then sign in on a phone and a desktop browser, sell one item, and confirm the receipt prints.
