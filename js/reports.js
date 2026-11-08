@@ -8,7 +8,9 @@
 // which sub-screen shows, the same in-content navigation as Suppliers'
 // list/detail (supplierDetailId / openSupplierDetail / closeSupplierDetail).
 var reportsView = 'hub'; // 'hub' | 'sales' | 'expiry' | 'valuation' | 'lowstock' | 'claims' | 'cash'
-var reportRange = 'today';
+var reportRange = 'today'; // 'today' | 'week' | 'month' | 'custom'
+var reportFrom = '';   // custom range, 'YYYY-MM-DD'
+var reportTo = '';
 var reportData = null; // last-loaded sales report, kept for export/print
 var expiryReportData = null;
 var valuationReportData = null;
@@ -56,19 +58,29 @@ function reportsBackBtn() {
   return '<button class="btn ghost small" style="margin-bottom:10px" onclick="openReportsHub()">&larr; All Reports</button>';
 }
 
+var REPORT_RANGES = [{ key: 'today', label: 'Today' }, { key: 'week', label: 'This week' }, { key: 'month', label: 'This month' }];
+
 function drawReportsShell() {
   var c = $('#content');
   c.innerHTML =
     reportsBackBtn() +
-    '<div class="report-head"><div class="dash-tabs">' +
-    ['today', 'week', 'month'].map(function (r) {
-      return '<button class="dash-tab' + (reportRange === r ? ' active' : '') + '" onclick="reportRange=\'' + r + '\';loadReport()">' + r[0].toUpperCase() + r.slice(1) + '</button>';
-    }).join('') + '</div>' +
-    '<div class="toolbar-segment">' +
-    '<button class="btn" onclick="exportReportExcel()">' + icon('download',15) + ' Excel</button>' +
-    '<button class="btn" onclick="printReport()">' + icon('printer',15) + ' Print</button>' +
-    '</div></div>' +
+    reportHeadHtml('Sales Report', 'exportReportExcel', 'printReport') +
+    rangeBarHtml({ presets: REPORT_RANGES, active: reportRange, from: reportFrom, to: reportTo, pickFn: 'pickReportRange', applyFn: 'applyReportRange' }) +
     '<div id="reportBody"><div class="empty">Loading…</div></div>';
+}
+
+function pickReportRange(key) { reportRange = key; loadReport(); }
+function applyReportRange() {
+  var r = rangeBarRead(), err = rangeError(r.from, r.to);
+  if (err) { toast(err, 'bad'); return; }
+  reportFrom = r.from; reportTo = r.to; reportRange = 'custom';
+  loadReport();
+}
+// "Today", "This week", or "01 Nov 2026 to 08 Nov 2026" - for titles and file names.
+function reportRangeLabel() {
+  if (reportRange === 'custom') return fmtDate(reportFrom) + ' to ' + fmtDate(reportTo);
+  for (var i = 0; i < REPORT_RANGES.length; i++) if (REPORT_RANGES[i].key === reportRange) return REPORT_RANGES[i].label;
+  return reportRange;
 }
 
 // Shared shell for the Expiry, Valuation, Low Stock and Claims reports: no
@@ -78,19 +90,17 @@ var REPORT_SHELL_HANDLERS = {
   expiry: { excel: 'exportExpiryReportExcel', print: 'printExpiryReport' },
   valuation: { excel: 'exportValuationReportExcel', print: 'printValuationReport' },
   lowstock: { excel: 'exportLowStockReportExcel', print: 'printLowStockReport' },
-  claims: { excel: 'exportClaimsExcel', print: 'printClaimsReport' }
+  claims: { excel: 'exportClaimsExcel', print: 'printClaimsReport' },
+  cash: { excel: 'cashExcel', print: 'cashPrint', need: 'cash_review' }
 };
 
 function drawReportsShell2(title) {
   var c = $('#content');
   var h = REPORT_SHELL_HANDLERS[reportsView] || {};
+  if (h.need && !can(h.need)) h = {};
   c.innerHTML =
     reportsBackBtn() +
-    '<div class="report-head"><div class="section-title" style="margin:0">' + esc(title) + '</div>' +
-    '<div class="toolbar-segment">' +
-    (h.excel ? '<button class="btn" onclick="' + h.excel + '()">' + icon('download',15) + ' Excel</button>' : '') +
-    (h.print ? '<button class="btn" onclick="' + h.print + '()">' + icon('printer',15) + ' Print</button>' : '') +
-    '</div></div>' +
+    reportHeadHtml(title, h.excel, h.print) +
     '<div id="reportBody"><div class="empty">Loading…</div></div>';
 }
 
@@ -129,41 +139,50 @@ async function exportReportExcel() {
       'Voided': s.voided ? 'Yes' : ''
     };
   });
-  exportExcel((STATE.pharmacy.name || 'Pharma') + ' - sales - ' + reportRange + ' - ' + todayStr() + '.xlsx', 'Sales', rows);
+  exportExcel((STATE.pharmacy.name || 'Pharma') + ' - sales - ' + reportRangeLabel() + ' - ' + todayStr() + '.xlsx', 'Sales', rows);
 }
 
 async function printReport() {
   if (!reportData) { toast('Report still loading.', 'bad'); return; }
   var sales;
   try { sales = await fetchAllReportSales(); } catch (e) { toast(friendlyError(e), 'bad'); return; }
-  var rows = sales.map(function (s) {
-    return [s.invoice_number || '', new Date(s.sold_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }),
-      fmt(s.total_amount), reportMethodLabel(s), s.customer_name || '—'];
-  });
-  var rangeLabel = reportRange.charAt(0).toUpperCase() + reportRange.slice(1);
-  var summary = '<p style="margin:6px 0 14px"><b>Total sales:</b> ' + fmt(reportData.total) + ' · <b>Transactions:</b> ' + reportData.count + '</p>';
-  printHtml('Sales Report', rangeLabel,
-    summary + tableHtml(['Invoice', 'Date/time', 'Amount', 'Payment', 'Customer'], rows),
+  var rows = sales.map(reportSaleRow);
+  printHtml('Sales Report', reportRangeLabel(),
+    tableHtml(['Invoice', 'Date/time', 'Payment', 'Customer', 'Status', 'Amount'], rows,
+      'Total sales: ' + fmt(reportData.total) + ' · ' + reportData.count + ' transactions'),
     reportData.count + ' transactions');
 }
 
+// One sale as table cells (screen and print share this): voided sales read in red text.
+function reportSaleRow(s) {
+  return [s.invoice_number || '—',
+    new Date(s.sold_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }),
+    reportMethodLabel(s) ? payLabel(reportMethodLabel(s)) : '—', s.customer_name || '—',
+    s.voided ? stCell('Voided', 'bad') : stCell('Completed', 'ok'), fmt(s.total_amount)];
+}
+
 var reportTxPage = 1;
-var TX_PAGE_SIZE = 20;
 var reportLoadSeq = 0;  // bumped on every load so a slow, older answer never overwrites a newer one
 
-// Where the chosen range begins (the device's own midnight / Sunday / 1st of the month).
+// Where the chosen range begins (the device's own midnight / Sunday / 1st of the month,
+// or the start of the custom From date).
 function reportRangeStart() {
+  if (reportRange === 'custom') return rangeBounds(reportFrom, reportTo).start;
   var start = new Date();
   if (reportRange === 'today') start.setHours(0, 0, 0, 0);
   else if (reportRange === 'week') { start.setHours(0, 0, 0, 0); start.setDate(start.getDate() - start.getDay()); }
   else { start = new Date(start.getFullYear(), start.getMonth(), 1); }
   return start.toISOString();
 }
+// Where it ends, NOT included: midnight after the custom To date. The presets run up to now (null).
+function reportRangeEnd() {
+  return reportRange === 'custom' ? rangeBounds(reportFrom, reportTo).end : null;
+}
 
 // One page of the transaction list, each sale carrying its payment lines.
 async function reportPageRpc(limit, offset) {
   var res = await sb.rpc('sales_report_page', {
-    p_pharmacy_id: STATE.profile.pharmacy_id, p_start: reportRangeStart(), p_end: null,
+    p_pharmacy_id: STATE.profile.pharmacy_id, p_start: reportRangeStart(), p_end: reportRangeEnd(),
     p_limit: limit, p_offset: offset
   });
   if (res.error) throw res.error;
@@ -180,8 +199,8 @@ async function loadReport() {
   var sum, firstPage;
   try {
     var results = await Promise.all([
-      sb.rpc('sales_report', { p_pharmacy_id: STATE.profile.pharmacy_id, p_start: reportRangeStart(), p_end: null }),
-      reportPageRpc(TX_PAGE_SIZE, 0)
+      sb.rpc('sales_report', { p_pharmacy_id: STATE.profile.pharmacy_id, p_start: reportRangeStart(), p_end: reportRangeEnd() }),
+      reportPageRpc(REPORT_PAGE_SIZE, 0)
     ]);
     if (results[0].error) throw results[0].error;
     sum = results[0].data || {};
@@ -201,17 +220,22 @@ async function loadReport() {
     topDrugs: (sum.top_drugs || []).map(function (t) { return { name: t.name, qty: Number(t.qty), value: Number(t.value) }; }),
     loadingMore: false
   };
+  reportTxPage = 1;
   drawReportBody();
 }
 
-async function loadMoreReport() {
+// Prev / Next on the transactions table: fetch just that page of 10.
+async function goReportPage(page) {
   if (!reportData || reportData.loadingMore) return;
+  var pages = Math.max(1, Math.ceil(reportData.count / REPORT_PAGE_SIZE));
+  page = Math.min(Math.max(1, page), pages);
   reportData.loadingMore = true;
   var seq = reportLoadSeq;
   try {
-    var more = await reportPageRpc(TX_PAGE_SIZE, reportData.sales.length);
+    var rows = await reportPageRpc(REPORT_PAGE_SIZE, (page - 1) * REPORT_PAGE_SIZE);
     if (seq !== reportLoadSeq) return;
-    reportData.sales = reportData.sales.concat(more);
+    reportData.sales = rows;
+    reportTxPage = page;
   } catch (e) {
     toast(friendlyError(e), 'bad');
   }
@@ -222,30 +246,25 @@ async function loadMoreReport() {
 function drawReportBody() {
   var body = $('#reportBody');
   var sales = reportData.sales, byMethod = reportData.byMethod, topDrugs = reportData.topDrugs;
-    body.innerHTML =
+  var methods = Object.keys(byMethod);
+  var pages = Math.max(1, Math.ceil(reportData.count / REPORT_PAGE_SIZE));
+  var pg = { rows: sales, page: Math.min(reportTxPage, pages), pages: pages, total: reportData.count,
+    from: reportData.count ? (reportTxPage - 1) * REPORT_PAGE_SIZE + 1 : 0,
+    to: Math.min(reportTxPage * REPORT_PAGE_SIZE, reportData.count) };
+  body.innerHTML =
     '<div class="kpi-grid" style="margin-bottom:14px">' +
     kpi('Total sales', fmt(reportData.total), 't-sales') +
     kpi('Transactions', reportData.count, 't-violet') +
     '</div>' +
     '<div class="section-title">By payment method</div>' +
-    '<div class="card">' + (Object.keys(byMethod).length ? Object.keys(byMethod).map(function (m) {
-      return listRow(payLabel(m), '', fmt(byMethod[m]));
-    }).join('') : '<div class="empty">No sales in this period yet.</div>') + '</div>' +
+    rtTable(['Method', 'Amount'], methods.map(function (m) { return [payLabel(m), fmt(byMethod[m])]; }), { empty: 'No sales in this period yet.' }) +
     '<div class="section-title">Top-selling drugs</div>' +
-    '<div class="card">' + (topDrugs.length ? topDrugs.map(function (t) {
-      return listRow(t.name, t.qty + ' units sold', fmt(t.value));
-    }).join('') : '<div class="empty">No sales in this period yet.</div>') + '</div>' +
-    '<div class="section-title">Transactions</div>' +
-    '<div class="card">' + (sales.length ? sales.map(function (s) {
-      var pays = s.payments || [];
-      var methodLabel = pays.length > 1 ? 'split' : (pays[0] ? pays[0].method : s.payment_method);
-      return '<div class="list-row" style="cursor:pointer" onclick="openSaleDetail(\'' + s.id + '\')">' +
-        '<div><div class="name">' + (s.invoice_number ? esc(s.invoice_number) + ' · ' : '') + fmt(s.total_amount) +
-        (s.voided ? ' <span class="badge bad">Voided</span>' : '') + '</div>' +
-        '<div class="meta">' + new Date(s.sold_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) + ' · ' + esc(payLabel(methodLabel)) + '</div></div>' +
-        '<div class="right">' + (s.customer_name ? '<span class="tiny">' + esc(s.customer_name) + '</span>' : '') + '</div></div>';
-    }).join('') : '<div class="empty">Nothing recorded yet.</div>') + '</div>' +
-    (reportData.count > sales.length ? '<button class="btn ghost" onclick="loadMoreReport()">Load more</button>' : '');
+    rtTable(['Drug', 'Units sold', 'Value'], topDrugs.map(function (t) { return [t.name, String(t.qty), fmt(t.value)]; }), { empty: 'No sales in this period yet.' }) +
+    '<div class="section-title">Transactions · ' + esc(reportRangeLabel()) + '</div>' +
+    showingHtml(pg) +
+    rtTable(['Invoice', 'Date/time', 'Payment', 'Customer', 'Status', 'Amount'], sales.map(reportSaleRow), {
+      rowClick: function (i) { return "openSaleDetail('" + sales[i].id + "')"; }, empty: 'Nothing recorded in this period.' }) +
+    pagerHtml(pg, 'goReportPage');
 }
 
 // The items of a sale are fetched only when someone opens it (one small query),

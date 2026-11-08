@@ -170,14 +170,6 @@ h2 { font-size: 16px; }
 .list-row .meta { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
 .list-row .right { text-align: right; white-space: nowrap; }
 
-/* Small round initial badge, colour-coded good/warn/bad, in front of a list row's name so rows can be scanned by eye. */
-.row-avatar {
-  width: 36px; height: 36px; border-radius: 10px; flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 13px; font-weight: 700; background: var(--green-light); color: var(--green);
-}
-.row-avatar.warn { background: var(--amber-light); color: var(--amber-ink); }
-.row-avatar.bad { background: var(--red-light); color: var(--red); }
 
 .badge { display: inline-block; font-size: 11px; padding: 3px 9px; border-radius: 999px; font-weight: 700; }
 .badge.bad { background: var(--red-light); color: var(--red); }
@@ -471,25 +463,127 @@ h2 { font-size: 16px; }
 .dash-profit-legend .dot { width: 8px; height: 8px; border-radius: 2px; }
 .dash-profit-margin { font-size: 11px; color: var(--ink-soft); font-weight: 700; }
 
+/* ---- REPORT TABLES (shared by every report screen) ----
+   Filter tiles or a range bar on top, a table of 10 rows with Prev/Next, status as plain
+   coloured text (never a badge with a background), Excel + Print in the head. On a phone each
+   row becomes a card: the first cell is the title, the rest keep their column label. */
+.rt-count { font-size: 13px; font-weight: 700; color: var(--ink); margin: 6px 0; }
+.rt-wrap { background: #fff; border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }
+.rt { width: 100%; border-collapse: collapse; font-size: 14px; color: var(--ink); }
+.rt th { background: var(--green); color: #fff; font-size: 12px; font-weight: 800; letter-spacing: .5px; text-transform: uppercase; text-align: left; padding: 10px 12px; }
+.rt td { padding: 10px 12px; border-top: 1px solid var(--line); vertical-align: middle; }
+.rt tbody tr:nth-child(even) td { background: #FAF8F5; }
+.rt th.num, .rt td.num { text-align: right; white-space: nowrap; }
+.rt td:first-child { font-weight: 700; }
+.rt-click { cursor: pointer; }
+.rt-click:hover td { background: var(--green-light) !important; }
+.rt-empty { text-align: center; padding: 22px 12px !important; font-weight: 600; }
+.rt .st-bad { color: var(--red); font-weight: 800; }
+.rt .st-warn { color: var(--amber-ink); font-weight: 800; }
+.rt .st-ok { color: var(--green); font-weight: 800; }
+.rt .st-ink { color: var(--ink); font-weight: 700; }
+.rt-foot { text-align: right; font-weight: 800; padding: 10px 12px; background: var(--green-light); border: 1px solid var(--line); border-top: 2px solid var(--green); border-radius: 0 0 var(--radius-sm) var(--radius-sm); margin-top: -1px; }
+.pager { display: flex; align-items: center; gap: 8px; margin: 12px 0 4px; }
+.pg-btn { flex: 1; min-height: 44px; background: #fff; color: var(--ink); border: 1px solid var(--ink); border-radius: 3px; font-size: 13px; font-weight: 800; letter-spacing: .5px; text-transform: uppercase; }
+.pg-btn.primary { background: var(--ink); color: #fff; }
+.pg-btn:disabled { opacity: .4; cursor: default; }
+.pg-info { min-width: 96px; text-align: center; font-size: 13px; font-weight: 700; }
+.pg-nums { display: none; }
+.pg-num { min-width: 38px; min-height: 38px; padding: 0 10px; background: #fff; color: var(--ink); border: 1px solid var(--ink); border-radius: 3px; font-size: 13px; font-weight: 800; }
+.pg-num.on { background: var(--ink); color: #fff; }
+.pg-gap { font-weight: 800; padding: 0 4px; }
+@media (min-width: 760px) {
+  .pager { justify-content: flex-end; gap: 6px; }
+  .pager .pg-btn { flex: 0 0 auto; min-height: 38px; padding: 0 16px; }
+  .pg-info { order: -1; margin-right: auto; text-align: left; }
+  .pg-nums { display: flex; align-items: center; gap: 6px; }
+}
+.inv-tools { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.inv-tools .btn { width: auto; flex: 0 0 auto; }
+/* The search box takes the whole row; the scan button is only as wide as its icon and label (a .btn is width:100% by default, which squashed the search box to a sliver). */
+.searchbox input { min-width: 0; }
+.scan-btn { width: auto; flex: 0 0 auto; white-space: nowrap; }
+.inv-phone { display: block; }
+.inv-desk { display: none; }
+@media (min-width: 760px) { .inv-phone { display: none; } .inv-desk { display: block; } }
+.inv-search { margin-bottom: 10px; }
+.inv-search .btn { width: auto; flex: 0 0 auto; }
+.inv-sub { font-size: 13px; font-weight: 600; margin-top: 4px; }
+.kpi-grid.five .kpi .tiny { color: inherit; }
+.kpi.active { outline: 3px solid var(--ink); outline-offset: 1px; }
+@media (min-width: 760px) { .kpi-grid.five { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+@media (max-width: 759px) { .kpi-grid.five > .kpi:first-child { grid-column: 1 / -1; } }
+.range-bar { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; margin-bottom: 12px; }
+.range-bar .dash-tabs { flex: 0 1 auto; }
+.range-dates { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.range-dates label { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: var(--ink); }
+.range-dates input[type=date] { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); }
+.rt-note { font-size: 13px; font-weight: 600; margin: 0 0 10px; }
+@media (max-width: 639px) {
+  .rt-wrap { background: transparent; border: 0; }
+  .rt thead { display: none; }
+  .rt, .rt tbody, .rt tr, .rt td { display: block; width: 100%; }
+  .rt tr { background: #fff; border: 1px solid var(--line); border-radius: 12px; margin-bottom: 8px; padding: 6px 12px; }
+  .rt tbody tr:nth-child(even) td { background: transparent; }
+  .rt td { border: 0; padding: 4px 0; display: flex; justify-content: space-between; gap: 12px; text-align: right; }
+  .rt td::before { content: attr(data-label); font-size: 12px; font-weight: 600; text-align: left; }
+  .rt td:first-child { display: block; text-align: left; font-size: 15px; padding-bottom: 6px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+  .rt td:first-child::before { content: none; }
+  .rt td.rt-empty { display: block; text-align: center; }
+  .rt td.rt-empty::before { content: none; }
+  .range-dates { width: 100%; }
+  .range-dates label { flex: 1 1 130px; }
+  .range-dates input[type=date] { flex: 1; min-width: 0; }
+}
+
 /* ---- PRINT ----
    Reports and receipts print on their own with a business letterhead,
    independent of the open screen. */
 .print-only { display: none; }
 @media print {
+  html, body { background: #fff; }
   body * { visibility: hidden; }
   #printArea, #printArea * { visibility: visible; }
   #printArea {
     display: block; position: absolute; top: 0; left: 0; width: 100%;
     padding: 0; color: #000; background: #fff;
   }
-  .print-letterhead { text-align: center; margin-bottom: 18px; border-bottom: 2px solid #000; padding-bottom: 10px; }
-  .print-letterhead .pname { font-size: 20px; font-weight: 800; }
-  .print-letterhead .pmeta { font-size: 12px; margin-top: 3px; }
-  .print-title { font-size: 15px; font-weight: 700; margin: 10px 0; }
-  .print-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-  .print-table th, .print-table td { border: 1px solid #999; padding: 5px 7px; text-align: left; }
-  .print-table th { background: #eee; }
-  .print-footer { margin-top: 16px; font-size: 11px; color: #000; }
+  /* Receipt head and foot: the plain centred version (the overrides below narrow it for 80mm). */
+  #printArea.print-receipt .print-letterhead { text-align: center; margin-bottom: 18px; border-bottom: 2px solid #000; padding-bottom: 10px; }
+  #printArea.print-receipt .print-letterhead .pname { font-size: 20px; font-weight: 800; }
+  #printArea.print-receipt .print-letterhead .pmeta { font-size: 12px; margin-top: 3px; }
+  #printArea.print-receipt .print-title { font-size: 15px; font-weight: 700; margin: 10px 0; }
+  #printArea.print-receipt .print-footer { margin-top: 16px; font-size: 11px; color: #000; }
+
+  /* Every report (everything that is not a receipt): green letterhead band, gold double rule,
+     ribbon title, striped table, green footer band, and a double green/gold frame on each page.
+     Colours are forced on so a "no backgrounds" print setting does not wipe the band. */
+  #printArea:not(.print-receipt) {
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+    padding: 6mm 7mm 4mm; font-family: "Segoe UI", Arial, sans-serif;
+  }
+  .print-frame { position: fixed; inset: 3mm; border: 2px solid #0F5132; outline: 1px solid #B8860B; outline-offset: -5px; pointer-events: none; }
+  #printArea:not(.print-receipt) .print-letterhead { background: #0F5132; color: #fff; text-align: center; padding: 14px 18px 12px; }
+  .print-letterhead .pbadge { width: 44px; height: 44px; margin: 0 auto 8px; background: #fff; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+  #printArea:not(.print-receipt) .print-letterhead .pname { font: 700 22px/1.2 Georgia, Cambria, "Times New Roman", serif; letter-spacing: 2px; text-transform: uppercase; }
+  #printArea:not(.print-receipt) .print-letterhead .pmeta { font-size: 12px; margin-top: 4px; letter-spacing: .3px; }
+  .print-rule { height: 7px; border-top: 3px solid #B8860B; border-bottom: 2px solid #B8860B; margin-top: 3px; }
+  .print-titlebar { text-align: center; margin: 12px 0 4px; }
+  .print-ribbon { display: inline-block; background: #0F5132; color: #fff; padding: 6px 24px; font-size: 13px; font-weight: 800; letter-spacing: 1.4px; text-transform: uppercase; border-radius: 2px; }
+  .print-meta { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; font-size: 12px; margin: 8px 2px; color: #000; }
+  .print-table { width: 100%; border-collapse: collapse; font-size: 12px; border: 1px solid #0F5132; color: #000; }
+  .print-table th { background: #0F5132; color: #fff; font-size: 11px; font-weight: 800; letter-spacing: .5px; text-transform: uppercase; text-align: left; padding: 6px 7px; border-right: 1px solid #fff; }
+  .print-table td { padding: 5px 7px; border-top: 1px solid #CFC9BF; border-right: 1px solid #CFC9BF; text-align: left; }
+  .print-table tbody tr:nth-child(even) td { background: #F5F2EC; }
+  .print-table th.no, .print-table td.no { width: 28px; text-align: center; }
+  .print-table th.num, .print-table td.num { text-align: right; }
+  .print-table tfoot td { background: #E8F3EC; border-top: 2px solid #0F5132; font-weight: 800; text-align: right; padding: 7px 10px; }
+  .print-table tr { break-inside: avoid; }
+  .print-table thead { display: table-header-group; }
+  .print-table .st-bad { color: #B3261E; font-weight: 800; }
+  .print-table .st-warn { color: #7A5605; font-weight: 800; }
+  .print-table .st-ok { color: #0F5132; font-weight: 800; }
+  .print-bandfoot { margin-top: 16px; background: #0F5132; color: #fff; text-align: center; font: 700 11px/1.3 Georgia, Cambria, "Times New Roman", serif; letter-spacing: 2.2px; text-transform: uppercase; padding: 8px 12px; border-top: 3px solid #B8860B; break-inside: avoid; }
 
   /* A sale receipt, sized for an 80mm thermal till roll. This is just a hint:
      the browser's own print dialog still lets anyone pick a different
@@ -793,7 +887,7 @@ body.nav-open .navdrawer { transform: none; }
   #authBody .field { margin-bottom: 11px; }
   #authBody .field label {
     font: 600 9px/1.2 ui-monospace, "SF Mono", Menlo, Consolas, monospace; letter-spacing: 0.13em;
-    text-transform: uppercase; color: #4A4139; margin-bottom: 4px;
+    text-transform: uppercase; color: #000; margin-bottom: 4px;
   }
   #authBody .field input {
     padding: 8px 11px; border: 1.5px solid #D6CEB9; border-radius: 3px; background: #fff; color: #201E1B;
@@ -824,7 +918,7 @@ body.nav-open .navdrawer { transform: none; }
   .auth-lfoot {
     display: flex; order: 3; justify-content: space-between; margin-top: 12px;
     font: 500 8.5px/1.2 ui-monospace, "SF Mono", Menlo, Consolas, monospace; letter-spacing: 0.1em;
-    text-transform: uppercase; color: #4A4139;
+    text-transform: uppercase; color: #000;
   }
 
   .auth-toggle { order: 4; display: grid; gap: 8px; margin-top: 15px; }

@@ -5,31 +5,94 @@
 // tracked here until paid or rejected.
 
 var claimsCache = [];
+var claimsRange = 'all';      // 'all' | 'month' | 'custom'
+var claimsFrom = '';
+var claimsTo = '';
+var claimsStatus = 'all';     // 'all' | 'pending' | 'submitted' | 'paid' | 'rejected'
+var claimsPage = 1;
+var CLAIM_STATUSES = ['pending', 'submitted', 'paid', 'rejected'];
+var CLAIM_RANGES = [{ key: 'all', label: 'All time' }, { key: 'month', label: 'This month' }];
+// Plain coloured text, no background: pending amber, submitted black, paid green, rejected red.
+var CLAIM_TONE = { pending: 'warn', submitted: 'ink', paid: 'ok', rejected: 'bad' };
+
+function claimLabel(st) { return st.charAt(0).toUpperCase() + st.slice(1); }
+
+// The date range is applied in the database (so a pharmacy with thousands of
+// claims is never cut off at 200); the status filter works on what came back.
+function claimsBounds() {
+  if (claimsRange === 'month') {
+    var n = new Date();
+    return { start: new Date(n.getFullYear(), n.getMonth(), 1).toISOString(), end: null };
+  }
+  if (claimsRange === 'custom') return rangeBounds(claimsFrom, claimsTo);
+  return { start: null, end: null };
+}
+
+function claimsRangeLabel() {
+  if (claimsRange === 'custom') return fmtDate(claimsFrom) + ' to ' + fmtDate(claimsTo);
+  return claimsRange === 'month' ? 'This month' : 'All time';
+}
 
 async function loadClaims() {
   drawReportsShell2('Insurance Claims');
+  claimsPage = 1;
   try {
-    var { data } = await sb.from('insurance_claims').select('*').order('created_at', { ascending: false }).limit(200);
-    claimsCache = data || [];
+    var bounds = claimsBounds();
+    var r = await fetchAllRows(function () {
+      var q = sb.from('insurance_claims').select('*').order('created_at', { ascending: false });
+      if (bounds.start) q = q.gte('created_at', bounds.start);
+      if (bounds.end) q = q.lt('created_at', bounds.end);
+      return q;
+    }, 'id');
+    if (r.error) throw r.error;
+    claimsCache = r.data || [];
   } catch (e) { claimsCache = []; }
   drawClaims();
 }
 
+function pickClaimsRange(key) { claimsRange = key; loadClaims(); }
+function applyClaimsRange() {
+  var r = rangeBarRead(), err = rangeError(r.from, r.to);
+  if (err) { toast(err, 'bad'); return; }
+  claimsFrom = r.from; claimsTo = r.to; claimsRange = 'custom';
+  loadClaims();
+}
+function pickClaimsStatus(st) { claimsStatus = st; claimsPage = 1; drawClaims(); }
+function goClaimsPage(p) { claimsPage = p; drawClaims(); }
+
+// The claims on screen, in print and in Excel: the chosen status of the chosen dates.
+function claimsView() {
+  return claimsCache.filter(function (c) { return claimsStatus === 'all' || c.status === claimsStatus; });
+}
+
+function claimsAmount(list) { return list.reduce(function (a, c) { return a + Number(c.amount || 0); }, 0); }
+
 function drawClaims() {
   var body = $('#reportBody');
   if (!body) return;
-  var pendingTotal = claimsCache.filter(function (c) { return c.status === 'pending'; }).reduce(function (a, c) { return a + Number(c.amount || 0); }, 0);
+  var tiles = [{ key: 'all', label: 'All claims', kind: 't-neutral' },
+    { key: 'pending', label: 'Pending', kind: 't-amber' }, { key: 'submitted', label: 'Submitted', kind: 't-violet' },
+    { key: 'paid', label: 'Paid', kind: 't-green' }, { key: 'rejected', label: 'Rejected', kind: 't-red' }];
+  var rows = claimsView();
+  var pg = pageSlice(rows, claimsPage);
+  claimsPage = pg.page;
+  // the range bar is drawn once per load (it holds the date inputs), so keep it outside the part that redraws
+  var bar = rangeBarHtml({ presets: CLAIM_RANGES, active: claimsRange, from: claimsFrom, to: claimsTo, pickFn: 'pickClaimsRange', applyFn: 'applyClaimsRange' });
   body.innerHTML =
-    '<div class="kpi-grid" style="margin-bottom:14px">' +
-    kpi('Pending', fmt(pendingTotal), 't-amber') +
-    kpi('Total claims', claimsCache.length, 't-violet') +
-    '</div>' +
-    '<div class="card">' + (claimsCache.length ? claimsCache.map(function (c) {
-      return '<div class="list-row"><div><div class="name">' + esc(c.scheme) + '</div><div class="meta">' + fmtDate(c.created_at) + (c.claim_number ? ' · ' + esc(c.claim_number) : '') + '</div></div>' +
-        '<div class="right"><div>' + fmt(c.amount) + '</div><select style="margin-top:4px" onchange="updateClaimStatus(this,\'' + c.id + '\',this.value)">' +
-        ['pending', 'submitted', 'paid', 'rejected'].map(function (s) { return '<option value="' + s + '"' + (c.status === s ? ' selected' : '') + '>' + s.charAt(0).toUpperCase() + s.slice(1) + '</option>'; }).join('') +
-        '</select></div></div>';
-    }).join('') : '<div class="empty">No insurance claims yet. A claim is created when you sell to a customer on an insurance scheme.</div>') + '</div>';
+    bar +
+    '<div class="kpi-grid five" style="margin-bottom:14px">' + tiles.map(function (t) {
+      var list = t.key === 'all' ? claimsCache : claimsCache.filter(function (c) { return c.status === t.key; });
+      return '<button class="kpi kpi-clickable ' + t.kind + (claimsStatus === t.key ? ' active' : '') + '" onclick="pickClaimsStatus(\'' + t.key + '\')">' +
+        '<div class="label">' + t.label + '</div><div class="value">' + list.length + '</div><div class="tiny">' + fmt(claimsAmount(list)) + '</div></button>';
+    }).join('') + '</div>' +
+    '<div class="section-title" style="margin-top:6px">' + (claimsStatus === 'all' ? 'All claims' : claimLabel(claimsStatus)) + ' · ' + esc(claimsRangeLabel()) + '</div>' +
+    showingHtml(pg) +
+    rtTable(['Date', 'Scheme', 'Claim number', 'Amount', 'Status', 'Change status'], pg.rows.map(function (c) {
+      return [fmtDate(c.created_at), c.scheme, c.claim_number || '—', fmt(c.amount), stCell(claimLabel(c.status), CLAIM_TONE[c.status] || 'ink'),
+        { html: '<select onchange="updateClaimStatus(this,\'' + esc(c.id) + '\',this.value)">' +
+          CLAIM_STATUSES.map(function (s) { return '<option value="' + s + '"' + (c.status === s ? ' selected' : '') + '>' + claimLabel(s) + '</option>'; }).join('') + '</select>' }];
+    }), { empty: claimsCache.length ? 'No claims with that status.' : 'No insurance claims in this period. A claim is created when you sell to a customer on an insurance scheme.' }) +
+    pagerHtml(pg, 'goClaimsPage');
 }
 
 async function updateClaimStatus(sel, id, status) {
@@ -42,23 +105,25 @@ async function updateClaimStatus(sel, id, status) {
   var c = claimsCache.find(function (x) { return x.id === id; });
   if (c) c.status = status;
   toast('Claim updated.', 'good');
+  drawClaims();
+}
+
+function claimCells(c) {
+  return [fmtDate(c.created_at), c.scheme, c.claim_number || '—', fmt(c.amount), stCell(claimLabel(c.status), CLAIM_TONE[c.status] || 'ink')];
 }
 
 function exportClaimsExcel() {
-  var rows = claimsCache.map(function (c) {
+  var rows = claimsView().map(function (c) {
     return { 'Date': new Date(c.created_at).toLocaleDateString('en-GB'), 'Scheme': c.scheme, 'Claim number': c.claim_number || '', 'Amount': Number(c.amount || 0), 'Status': c.status };
   });
   exportExcel((STATE.pharmacy.name || 'Pharma') + ' - insurance claims - ' + todayStr() + '.xlsx', 'Claims', rows);
 }
 
 function printClaimsReport() {
-  var rows = claimsCache.map(function (c) {
-    return [new Date(c.created_at).toLocaleDateString('en-GB'), c.scheme, c.claim_number || '—', fmt(c.amount), c.status.charAt(0).toUpperCase() + c.status.slice(1)];
-  });
-  var pendingTotal = claimsCache.filter(function (c) { return c.status === 'pending'; }).reduce(function (a, c) { return a + Number(c.amount || 0); }, 0);
-  printHtml('Insurance Claims Report', todayStr(),
-    tableHtml(['Date', 'Scheme', 'Claim number', 'Amount', 'Status'], rows),
-    claimsCache.length + ' claims · ' + fmt(pendingTotal) + ' pending');
+  var list = claimsView();
+  printHtml('Insurance Claims Report', (claimsStatus === 'all' ? 'All claims' : claimLabel(claimsStatus)) + ' · ' + claimsRangeLabel(),
+    tableHtml(['Date', 'Scheme', 'Claim number', 'Amount', 'Status'], list.map(claimCells), 'Total: ' + list.length + ' claims · ' + fmt(claimsAmount(list))),
+    list.length + ' claims · ' + fmt(claimsAmount(list.filter(function (c) { return c.status === 'pending'; }))) + ' pending');
 }
 
 // --- Settings ---

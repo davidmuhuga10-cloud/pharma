@@ -9,11 +9,37 @@
 
 var cashSummary = null;   // live figures for the open period (null for a seller: blind)
 var cashHistory = [];
+var cashRange = 'month';   // 'month' | 'all' | 'custom' - which past closings are listed
+var cashFrom = '';
+var cashTo = '';
+var cashPage = 1;
+var CASH_RANGES = [{ key: 'month', label: 'This month' }, { key: 'all', label: 'All time' }];
+
+function cashBounds() {
+  if (cashRange === 'custom') return rangeBounds(cashFrom, cashTo);
+  if (cashRange === 'month') { var n = new Date(); return { start: new Date(n.getFullYear(), n.getMonth(), 1).toISOString(), end: null }; }
+  return { start: null, end: null };
+}
+function cashRangeLabel() {
+  if (cashRange === 'custom') return fmtDate(cashFrom) + ' to ' + fmtDate(cashTo);
+  return cashRange === 'month' ? 'This month' : 'All time';
+}
+// Every closing in the chosen dates (not just the latest 30), so Print and Excel are complete.
+function fetchCashHistory() {
+  var b = cashBounds(), pid = STATE.profile.pharmacy_id;
+  return fetchAllRows(function () {
+    var q = sb.from('cash_closings').select('*, profiles:closed_by(full_name)').eq('pharmacy_id', pid).order('closed_at', { ascending: false });
+    if (b.start) q = q.gte('closed_at', b.start);
+    if (b.end) q = q.lt('closed_at', b.end);
+    return q;
+  }, 'id');
+}
 
 async function loadCashDrawer() {
   drawReportsShell2('Close the cash drawer');
   cashSummary = null;
   cashHistory = [];
+  cashPage = 1;
   var pid = STATE.profile.pharmacy_id;
   var closing = can('cash_close');
   var reviewing = can('cash_review');
@@ -21,8 +47,7 @@ async function loadCashDrawer() {
   if (closing) jobs.push(sb.rpc('cash_drawer_summary', { p_pharmacy_id: pid }));
   else jobs.push(Promise.resolve({ data: null }));
   if (reviewing) {
-    jobs.push(sb.from('cash_closings').select('*, profiles:closed_by(full_name)').eq('pharmacy_id', pid)
-      .order('closed_at', { ascending: false }).limit(30));
+    jobs.push(fetchCashHistory());
   } else jobs.push(Promise.resolve({ data: [] }));
   var res;
   try { res = await Promise.all(jobs); } catch (e) { res = [{ error: e }, { data: [] }]; }
@@ -59,16 +84,57 @@ function cashDifferenceLabel(d) {
   return (n < 0 ? 'Short by ' : 'Over by ') + fmt(Math.abs(n));
 }
 
+var CASH_COLS = ['When', 'By', 'Expected', 'Counted', 'Left in drawer', 'Difference', 'Reason'];
+function cashRowCells(r) {
+  var d = Number(r.difference) || 0;
+  return [fmtDateTime(r.closed_at), (r.profiles && r.profiles.full_name) || '—', fmt(r.expected), fmt(r.counted), fmt(r.kept),
+    stCell(cashDifferenceLabel(r.difference), Math.abs(d) < 0.005 ? 'ok' : (d < 0 ? 'bad' : 'warn')), r.note || '—'];
+}
+
+// The past closings: 10 to a page. Print and Excel (cashPrint / cashExcel) carry all of `cashHistory`.
 function cashHistoryHtml(rows) {
-  if (!rows || !rows.length) return '<div class="section-title">Past closings</div><div class="card"><div class="empty">No closings yet. Close the drawer at the end of each day to compare counted cash against what was sold.</div></div>';
-  return '<div class="section-title">Past closings</div><div class="card">' + rows.map(function (r) {
-    var who = r.profiles && r.profiles.full_name ? ' · ' + esc(r.profiles.full_name) : '';
-    var off = Math.abs(Number(r.difference) || 0) >= 0.005;
-    return '<div class="list-row"><div><div class="name">' + fmtDateTime(r.closed_at) + who + '</div>' +
-      '<div class="meta">Expected ' + fmt(r.expected) + ' · Counted ' + fmt(r.counted) + ' · Left in drawer ' + fmt(r.kept) +
-      (r.note ? '<br>' + esc(r.note) : '') + '</div></div>' +
-      '<div class="right"' + (off ? ' style="color:var(--red)"' : '') + '>' + esc(cashDifferenceLabel(r.difference)) + '</div></div>';
-  }).join('') + '</div>';
+  var pg = pageSlice(rows || [], cashPage);
+  cashPage = pg.page;
+  return '<div class="section-title">Past closings · ' + esc(cashRangeLabel()) + '</div>' +
+    showingHtml(pg) +
+    rtTable(CASH_COLS, pg.rows.map(cashRowCells), { empty: 'No closings yet. Close the drawer at the end of each day to compare counted cash against what was sold.', num: [false, false, true, true, true, false, false] }) +
+    pagerHtml(pg, 'goCashPage');
+}
+function goCashPage(p) { cashPage = p; var h = $('#cashHist'); if (h) h.innerHTML = cashHistoryHtml(cashHistory); }
+
+async function pickCashRange(key) { cashRange = key; await reloadCashHistory(); }
+async function applyCashRange() {
+  var r = rangeBarRead(), err = rangeError(r.from, r.to);
+  if (err) { toast(err, 'bad'); return; }
+  cashFrom = r.from; cashTo = r.to; cashRange = 'custom';
+  await reloadCashHistory();
+}
+// Only the history changes with the dates, so the closing form above keeps what was typed.
+async function reloadCashHistory() {
+  var res = await fetchCashHistory();
+  if (res.error) { toast(friendlyError(res.error), 'bad'); return; }
+  cashHistory = res.data || []; cashPage = 1;
+  var h = $('#cashHistWrap');
+  if (h) h.innerHTML = cashHistoryBlock();
+}
+function cashHistoryBlock() {
+  return rangeBarHtml({ presets: CASH_RANGES, active: cashRange, from: cashFrom, to: cashTo, pickFn: 'pickCashRange', applyFn: 'applyCashRange' }) +
+    '<div id="cashHist">' + cashHistoryHtml(cashHistory) + '</div>';
+}
+
+function cashPrint() {
+  if (!can('cash_review')) return;
+  var rows = cashHistory.map(cashRowCells);
+  var short = cashHistory.filter(function (r) { return Number(r.difference) < -0.004; }).length;
+  printHtml('Cash Drawer Closings', cashRangeLabel(), tableHtml(CASH_COLS, rows, 'Total: ' + rows.length + ' closings'),
+    rows.length + ' closings · ' + short + ' short');
+}
+function cashExcel() {
+  if (!can('cash_review')) return;
+  exportExcel((STATE.pharmacy.name || 'Pharma') + ' - cash closings - ' + todayStr() + '.xlsx', 'Cash closings', cashHistory.map(function (r) {
+    return { 'When': fmtDateTime(r.closed_at), 'By': (r.profiles && r.profiles.full_name) || '', 'Expected': Number(r.expected || 0), 'Counted': Number(r.counted || 0),
+      'Left in drawer': Number(r.kept || 0), 'Difference': Number(r.difference || 0), 'Reason': r.note || '' };
+  }));
 }
 
 function drawCashDrawer() {
@@ -90,7 +156,7 @@ function drawCashDrawer() {
   } else {
     html += '<div class="card" style="padding:14px;margin-bottom:12px">You can read past closings here. Sellers, pharmacists and owners close the drawer.</div>';
   }
-  if (can('cash_review')) html += cashHistoryHtml(cashHistory);
+  if (can('cash_review')) html += '<div id="cashHistWrap">' + cashHistoryBlock() + '</div>';
   body.innerHTML = html;
 }
 

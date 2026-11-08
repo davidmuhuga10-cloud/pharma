@@ -7,7 +7,10 @@
 // the dashboard, applied in the browser to one fetch (one pharmacy's expenses
 // are few). Voiding is a soft delete, like void_sale (schema.sql).
 
-var expRange = 'month';
+var expRange = 'month';   // 'today' | 'week' | 'month' | 'year' | 'custom'
+var expFrom = '';         // custom range, 'YYYY-MM-DD'
+var expTo = '';
+var expPage = 1;
 var expensesAllCache = [];  // this year's expenses (including voided), newest first; filtered by expRange
 var EXP_CATEGORY_LABELS = {
   rent: 'Rent', utilities: 'Utilities', salaries: 'Salaries', transport: 'Transport',
@@ -20,15 +23,18 @@ async function renderExpenses() {
   if (!can('expenses') && !can('view_expenses')) { c.innerHTML = '<div class="card empty">You do not have access to Expenses.</div>'; return; }
   c.innerHTML = listSkeletonHtml(6);
   try {
-    // Only this year is loaded; "Year" is the widest range offered.
+    // This year is loaded; a custom range loads exactly the dates asked for (any year).
     var yearStart = new Date().getFullYear() + '-01-01';
+    var custom = expRange === 'custom';
     var { data, error } = await fetchAllRows(function () {
-      return sb.from('expenses').select('*').eq('pharmacy_id', STATE.profile.pharmacy_id)
-        .gte('expense_date', yearStart)
-        .order('expense_date', { ascending: false }).order('created_at', { ascending: false });
+      var q = sb.from('expenses').select('*').eq('pharmacy_id', STATE.profile.pharmacy_id)
+        .gte('expense_date', custom ? expFrom : yearStart);
+      if (custom) q = q.lte('expense_date', expTo);
+      return q.order('expense_date', { ascending: false }).order('created_at', { ascending: false });
     }, 'id');
     if (error) throw error;
     expensesAllCache = data || [];
+    expPage = 1;
   } catch (e) {
     errorCard(c, friendlyError(e), 'renderExpenses');
     return;
@@ -46,15 +52,41 @@ function expRangeStart(r) {
 
 function setExpRange(r) {
   if (r === expRange) return;
+  var wasCustom = expRange === 'custom';
   expRange = r;
-  drawExpensesList();
+  expPage = 1;
+  if (wasCustom) renderExpenses(); else drawExpensesList();   // a custom range loaded other dates; go back to this year's
+}
+function applyExpRange() {
+  var r = rangeBarRead(), err = rangeError(r.from, r.to);
+  if (err) { toast(err, 'bad'); return; }
+  expFrom = r.from; expTo = r.to; expRange = 'custom';
+  renderExpenses();
+}
+function goExpPage(p) { expPage = p; drawExpensesList(); }
+
+function expRangeLabel() {
+  if (expRange === 'custom') return fmtDate(expFrom) + ' to ' + fmtDate(expTo);
+  return DASH_PERIOD_LABEL[expRange];
+}
+
+// The expenses of the chosen range, reversed ones included (they show in red text).
+function expInRange() {
+  if (expRange === 'custom') return expensesAllCache.filter(function (e) { return e.expense_date >= expFrom && e.expense_date <= expTo; });
+  var rs = expRangeStart(expRange);  // local date, not toISOString(): in Nairobi that rolled back a day
+  var startStr = rs.getFullYear() + '-' + String(rs.getMonth() + 1).padStart(2, '0') + '-' + String(rs.getDate()).padStart(2, '0');
+  return expensesAllCache.filter(function (e) { return e.expense_date >= startStr; });
+}
+
+var EXP_COLS = ['Date', 'Description', 'Category', 'Method', 'Amount', 'Status'];
+function expenseCells(e) {
+  return [fmtDate(e.expense_date), e.description, expenseCategoryLabel(e.category), supplierPaymentMethodLabel(e.method), fmt(e.amount),
+    e.voided ? stCell('Reversed', 'bad') : stCell('Recorded', 'ok')];
 }
 
 function drawExpensesList() {
   var c = $('#content');
-  var rs = expRangeStart(expRange);  // local date, not toISOString(): in Nairobi that rolled back a day
-  var startStr = rs.getFullYear() + '-' + String(rs.getMonth() + 1).padStart(2, '0') + '-' + String(rs.getDate()).padStart(2, '0');
-  var inRange = expensesAllCache.filter(function (e) { return e.expense_date >= startStr; });
+  var inRange = expInRange();
   var active = inRange.filter(function (e) { return !e.voided; });
   var total = active.reduce(function (a, e) { return a + Number(e.amount || 0); }, 0);
 
@@ -62,27 +94,47 @@ function drawExpensesList() {
   active.forEach(function (e) { byCategory[e.category] = (byCategory[e.category] || 0) + Number(e.amount || 0); });
   var catRows = Object.keys(byCategory).map(function (k) { return { cat: k, total: byCategory[k] }; })
     .sort(function (a, b) { return b.total - a.total; });
-  var breakdownHtml = catRows.length
-    ? catRows.map(function (r) { return listRow(expenseCategoryLabel(r.cat), '', fmt(r.total)); }).join('')
-    : '<div class="empty">No expenses recorded yet for this period.</div>';
 
-  var listHtml = inRange.length ? inRange.map(expenseRowHtml).join('') : '<div class="empty">No expenses recorded yet for this period.</div>';
+  var pg = pageSlice(inRange, expPage);
+  expPage = pg.page;
+  var rows = pg.rows.map(expenseCells);
+  // Reverse sits in its own last column on screen only (it never prints).
+  var canReverse = can('expenses');
+  var cols = EXP_COLS.concat(canReverse ? ['Action'] : []);
+  if (canReverse) rows = rows.map(function (r, i) {
+    var e = pg.rows[i];
+    return r.concat([{ html: !e.voided ? '<button class="btn danger small" onclick="event.stopPropagation();openReverseExpense(\'' + esc(e.id) + '\')">Reverse</button>' : '' }]);
+  });
 
   c.innerHTML =
     (can('expenses') ? '<div class="toolbar-row"><button class="btn primary" onclick="openAddExpense()">+ New expense</button></div>' : '') +
-    '<div class="dash-filter-row"><div class="dash-tabs">' +
-      ['today', 'week', 'month', 'year'].map(function (r) {
-        return '<button class="dash-tab' + (expRange === r ? ' active' : '') + '" onclick="setExpRange(\'' + r + '\')">' + DASH_RANGE_LABELS[r] + '</button>';
-      }).join('') +
-    '</div></div>' +
+    reportHeadHtml('Expenses', 'exportExpensesExcel', 'printExpenses') +
+    rangeBarHtml({ presets: ['today', 'week', 'month', 'year'].map(function (r) { return { key: r, label: DASH_RANGE_LABELS[r] }; }),
+      active: expRange, from: expFrom, to: expTo, pickFn: 'setExpRange', applyFn: 'applyExpRange' }) +
     '<div class="kpi-grid" style="margin-bottom:14px">' +
       kpi('Total spent', fmt(total), 't-red') +
       kpi('Entries', active.length, 't-violet') +
     '</div>' +
     '<div class="section-title">By category</div>' +
-    '<div class="card" style="margin-bottom:14px">' + breakdownHtml + '</div>' +
-    '<div class="section-title">All expenses — ' + esc(DASH_PERIOD_LABEL[expRange].toLowerCase()) + '</div>' +
-    '<div class="card">' + listHtml + '</div>';
+    rtTable(['Category', 'Total'], catRows.map(function (r) { return [expenseCategoryLabel(r.cat), fmt(r.total)]; }), { empty: 'No expenses recorded yet for this period.' }) +
+    '<div class="section-title">All expenses · ' + esc(expRangeLabel()) + '</div>' +
+    showingHtml(pg) +
+    rtTable(cols, rows, { empty: 'No expenses recorded yet for this period.', num: cols.map(function (h) { return h === 'Amount'; }) }) +
+    pagerHtml(pg, 'goExpPage');
+}
+
+// Print and Excel carry every expense of the range, not just the page on screen.
+function printExpenses() {
+  var list = expInRange();
+  var total = list.filter(function (e) { return !e.voided; }).reduce(function (a, e) { return a + Number(e.amount || 0); }, 0);
+  printHtml('Expenses Report', expRangeLabel(), tableHtml(EXP_COLS, list.map(expenseCells), 'Total spent: ' + fmt(total) + ' (reversed entries not counted)'),
+    list.length + ' entries · ' + fmt(total));
+}
+function exportExpensesExcel() {
+  exportExcel((STATE.pharmacy.name || 'Pharma') + ' - expenses - ' + todayStr() + '.xlsx', 'Expenses', expInRange().map(function (e) {
+    return { 'Date': fmtDate(e.expense_date), 'Description': e.description, 'Category': expenseCategoryLabel(e.category), 'Method': supplierPaymentMethodLabel(e.method),
+      'Amount': Number(e.amount || 0), 'Status': e.voided ? 'Reversed' : 'Recorded' };
+  }));
 }
 
 function expenseCategoryLabel(cat) {
@@ -98,14 +150,6 @@ function expCustomCategories() {
   var seen = {};
   (expensesAllCache || []).forEach(function (e) { if (e.category) seen[e.category] = true; });
   return Object.keys(seen).filter(function (c) { return !EXP_CATEGORY_LABELS[c]; }).sort();
-}
-
-function expenseRowHtml(e) {
-  var meta = [fmtDate(e.expense_date), expenseCategoryLabel(e.category), supplierPaymentMethodLabel(e.method)].join(' · ');
-  var right = fmt(e.amount) + (!e.voided && can('expenses') ? ' <button class="btn danger small" style="margin-left:14px" onclick="openReverseExpense(\'' + e.id + '\')">Reverse</button>' : '');
-  return '<div class="list-row">' +
-    '<div><div class="name">' + esc(e.description) + (e.voided ? ' <span class="badge bad">Reversed</span>' : '') + '</div><div class="meta">' + esc(meta) + '</div></div>' +
-    '<div class="right">' + right + '</div></div>';
 }
 
 function openAddExpense() {

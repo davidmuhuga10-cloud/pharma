@@ -4,20 +4,19 @@
 // Every batch still in stock, grouped by urgency. Uses the same thresholds as
 // the drug-detail batch list and Inventory's "unknown expiry" notice.
 
-// Each category opens its own drill-down list, printable and exportable,
-// 10 rows per page. Unknown-expiry rows can be edited right there.
-// expiryReportData holds one flat array (`all`); every category, including the
-// summary tile counts, is worked out from it by expiryCategoryRows(), so a
-// tile, its list and its print can never disagree. Each category shows only
-// its own rows, so far-future dates never read as part of the 90-day report.
-var expiryCategory = null; // null = summary tiles | 'expired' | 'within30' | 'within90' | 'unknown' | 'custom'
+// One screen: five tiles pick what to list (All needing attention, Expired, 30 days,
+// 90 days, Unknown expiry), a From-To bar lists the batches expiring in any window, and
+// the table shows 10 rows at a time. Excel and Print carry the WHOLE selected list.
+// expiryReportData holds one flat array (`all`); every tile count and every list is
+// worked out from it by expiryCategoryRows(), so a tile, its list, its print and its
+// Excel can never disagree.
+var expiryCategory = 'all'; // 'all' | 'expired' | 'within30' | 'within90' | 'unknown' | 'custom'
 var expiryPage = 1;
-var EXPIRY_PAGE_SIZE = 10;
 var expiryCustomFrom = '';
 var expiryCustomTo = '';
 
 async function loadExpiryReport() {
-  expiryCategory = null;
+  expiryCategory = 'all';
   expiryPage = 1;
   drawReportsShell2('Expiry Dates Report');
   try {
@@ -45,9 +44,10 @@ async function loadExpiryReport() {
 
 // Thresholds are cumulative (0-30, 0-90), not separate bands: a drug expiring
 // in 12 days appears under both "30 Days" and "90 Days". Expired items are
-// their own bucket.
+// their own bucket, and "All needing attention" is expired + the next 90 days + unknown.
 function expiryCategoryRows(cat) {
   var all = (expiryReportData && expiryReportData.all) || [];
+  if (cat === 'all') return all.filter(function (r) { return r.expiry_unknown || r.days <= 90; });
   if (cat === 'expired') return all.filter(function (r) { return !r.expiry_unknown && r.days < 0; });
   if (cat === 'within30') return all.filter(function (r) { return !r.expiry_unknown && r.days >= 0 && r.days <= 30; });
   if (cat === 'within90') return all.filter(function (r) { return !r.expiry_unknown && r.days >= 0 && r.days <= 90; });
@@ -59,54 +59,81 @@ function expiryCategoryRows(cat) {
   return [];
 }
 
+// Soonest or most overdue first; batches with no date go last, oldest batch first.
+function expirySorted(cat) {
+  return expiryCategoryRows(cat).slice().sort(function (a, b) {
+    var da = a.expiry_unknown ? Infinity : a.days, db = b.expiry_unknown ? Infinity : b.days;
+    return da === db ? 0 : (da < db ? -1 : 1);
+  });
+}
+
 var EXPIRY_CATEGORIES = [
-  { key: 'expired', label: 'Expired', kind: 't-red' },
-  { key: 'within30', label: 'Expiring in 30 Days', kind: 't-red' },
-  { key: 'within90', label: 'Expiring in 90 Days', kind: 't-amber' },
-  { key: 'unknown', label: 'Unknown Expiry', kind: 't-neutral' }
+  { key: 'all', label: 'All needing attention', kind: 't-neutral', title: 'All needing attention' },
+  { key: 'expired', label: 'Expired', kind: 't-red', title: 'Expired' },
+  { key: 'within30', label: 'Expiring in 30 days', kind: 't-red', title: 'Expiring in 30 days' },
+  { key: 'within90', label: 'Expiring in 90 days', kind: 't-amber', title: 'Expiring in 90 days' },
+  { key: 'unknown', label: 'Unknown expiry', kind: 't-neutral', title: 'Unknown expiry' }
 ];
 
-var EXPIRY_CATEGORY_META = {
-  expired: { title: 'Expired', badge: 'bad', showDays: true },
-  within30: { title: 'Expiring in 30 Days', badge: 'bad', showDays: true },
-  within90: { title: 'Expiring in 90 Days', badge: 'warn', showDays: true },
-  unknown: { title: 'Unknown Expiry', badge: 'muted', showDays: false },
-  custom: { title: 'Custom range', badge: 'warn', showDays: true }
-};
+function expiryTitle(cat) {
+  if (cat === 'custom') return 'Expiring ' + fmtDate(expiryCustomFrom) + ' to ' + fmtDate(expiryCustomTo);
+  var m = EXPIRY_CATEGORIES.filter(function (c) { return c.key === cat; })[0];
+  return m ? m.title : cat;
+}
+
+// Status is plain coloured text: red for expired and the next 30 days, amber for
+// the next 90, black for no date or later.
+function expiryStatus(r) {
+  if (r.expiry_unknown) return { text: 'No date', tone: 'ink' };
+  if (r.days < 0) return { text: 'Expired · ' + Math.abs(r.days) + 'd ago', tone: 'bad' };
+  if (r.days <= 30) return { text: 'Within 30 days · ' + r.days + 'd left', tone: 'bad' };
+  if (r.days <= 90) return { text: 'Within 90 days · ' + r.days + 'd left', tone: 'warn' };
+  return { text: 'Later · ' + r.days + 'd left', tone: 'ink' };
+}
+
+function expiryRowCells(r, editable) {
+  var st = expiryStatus(r);
+  var dateCell = editable ?
+    { html: '<span style="display:inline-flex;gap:8px;align-items:center"><input type="date" id="expInput_' + esc(r.id) + '">' +
+      '<button class="btn small" id="expSaveBtn_' + esc(r.id) + '" onclick="saveExpiryReportRowDate(\'' + esc(r.id) + '\')">Save</button></span>' }
+    : (r.expiry_date && !r.expiry_unknown ? fmtDate(r.expiry_date) : 'No date set');
+  return [r.name, r.batch_no || '—', r.qty + ' ' + r.unit, dateCell, stCell(st.text, st.tone)];
+}
 
 function drawExpiryReportBody() {
   var body = $('#reportBody');
   if (!body) return;
-  if (!expiryCategory) { drawExpirySummary(body); return; }
-  drawExpiryCategory(body);
+  if (!expiryReportData.total) { body.innerHTML = '<div class="empty">No batches in stock yet.</div>'; return; }
+  var cat = expiryCategory;
+  var rows = expirySorted(cat);
+  var pg = pageSlice(rows, expiryPage);
+  expiryPage = pg.page;
+  body.innerHTML =
+    '<div class="kpi-grid five" style="margin-bottom:14px">' +
+    EXPIRY_CATEGORIES.map(function (c) {
+      return '<button class="kpi kpi-clickable ' + c.kind + (cat === c.key ? ' active' : '') + '" onclick="openExpiryCategory(\'' + c.key + '\')">' +
+        '<div class="label">' + esc(c.label) + '</div><div class="value">' + expiryCategoryRows(c.key).length + '</div></button>';
+    }).join('') +
+    '</div>' +
+    '<div class="range-bar"><div class="range-dates">' +
+    '<label>Expiring from <input type="date" id="rbFrom" value="' + esc(expiryCustomFrom) + '"></label>' +
+    '<label>to <input type="date" id="rbTo" value="' + esc(expiryCustomTo) + '"></label>' +
+    '<button class="btn small' + (cat === 'custom' ? ' primary' : '') + '" onclick="applyExpiryCustomRange()">Apply</button>' +
+    '</div></div>' +
+    '<div class="section-title" style="margin-top:6px">' + esc(expiryTitle(cat)) + '</div>' +
+    (cat === 'unknown' && rows.length ? '<div class="rt-note">Set the real expiry date once you have it. This only needs doing once per batch.</div>' : '') +
+    showingHtml(pg) +
+    rtTable(['Drug', 'Batch', 'Qty', 'Expiry date', 'Status'], pg.rows.map(function (r) { return expiryRowCells(r, r.expiry_unknown); }),
+      { empty: 'Nothing in this list.', num: [false, false, false, false, false] }) +
+    pagerHtml(pg, 'goExpiryPage');
 }
 
-function drawExpirySummary(body) {
-  body.innerHTML =
-    (expiryReportData.total ? (
-      '<div class="kpi-grid" style="margin-bottom:14px">' +
-      EXPIRY_CATEGORIES.map(function (c) {
-        return '<button class="kpi kpi-clickable ' + c.kind + '" onclick="openExpiryCategory(\'' + c.key + '\')">' +
-          '<div class="label">' + esc(c.label) + '</div><div class="value">' + expiryCategoryRows(c.key).length + '</div></button>';
-      }).join('') +
-      '</div>' +
-      '<div class="card" style="margin-bottom:12px">' +
-      '<div class="tiny" style="margin-bottom:8px;font-weight:700">Custom date range</div>' +
-      '<div class="row-2">' +
-      '<div class="field"><label>From</label><input id="expFrom" type="date" value="' + esc(expiryCustomFrom) + '"></div>' +
-      '<div class="field"><label>To</label><input id="expTo" type="date" value="' + esc(expiryCustomTo) + '"></div>' +
-      '</div>' +
-      '<button class="btn primary small" onclick="applyExpiryCustomRange()">View list</button>' +
-      '</div>'
-    ) : '<div class="empty">No batches in stock yet.</div>');
-}
+function goExpiryPage(p) { expiryPage = p; drawExpiryReportBody(); }
 
 function applyExpiryCustomRange() {
-  var from = $('#expFrom') ? $('#expFrom').value : '';
-  var to = $('#expTo') ? $('#expTo').value : '';
-  if (!from || !to) { toast('Pick both a from and to date.', 'bad'); return; }
-  if (from > to) { toast('The "from" date must be before the "to" date.', 'bad'); return; }
-  expiryCustomFrom = from; expiryCustomTo = to;
+  var r = rangeBarRead(), err = rangeError(r.from, r.to);
+  if (err) { toast(err, 'bad'); return; }
+  expiryCustomFrom = r.from; expiryCustomTo = r.to;
   openExpiryCategory('custom');
 }
 
@@ -114,54 +141,6 @@ function openExpiryCategory(cat) {
   expiryCategory = cat;
   expiryPage = 1;
   drawExpiryReportBody();
-}
-
-function closeExpiryCategory() {
-  expiryCategory = null;
-  drawExpiryReportBody();
-}
-
-function drawExpiryCategory(body) {
-  var cat = expiryCategory;
-  var meta = EXPIRY_CATEGORY_META[cat];
-  var allRows = expiryCategoryRows(cat);
-  // Soonest or most overdue first. Unknown Expiry keeps insertion order (oldest
-  // batch first), the same as Inventory's "fix later" list.
-  if (cat !== 'unknown') allRows = allRows.slice().sort(function (a, b) { return a.days - b.days; });
-  var rows = allRows.slice(0, expiryPage * EXPIRY_PAGE_SIZE);
-  var title = cat === 'custom' ? ('Custom range: ' + fmtDate(expiryCustomFrom) + ' – ' + fmtDate(expiryCustomTo)) : meta.title;
-  body.innerHTML =
-    '<button class="btn ghost small" style="margin-bottom:10px" onclick="closeExpiryCategory()">&larr; Back to Expiry Dates Report</button>' +
-    '<div class="section-title" style="margin-top:0">' + esc(title) + ' (' + allRows.length + ')</div>' +
-    '<div class="toolbar-row"><div class="toolbar-segment toolbar-end">' +
-    '<button class="btn" onclick="exportExpiryCategoryExcel()">' + icon('download', 15) + ' Excel</button>' +
-    '<button class="btn" onclick="printExpiryCategory()">' + icon('printer', 15) + ' Print</button>' +
-    '</div></div>' +
-    (cat === 'unknown' && allRows.length ? '<div class="tiny" style="margin-bottom:10px">Set the real expiry date once you have it — this only needs doing once per batch.</div>' : '') +
-    (allRows.length ? (
-      // Every category except "custom" has one status, so meta.badge fits all rows.
-      // A custom range can mix expired and future rows, so its badge colour is
-      // chosen per row.
-      '<div class="card">' + rows.map(function (r) {
-        var kind = meta.badge;
-        if (cat === 'custom') kind = r.days < 0 ? 'bad' : (r.days <= 30 ? 'bad' : 'warn');
-        return expiryRowHtml(r, kind, meta.showDays, cat === 'unknown');
-      }).join('') + '</div>' +
-      (allRows.length > rows.length ? '<button class="btn ghost" style="margin-top:10px" onclick="expiryPage++;drawExpiryReportBody()">Load more (' + (allRows.length - rows.length) + ' more)</button>' : '')
-    ) : '<div class="empty">Nothing in this list.</div>');
-}
-
-function expiryRowHtml(r, kind, showDays, editable) {
-  return '<div class="list-row"><div><div class="name">' + esc(r.name) + (r.batch_no ? ' · batch ' + esc(r.batch_no) : '') + '</div>' +
-    '<div class="meta">' + r.qty + ' ' + esc(r.unit) + '</div></div>' +
-    (editable ?
-      '<div class="right" style="display:flex;gap:8px;align-items:center">' +
-      '<input type="date" id="expInput_' + r.id + '">' +
-      '<button class="btn small" id="expSaveBtn_' + r.id + '" onclick="saveExpiryReportRowDate(\'' + r.id + '\')">Save</button>' +
-      '</div>'
-      :
-      '<div class="right"><span class="badge ' + kind + '">' + (r.expiry_date ? fmtDate(r.expiry_date) : 'No date set') + (showDays && typeof r.days === 'number' ? (r.days < 0 ? ' · ' + Math.abs(r.days) + 'd ago' : ' · ' + r.days + 'd left') : '') + '</span></div>'
-    ) + '</div>';
 }
 
 // Set a batch's expiry from the Unknown Expiry list. Uses the same RPC
@@ -177,67 +156,37 @@ async function saveExpiryReportRowDate(batchId) {
     });
     if (error) { toast(friendlyError(error), 'bad'); return; }
     toast('Expiry date saved.', 'good');
-    if (expiryReportData) expiryReportData.all = expiryReportData.all.filter(function (r) { return r.id !== batchId; });
+    // The batch now has a real date: put it back in the list with that date instead of dropping it.
+    if (expiryReportData) {
+      expiryReportData.all.forEach(function (r) {
+        if (r.id === batchId) { r.expiry_unknown = false; r.expiry_date = val; r.days = daysUntil(val); }
+      });
+    }
     STATE.unknownExpiryBatches = (STATE.unknownExpiryBatches || []).filter(function (b) { return b.id !== batchId; });
     drawExpiryReportBody();
   });
 }
 
-function expiryCategoryExportRows(cat) {
-  var rows = expiryCategoryRows(cat);
-  if (cat !== 'unknown') rows = rows.slice().sort(function (a, b) { return a.days - b.days; });
-  return rows.map(function (r) { return [r.name, r.batch_no || '', r.qty + ' ' + r.unit, r.expiry_date && !r.expiry_unknown ? fmtDate(r.expiry_date) : '—']; });
-}
-
-function printExpiryCategory() {
-  if (!expiryCategory) return;
-  var meta = EXPIRY_CATEGORY_META[expiryCategory];
-  var title = expiryCategory === 'custom' ? ('Expiry — custom range: ' + fmtDate(expiryCustomFrom) + ' to ' + fmtDate(expiryCustomTo)) : ('Expiry — ' + meta.title);
-  var rows = expiryCategoryExportRows(expiryCategory);
-  printHtml(title, todayStr(), tableHtml(['Drug', 'Batch', 'Qty', 'Expiry date'], rows), rows.length + ' batches');
-}
-
-function exportExpiryCategoryExcel() {
-  if (!expiryCategory) return;
-  var meta = EXPIRY_CATEGORY_META[expiryCategory];
-  var rows = expiryCategoryExportRows(expiryCategory).map(function (r) {
-    return { 'Drug': r[0], 'Batch': r[1], 'Qty': r[2], 'Expiry date': r[3] };
-  });
-  exportExcel((STATE.pharmacy.name || 'Pharma') + ' - expiry - ' + (meta ? meta.title.toLowerCase().replace(/\s+/g, '-') : expiryCategory) + ' - ' + todayStr() + '.xlsx', 'Expiry', rows);
-}
-
-// Print/export of the whole report (all categories). Reachable from the toolbar
-// on the summary and on every drill-down.
-function expiryReportRows() {
-  var all = (expiryReportData && expiryReportData.all) || [];
-  function statusLabel(r) {
-    if (r.expiry_unknown) return 'Unknown expiry';
-    if (r.days < 0) return 'Expired';
-    if (r.days <= 30) return 'Critical (≤30d)';
-    if (r.days <= 90) return 'Soon (≤90d)';
-    return 'Later';
-  }
-  return all.slice().sort(function (a, b) {
-    var da = a.expiry_unknown ? Infinity : a.days, db = b.expiry_unknown ? Infinity : b.days;
-    return da - db;
-  }).map(function (r) {
-    return [r.name, r.batch_no || '', r.qty + ' ' + r.unit, statusLabel(r), r.expiry_date && !r.expiry_unknown ? fmtDate(r.expiry_date) : '—'];
-  });
+// Print and Excel carry the whole selected list (every page), in the order on screen.
+function expiryExportRows() {
+  return expirySorted(expiryCategory).map(function (r) { return expiryRowCells(r, false); });
 }
 
 function printExpiryReport() {
   if (!expiryReportData) { toast('Report still loading.', 'bad'); return; }
-  printHtml('Expiry Dates Report', todayStr(),
-    tableHtml(['Drug', 'Batch', 'Qty', 'Status', 'Expiry date'], expiryReportRows()),
-    expiryReportData.total + ' batches in stock');
+  var rows = expiryExportRows();
+  printHtml('Expiry Dates Report', expiryTitle(expiryCategory),
+    tableHtml(['Drug', 'Batch', 'Qty', 'Expiry date', 'Status'], rows, 'Total: ' + rows.length + ' batches'),
+    rows.length + ' batches · ' + expiryCategoryRows('expired').length + ' expired · ' + expiryCategoryRows('within30').length + ' within 30 days · ' +
+    expiryCategoryRows('unknown').length + ' with no date');
 }
 
 function exportExpiryReportExcel() {
   if (!expiryReportData) { toast('Report still loading.', 'bad'); return; }
-  var rows = expiryReportRows().map(function (r) {
-    return { 'Drug': r[0], 'Batch': r[1], 'Qty': r[2], 'Status': r[3], 'Expiry date': r[4] };
+  var rows = expiryExportRows().map(function (r) {
+    return { 'Drug': r[0], 'Batch': r[1] === '—' ? '' : r[1], 'Qty': r[2], 'Expiry date': r[3], 'Status': r[4].t };
   });
-  exportExcel((STATE.pharmacy.name || 'Pharma') + ' - expiry - ' + todayStr() + '.xlsx', 'Expiry', rows);
+  exportExcel((STATE.pharmacy.name || 'Pharma') + ' - expiry - ' + expiryTitle(expiryCategory).toLowerCase().replace(/[^a-z0-9]+/g, '-') + ' - ' + todayStr() + '.xlsx', 'Expiry', rows);
 }
 
 // --- Stock valuation report ---
@@ -253,6 +202,7 @@ async function loadValuationReport() {
     var totalCost = rows.reduce(function (a, d) { return a + Number(d.stock_value_cost || 0); }, 0);
     var totalRetail = rows.reduce(function (a, d) { return a + Number(d.stock_value_retail || 0); }, 0);
     valuationReportData = { rows: rows, totalCost: totalCost, totalRetail: totalRetail };
+    valuationPage = 1;
     drawValuationReportBody();
   } catch (e) {
     errorCard($('#reportBody'), friendlyError(e), 'loadValuationReport');
@@ -284,16 +234,20 @@ function valuationLine(r) {
     ' · price ' + fmt(valuationUnitPrice(r));
 }
 
-// One drug row: name and total value on the top line; quantity, cost and price
-// on a line that never wraps (it shrinks a little on narrow phones).
-function valuationRow(r) {
-  return '<div class="val-row"><div class="val-top"><span class="name">' + esc(r.name) + '</span><span class="right">' + fmt(r.stock_value_retail) + '</span></div>' +
-    '<div class="val-meta">' + valuationLine(r) + '</div></div>';
+// One drug as table cells (screen, print and valuationRow's older one-line form agree on the maths).
+var valuationPage = 1;
+function valuationCells(r) {
+  var cost = valuationUnitCost(r);
+  return [r.name, r.qty_in_stock + ' ' + valuationUnitWord(r.unit, r.qty_in_stock), cost > 0 ? fmt(cost) : '–',
+    fmt(valuationUnitPrice(r)), fmt(r.stock_value_cost), fmt(r.stock_value_retail)];
 }
+var VALUATION_COLS = ['Drug', 'Qty in stock', 'Unit cost', 'Unit price', 'Value (cost)', 'Value (retail)'];
 
 function drawValuationReportBody() {
   var body = $('#reportBody');
   var d = valuationReportData;
+  var pg = pageSlice(d.rows, valuationPage);
+  valuationPage = pg.page;
   body.innerHTML =
     '<div class="kpi-grid" style="margin-bottom:14px">' +
     kpi('Value at cost', fmt(d.totalCost), 't-orange') +
@@ -302,20 +256,18 @@ function drawValuationReportBody() {
     kpi('Drugs tracked', d.rows.length, 't-neutral') +
     '</div>' +
     '<div class="section-title">By drug</div>' +
-    '<div class="card">' + (d.rows.length ? d.rows.map(function (r) {
-      return valuationRow(r);
-    }).join('') : '<div class="empty">No stock recorded yet.</div>') + '</div>';
+    showingHtml(pg) +
+    rtTable(VALUATION_COLS, pg.rows.map(valuationCells), { empty: 'No stock recorded yet.', num: [false, true, true, true, true, true] }) +
+    pagerHtml(pg, 'goValuationPage');
 }
+function goValuationPage(p) { valuationPage = p; drawValuationReportBody(); }
 
 function printValuationReport() {
   if (!valuationReportData) { toast('Report still loading.', 'bad'); return; }
-  var rows = valuationReportData.rows.map(function (r) {
-    var cost = valuationUnitCost(r);
-    return [r.name, r.qty_in_stock + ' ' + valuationUnitWord(r.unit, r.qty_in_stock), cost > 0 ? fmt(cost) : '–', fmt(valuationUnitPrice(r)), fmt(r.stock_value_cost), fmt(r.stock_value_retail)];
-  });
+  var rows = valuationReportData.rows.map(valuationCells);
   printHtml('Stock Valuation Report', todayStr(),
-    tableHtml(['Drug', 'Qty in stock', 'Unit cost', 'Unit price', 'Value (cost)', 'Value (retail)'], rows),
-    'Total cost ' + fmt(valuationReportData.totalCost) + ' · Total retail ' + fmt(valuationReportData.totalRetail));
+    tableHtml(VALUATION_COLS, rows, 'Total cost ' + fmt(valuationReportData.totalCost) + ' · Total retail ' + fmt(valuationReportData.totalRetail)),
+    rows.length + ' drugs in stock');
 }
 
 function exportValuationReportExcel() {
@@ -340,29 +292,40 @@ async function loadLowStockReport() {
       return { name: d.name, unit: d.unit, current: d.qty_in_stock, reorderLevel: d.reorder_level, suggested: Math.max(d.reorder_level * 3 - d.qty_in_stock, d.reorder_level || 5) };
     });
     lowStockReportData = { rows: rows };
+    lowStockPage = 1;
     drawLowStockReportBody();
   } catch (e) {
     errorCard($('#reportBody'), friendlyError(e), 'loadLowStockReport');
   }
 }
 
+var lowStockPage = 1;
+var LOWSTOCK_COLS = ['Drug', 'Current stock', 'Reorder level', 'Suggested order', 'Status'];
+function lowStockCells(n) {
+  return [n.name, n.current + ' ' + n.unit, n.reorderLevel, n.suggested, n.current <= 0 ? stCell('Out of stock', 'bad') : stCell('Low', 'warn')];
+}
+
 function drawLowStockReportBody() {
   var body = $('#reportBody');
   var rows = lowStockReportData.rows;
+  var pg = pageSlice(rows, lowStockPage);
+  lowStockPage = pg.page;
   body.innerHTML =
     '<div class="kpi-grid" style="margin-bottom:14px">' +
     kpi('Need reordering', rows.length, rows.length ? 't-red' : 't-neutral') +
+    kpi('Out of stock', rows.filter(function (n) { return n.current <= 0; }).length, 't-neutral') +
     '</div>' +
     (rows.length && can('suppliers') ? '<button class="btn primary small" style="margin-bottom:10px" onclick="openSupplierOrder()">' + icon('wallet', 15) + ' Order by WhatsApp</button>' : '') +
-    '<div class="card">' + (rows.length ? rows.map(function (n) {
-      return listRow(n.name, 'Have ' + n.current + ' ' + esc(n.unit) + ' · reorder level ' + n.reorderLevel, '<b>Order ' + n.suggested + '</b>');
-    }).join('') : '<div class="empty">Nothing needs reordering right now.</div>') + '</div>';
+    showingHtml(pg) +
+    rtTable(LOWSTOCK_COLS, pg.rows.map(lowStockCells), { empty: 'Nothing needs reordering right now.', num: [false, false, true, true, false] }) +
+    pagerHtml(pg, 'goLowStockPage');
 }
+function goLowStockPage(p) { lowStockPage = p; drawLowStockReportBody(); }
 
 function printLowStockReport() {
   if (!lowStockReportData) { toast('Report still loading.', 'bad'); return; }
-  var rows = lowStockReportData.rows.map(function (n) { return [n.name, n.current + ' ' + n.unit, n.reorderLevel, n.suggested]; });
-  printHtml('Low Stock Report', todayStr(), tableHtml(['Drug', 'Current stock', 'Reorder level', 'Suggested order'], rows), rows.length + ' drugs need reordering');
+  var rows = lowStockReportData.rows.map(lowStockCells);
+  printHtml('Low Stock Report', todayStr(), tableHtml(LOWSTOCK_COLS, rows, 'Total: ' + rows.length + ' drugs need reordering'), rows.length + ' drugs need reordering');
 }
 
 function exportLowStockReportExcel() {

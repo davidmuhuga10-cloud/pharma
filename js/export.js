@@ -1,13 +1,183 @@
-// js/export.js - printing and Excel export helpers shared by every report.
+// js/export.js - printing, Excel export and the shared report table helpers.
+//
+// Every report screen looks the same: filter tiles or a date-range bar on top,
+// a table showing 10 rows at a time with Prev/Next, plain coloured status text,
+// and Excel + Print buttons. Print and Excel always carry the WHOLE filtered
+// list, never just the page on screen. The helpers below build those pieces.
 
-function letterheadHtml(title, subtitle) {
+// ---- paging ----
+var REPORT_PAGE_SIZE = 10;
+
+// One page of an already-filtered list. `page` is clamped, so a list that
+// shrank (a row saved, a filter changed) never leaves you on an empty page.
+function pageSlice(rows, page) {
+  var size = REPORT_PAGE_SIZE, total = rows.length;
+  var pages = Math.max(1, Math.ceil(total / size));
+  var p = Math.min(Math.max(1, Number(page) || 1), pages);
+  return {
+    rows: rows.slice((p - 1) * size, p * size), page: p, pages: pages, total: total,
+    from: total ? (p - 1) * size + 1 : 0, to: Math.min(p * size, total)
+  };
+}
+
+// "Showing 1–10 of 20", the line above a table.
+function showingHtml(pg) {
+  return '<div class="rt-count">' + (pg.total ? 'Showing ' + pg.from + '–' + pg.to + ' of ' + pg.total : 'Nothing to show') + '</div>';
+}
+
+// The page numbers to offer: all of them for a short list, otherwise the first, the last
+// and the ones around the current page, with "..." where pages are skipped.
+function pageNumbers(page, pages) {
+  if (pages <= 7) { var all = []; for (var i = 1; i <= pages; i++) all.push(i); return all; }
+  var out = [1];
+  var from = Math.max(2, page - 1), to = Math.min(pages - 1, page + 1);
+  if (from > 2) out.push('…');
+  for (var n = from; n <= to; n++) out.push(n);
+  if (to < pages - 1) out.push('…');
+  out.push(pages);
+  return out;
+}
+
+// Prev, numbered pages, "Page 2 of 5", Next. `fn` is the NAME of a global function that
+// receives the page number to show. Nothing is drawn when everything fits on one page.
+// On a phone the numbers are hidden and "Page 2 of 5" sits between Prev and Next.
+function pagerHtml(pg, fn) {
+  if (pg.pages <= 1) return '';
+  return '<div class="pager">' +
+    '<button class="pg-btn" ' + (pg.page <= 1 ? 'disabled' : 'onclick="' + fn + '(' + (pg.page - 1) + ')"') + '>&lsaquo; Prev</button>' +
+    '<div class="pg-info">Page ' + pg.page + ' of ' + pg.pages + '</div>' +
+    '<div class="pg-nums">' + pageNumbers(pg.page, pg.pages).map(function (n) {
+      return n === '…' ? '<span class="pg-gap">…</span>' : '<button class="pg-num' + (n === pg.page ? ' on' : '') + '" onclick="' + fn + '(' + n + ')">' + n + '</button>';
+    }).join('') + '</div>' +
+    '<button class="pg-btn primary" ' + (pg.page >= pg.pages ? 'disabled' : 'onclick="' + fn + '(' + (pg.page + 1) + ')"') + '>Next &rsaquo;</button>' +
+    '</div>';
+}
+
+// ---- cells ----
+// A cell is plain text (escaped for you), a number, or an object:
+//   { t: 'Expired', c: 'st-bad' }   text with a colour class (st-bad / st-warn / st-ok)
+//   { html: '<b>x</b>' }            markup you have already escaped
+// Status is only ever coloured text, never a badge with a background.
+function stCell(text, tone) { return { t: text, c: 'st-' + tone }; }
+
+function cellText(c) {
+  if (c == null) return '';
+  if (typeof c === 'object') return c.html != null ? String(c.html).replace(/<[^>]*>/g, '') : (c.t == null ? '' : String(c.t));
+  return String(c);
+}
+var NUMERIC_CELL = /^(KES\s)?[-+–]?\s?[\d,]+(\.\d+)?%?$/;
+
+// A column is right-aligned when every filled cell in it is a number or a KES amount.
+function numericColumns(rows, count) {
+  var out = [];
+  for (var i = 0; i < count; i++) {
+    var any = false, all = true;
+    for (var r = 0; r < rows.length; r++) {
+      var v = cellText(rows[r][i]).trim();
+      if (v === '') continue;
+      any = true;
+      if (!NUMERIC_CELL.test(v)) { all = false; break; }
+    }
+    out.push(any && all);
+  }
+  return out;
+}
+
+function cellInner(c) {
+  if (c == null) return '';
+  if (typeof c === 'object') {
+    if (c.html != null) return c.html;
+    return '<span class="' + esc(c.c || '') + '">' + esc(c.t == null ? '' : String(c.t)) + '</span>';
+  }
+  return esc(String(c));
+}
+
+// The on-screen table. cols: ['Drug', 'Qty', ...] (strings). rows: arrays of cells.
+// opts.rowClick(i) returns an onclick string for row i of THESE rows; opts.num
+// can force which columns are right-aligned. On a phone each row becomes a small
+// card: the first cell is the title and the rest keep their column label (data-label).
+function rtTable(cols, rows, opts) {
+  opts = opts || {};
+  var num = opts.num || numericColumns(rows, cols.length);
+  return '<div class="rt-wrap"><table class="rt"><thead><tr>' +
+    cols.map(function (h, i) { return '<th' + (num[i] ? ' class="num"' : '') + '>' + esc(h) + '</th>'; }).join('') +
+    '</tr></thead><tbody>' +
+    (rows.length ? rows.map(function (r, ri) {
+      var click = opts.rowClick ? opts.rowClick(ri) : '';
+      return '<tr' + (click ? ' class="rt-click" onclick="' + click + '"' : '') + '>' + cols.map(function (h, i) {
+        return '<td data-label="' + esc(h) + '"' + (num[i] ? ' class="num"' : '') + '>' + cellInner(r[i]) + '</td>';
+      }).join('') + '</tr>';
+    }).join('') : '<tr><td class="rt-empty" colspan="' + cols.length + '">' + esc(opts.empty || 'Nothing to show.') + '</td></tr>') +
+    '</tbody></table></div>';
+}
+
+// ---- date range ----
+// Both dates are 'YYYY-MM-DD'. Returns '' when fine, otherwise the message to show.
+function rangeError(from, to) {
+  if (!from || !to) return 'Pick both a from and a to date.';
+  if (from > to) return 'The "from" date must be before the "to" date.';
+  return '';
+}
+
+// The database wants a start and an END THAT IS NOT INCLUDED, in the device's
+// own time: midnight at the start of `from` up to midnight after `to`.
+function rangeBounds(from, to) {
+  var f = from.split('-'), t = to.split('-');
+  var start = new Date(+f[0], +f[1] - 1, +f[2], 0, 0, 0, 0);
+  var end = new Date(+t[0], +t[1] - 1, +t[2] + 1, 0, 0, 0, 0);
+  return { start: start.toISOString(), end: end.toISOString() };
+}
+
+// The bar above a report: quick ranges plus From / To / Apply.
+//   o.presets [{key,label}], o.active (a preset key, or 'custom'), o.from, o.to
+//   o.pickFn  name of a function taking the preset key
+//   o.applyFn name of a function called with no arguments (it reads rangeBarRead())
+function rangeBarHtml(o) {
+  return '<div class="range-bar">' +
+    '<div class="dash-tabs">' + (o.presets || []).map(function (p) {
+      return '<button class="dash-tab' + (o.active === p.key ? ' active' : '') + '" onclick="' + o.pickFn + '(\'' + p.key + '\')">' + esc(p.label) + '</button>';
+    }).join('') + '</div>' +
+    '<div class="range-dates">' +
+    '<label>From <input type="date" id="rbFrom" value="' + esc(o.from || '') + '"></label>' +
+    '<label>To <input type="date" id="rbTo" value="' + esc(o.to || '') + '"></label>' +
+    '<button class="btn small' + (o.active === 'custom' ? ' primary' : '') + '" onclick="' + o.applyFn + '()">Apply</button>' +
+    '</div></div>';
+}
+function rangeBarRead() {
+  return { from: $('#rbFrom') ? $('#rbFrom').value : '', to: $('#rbTo') ? $('#rbTo').value : '' };
+}
+
+// The title / Excel / Print row every report screen starts with.
+function reportHeadHtml(title, excelFn, printFn) {
+  return '<div class="report-head"><div class="section-title" style="margin:0">' + esc(title) + '</div>' +
+    '<div class="toolbar-segment">' +
+    (excelFn ? '<button class="btn" onclick="' + excelFn + '()">' + icon('download', 15) + ' Excel</button>' : '') +
+    (printFn ? '<button class="btn" onclick="' + printFn + '()">' + icon('printer', 15) + ' Print</button>' : '') +
+    '</div></div>';
+}
+
+// ---- printing ----
+
+// The letterhead. A report gets the green band (cross badge, name, contact lines),
+// a gold double rule and a ribbon title; a receipt keeps the plain centred head
+// that fits an 80mm roll. Self-contained on purpose (only esc and STATE).
+function letterheadHtml(title, subtitle, receipt) {
   var p = STATE.pharmacy || {};
   var metaLines = [p.address, [p.town, p.phone].filter(Boolean).join(' · '), p.email].filter(Boolean);
+  var full = esc(title) + (subtitle ? ' — ' + esc(subtitle) : '');
+  if (receipt) {
+    return '<div class="print-letterhead">' +
+      '<div class="pname">' + esc(p.name || '') + '</div>' +
+      metaLines.map(function (m) { return '<div class="pmeta">' + esc(m) + '</div>'; }).join('') +
+      '</div>' +
+      '<div class="print-title">' + full + '</div>';
+  }
   return '<div class="print-letterhead">' +
+    '<div class="pbadge"><svg width="24" height="24" viewBox="0 0 48 48" aria-hidden="true"><polygon points="18,6 30,6 30,18 42,18 42,30 30,30 30,42 18,42 18,30 6,30 6,18 18,18" fill="#0F5132" stroke="#0F5132" stroke-width="4" stroke-linejoin="round"/></svg></div>' +
     '<div class="pname">' + esc(p.name || '') + '</div>' +
     metaLines.map(function (m) { return '<div class="pmeta">' + esc(m) + '</div>'; }).join('') +
-    '</div>' +
-    '<div class="print-title">' + esc(title) + (subtitle ? ' — ' + esc(subtitle) : '') + '</div>';
+    '</div><div class="print-rule"></div>' +
+    '<div class="print-titlebar"><span class="print-ribbon">' + full + '</span></div>';
 }
 
 // opts.receipt: true prints at 80mm (a thermal till roll) instead of a full page -
@@ -15,18 +185,36 @@ function letterheadHtml(title, subtitle) {
 // call, so a receipt never leaves the next ordinary report printing narrow by mistake.
 function printHtml(title, subtitle, bodyHtml, footNote, opts) {
   var area = $('#printArea');
-  area.className = 'print-only' + (opts && opts.receipt ? ' print-receipt' : '');
-  area.innerHTML = letterheadHtml(title, subtitle) + bodyHtml +
-    '<div class="print-footer">' + (footNote ? esc(footNote) + ' · ' : '') +
-    'Printed ' + new Date().toLocaleString('en-GB') + ' · Generated by Pharma</div>';
+  var receipt = !!(opts && opts.receipt);
+  var when = new Date().toLocaleString('en-GB');
+  area.className = 'print-only' + (receipt ? ' print-receipt' : '');
+  if (receipt) {
+    area.innerHTML = letterheadHtml(title, subtitle, true) + bodyHtml +
+      '<div class="print-footer">' + (footNote ? esc(footNote) + ' · ' : '') +
+      'Printed ' + when + ' · Generated by Pharma</div>';
+  } else {
+    var name = (STATE.pharmacy && STATE.pharmacy.name) || '';
+    area.innerHTML = '<div class="print-frame"></div>' + letterheadHtml(title, subtitle, false) +
+      '<div class="print-meta"><span><b>Printed:</b> ' + esc(when) + '</span>' + (footNote ? '<span>' + esc(footNote) + '</span>' : '') + '</div>' +
+      bodyHtml +
+      '<div class="print-bandfoot">' + (name ? esc(name) + ' · ' : '') + 'Generated by Pharma</div>';
+  }
   setTimeout(function () { window.print(); }, 30);
 }
 
-function tableHtml(headers, rows) {
-  return '<table class="print-table"><thead><tr>' +
-    headers.map(function (h) { return '<th>' + esc(h) + '</th>'; }).join('') + '</tr></thead><tbody>' +
-    rows.map(function (r) { return '<tr>' + r.map(function (c) { return '<td>' + (c == null ? '' : esc(String(c))) + '</td>'; }).join('') + '</tr>'; }).join('') +
-    '</tbody></table>';
+// The printed table: a # column, striped rows, numbers right-aligned, status in
+// coloured text. `foot` (optional) is one total line under the table.
+function tableHtml(headers, rows, foot) {
+  var num = numericColumns(rows, headers.length);
+  return '<table class="print-table"><thead><tr><th class="no">#</th>' +
+    headers.map(function (h, i) { return '<th' + (num[i] ? ' class="num"' : '') + '>' + esc(h) + '</th>'; }).join('') + '</tr></thead><tbody>' +
+    rows.map(function (r, ri) {
+      return '<tr><td class="no">' + (ri + 1) + '</td>' + headers.map(function (h, i) {
+        return '<td' + (num[i] ? ' class="num"' : '') + '>' + cellInner(r[i]) + '</td>';
+      }).join('') + '</tr>';
+    }).join('') + '</tbody>' +
+    (foot ? '<tfoot><tr><td colspan="' + (headers.length + 1) + '">' + esc(foot) + '</td></tr></tfoot>' : '') +
+    '</table>';
 }
 
 function exportExcel(filename, sheetName, rows) {
@@ -41,4 +229,3 @@ function exportExcel(filename, sheetName, rows) {
   toast('Preparing Excel file…');
   loadXlsx().then(write).catch(function (e) { toast(friendlyError(e), 'bad'); });
 }
-

@@ -11,6 +11,8 @@ var supplierDetailId = null;  // set while viewing one supplier's ledger instead
 var lpoFilter = '';
 var lpoDeliveredAt = '';
 var lpoNotes = '';
+var suppliersPage = 1;     // 10 suppliers per page
+var supplierStmtPage = 1;  // 10 statement lines per page
 
 async function renderSuppliers() {
   var c = $('#content');
@@ -36,28 +38,36 @@ async function renderSuppliers() {
   drawSuppliersList();
 }
 
+function goSuppliersPage(p) { suppliersPage = p; drawSuppliersList(); }
+
+// Balance as plain coloured text: owed in red, credit in green, settled in black.
+function supplierBalanceStatus(bal) {
+  return bal > 0.5 ? stCell('Owed', 'bad') : (bal < -0.5 ? stCell('Credit', 'ok') : stCell('Settled', 'ink'));
+}
+
 function drawSuppliersList() {
   var c = $('#content');
   var sups = STATE.suppliersCache || [];
   var balMap = STATE.supplierBalances || {};
-  function balanceFor(s) { return Number(balMap[s.id] || 0); }
+  var pg = pageSlice(sups, suppliersPage);
+  suppliersPage = pg.page;
   c.innerHTML =
     (can('suppliers') ? '<div class="toolbar-row"><button class="btn primary" onclick="openAddSupplier()">+ New supplier</button></div>' : '') +
-    '<div class="card">' +
-    (sups.length ? sups.map(function (s) {
-      var bal = balanceFor(s);
-      var badgeKind = bal > 0.5 ? 'bad' : (bal < -0.5 ? 'good' : 'muted');
-      var badgeText = bal > 0.5 ? fmt(bal) + ' owed' : (bal < -0.5 ? fmt(-bal) + ' credit' : 'Settled');
-      return '<div class="list-row" style="cursor:pointer" onclick="openSupplierDetail(\'' + s.id + '\')">' +
-        '<div><div class="name">' + esc(s.name) + '</div><div class="meta">' + esc([s.phone, s.address].filter(Boolean).join(' · ')) + '</div></div>' +
-        '<div class="right"><span class="badge ' + badgeKind + '">' + badgeText + '</span></div></div>';
-    }).join('') : '<div class="empty">No suppliers yet. Add one to start tracking deliveries and payments.</div>') +
-    '</div>';
+    showingHtml(pg) +
+    rtTable(['Supplier', 'Phone', 'Address', 'Balance', 'Status'], pg.rows.map(function (s) {
+      var bal = Number(balMap[s.id] || 0);
+      return [s.name, s.phone || '—', s.address || '—', fmt(Math.abs(bal)), supplierBalanceStatus(bal)];
+    }), {
+      rowClick: function (i) { return "openSupplierDetail('" + pg.rows[i].id + "')"; },
+      empty: 'No suppliers yet. Add one to start tracking deliveries and payments.', num: [false, false, false, true, false]
+    }) +
+    pagerHtml(pg, 'goSuppliersPage');
 }
 
 function retrySupplierDetail() { if (supplierDetailId) openSupplierDetail(supplierDetailId); }
 
 async function openSupplierDetail(supplierId) {
+  supplierStmtPage = 1;
   supplierDetailId = supplierId;
   var c = $('#content');
   if (!c) return;
@@ -181,20 +191,21 @@ function drawSupplierDetail() {
     '<button class="btn small" onclick="printSupplierStatement()">' + icon('printer', 15) + ' Print</button>' +
     '</div></div>' +
     '<div class="section-title">Statement</div>' +
-    '<div class="card">' +
-    (ledger.entries.length ? ledger.entries.map(function (e) {
-      var metaBits = [];
-      if (e.date) metaBits.push(fmtDate(e.date));
-      if (e.detailText) metaBits.push(e.detailText);
-      var right = '';
-      if (e.delivered) right += '<div>+' + fmt(e.delivered) + '</div>';
-      if (e.paid) right += '<div style="color:var(--green)">−' + fmt(e.paid) + '</div>';
-      if (e.credit) right += '<div style="color:var(--green)">−' + fmt(e.credit) + '</div>';
-      right += '<div class="tiny">Bal ' + fmt(e.runningBalance) + '</div>';
-      return '<div class="list-row"><div><div class="name">' + esc(e.label) + '</div><div class="meta">' + esc(metaBits.join(' · ')) + '</div></div>' +
-        '<div class="right">' + right + '</div></div>';
-    }).join('') : '<div class="empty">No deliveries, payments or returns recorded yet.</div>') +
-    '</div>';
+    (function () {
+      // Newest line first on screen; print and Excel run oldest to newest.
+      var newestFirst = ledger.entries.slice().reverse();
+      var pg = pageSlice(newestFirst, supplierStmtPage);
+      supplierStmtPage = pg.page;
+      return showingHtml(pg) +
+        rtTable(SUPPLIER_STMT_COLS, pg.rows.map(supplierStmtCells), { empty: 'No deliveries, payments or returns recorded yet.', num: [false, false, false, true, true, true, true] }) +
+        pagerHtml(pg, 'goSupplierStmtPage');
+    })();
+}
+function goSupplierStmtPage(p) { supplierStmtPage = p; drawSupplierDetail(); }
+
+var SUPPLIER_STMT_COLS = ['Date', 'Entry', 'Detail', 'Delivered', 'Paid', 'Credit', 'Balance'];
+function supplierStmtCells(e) {
+  return [e.date ? fmtDate(e.date) : '—', e.label, e.detailText || '—', e.delivered ? fmt(e.delivered) : '', e.paid ? fmt(e.paid) : '', e.credit ? fmt(e.credit) : '', fmt(e.runningBalance)];
 }
 
 function exportSupplierStatement() {
@@ -219,10 +230,8 @@ function printSupplierStatement() {
   var detail = STATE.currentSupplierDetail;
   var ledger = STATE.currentSupplierLedger;
   if (!detail || !ledger) return;
-  var rows = ledger.entries.map(function (e) {
-    return [e.date ? fmtDate(e.date) : '—', e.label, e.detailText || '—', e.delivered ? fmt(e.delivered) : '—', e.paid ? fmt(e.paid) : '—', e.credit ? fmt(e.credit) : '—', fmt(e.runningBalance)];
-  });
-  printHtml('Supplier Statement', detail.supplier.name, tableHtml(['Date', 'Entry', 'Detail', 'Delivered', 'Paid', 'Credit', 'Balance'], rows), 'Balance owed: ' + fmt(ledger.balance));
+  var rows = ledger.entries.map(supplierStmtCells);
+  printHtml('Supplier Statement', detail.supplier.name, tableHtml(SUPPLIER_STMT_COLS, rows, 'Balance owed: ' + fmt(ledger.balance)), rows.length + ' lines · Balance owed ' + fmt(ledger.balance));
 }
 
 // --- New LPO ---

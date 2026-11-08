@@ -19,12 +19,13 @@ Live site: https://pharmamanagement.site
 | `supabase/functions/` | Edge Functions: `send-otp`, `verify-otp` (text codes for password reset and sign-up), `signup-by-phone` (creates an account only after the code is verified), `reset-password-by-phone` and `send-sms` (customer reminders) |
 | `netlify.toml`, `netlify/functions/` | Netlify settings, the daily keep-alive ping that stops the free-tier database pausing, and the M-Pesa SMS purchase (`sms-topup`, `pay-callback`; needs the MPESA_* and SUPABASE_SERVICE_ROLE_KEY variables set in Netlify) |
 | `ARCHITECTURE.md`, `OPERATIONS.md`, `MIGRATIONS.md`, `SETUP.md` | Engineering docs: architecture, running it, changing the database, standing up a copy |
-| `tests/` | SQL tests, the no-gray-text test, the loading-screen test and the Android shell tests |
+| `tests/` | SQL tests, the no-gray-text test, the report-table test, the loading-screen test and the Android shell tests |
 
 ## Screens
 
 - **Phone (under 860px):** top bar with a hamburger that opens the left drawer; bottom bar with Home, Inventory, Sell, Expenses, Reports.
 - **Desktop (860px and up):** the phone menu docked open down the left (logo, pharmacy name, grouped rows, like Kodi); split sign-in screen.
+- **Inventory:** five filter boxes (All, Low stock, Out of stock, Expiring, Unknown expiry), search or scan, a table 10 drugs a page on desktop (the phone keeps its old list); Excel and Print carry the whole picked list.
 - **Customers:** credit (kopa) balances and statements, refills, SMS reminders. **Stock take** and **Controlled drugs** are reached from Inventory (and the phone menu).
 - **Plans:** every pharmacy starts a 90-day free trial; the admin marks the first payment and can add or take away days. When the plan ends the pharmacy is locked out until the admin extends or activates it.
 - **Sign-in:** phone + password log-in (every password box has a show/hide eye); new pharmacies create an account; staff with an invite code use "Have a code? Staff login". The app shows the view for the person's role.
@@ -35,6 +36,8 @@ Open `index.html` through any static server. The Android app is built on your co
 
 ```bash
 node tests/banned-colours.test.js        # no gray text
+node tests/report-tables.test.js         # every report/list table: 10 a page, coloured status text, date ranges, print header
+node tests/stocktake-review-wait.test.js # stock take review waits for the last count to save instead of saying "nothing counted"
 node tests/android-shell.test.js         # Android settings agree with each other
 node tests/native-shell.test.js          # print and back button inside the app
 node tests/critical-css.test.js          # loading screen styles match in index.html and style.css

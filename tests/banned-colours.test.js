@@ -23,10 +23,12 @@ function toRgb(v) {
   if (m) return [+m[1], +m[2], +m[3]];
   return null;
 }
-// mid-gray: channels within 16 of each other, lightness between 30% and 80%
+// any gray, dark or pale: channels within 24 of each other (so warm/cool near-grays like
+// #4A4139 count too) and lightness between 16% and 80% (pale off-white on a dark green panel is not gray). The deep ink (#201E1B, 12%),
+// black and white are the only neutrals allowed as text; a gray font becomes #000.
 function isMidGray(rgb) {
   const max = Math.max(...rgb), min = Math.min(...rgb), l = (max + min) / 2 / 255;
-  return max - min <= 16 && l >= 0.30 && l <= 0.80;
+  return max - min <= 24 && l >= 0.16 && l <= 0.80;
 }
 // a text `color:` declaration, not background-color / border-color / outline-color etc.
 const COLOR_DECL = /(^|[^-\w])color\s*:\s*(#[0-9a-fA-F]{3,8}\b|rgba?\([^)]*\))/g;

@@ -9,7 +9,7 @@ const sw = read('sw.js'), index = read('index.html'), mig = read('migrations/202
 
 const ctx = { esc: s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;'), fmt: n => 'KES ' + Number(n),
   fmtDateTime: s => String(s).slice(0, 10), kpi: (l, v) => l + ':' + v, console };
-vm.createContext(ctx); vm.runInContext(src, ctx);
+vm.createContext(ctx); vm.runInContext(read('js/export.js'), ctx); vm.runInContext(src, ctx);   // export.js: the shared table, pager and cell helpers
 
 // what the person types
 check(ctx.cashReadInputs('', '').error, 'an empty count is refused');
@@ -38,7 +38,7 @@ check(!/cash_review/.test(core.match(/var ATTENDANT_ACTIONS[^;]*;/)[0]), 'a sell
 check(/cash_review/.test(core.match(/var ACCOUNTANT_ACTIONS[^;]*;/)[0]) && !/cash_close/.test(core.match(/var ACCOUNTANT_ACTIONS[^;]*;/)[0]), 'an accountant reads but cannot close');
 check(!/cash_/.test(core.match(/var STOCK_TAKER_ACTIONS[^;]*;/)[0]), 'a stock taker has no cash drawer');
 check(/cash_close', 'cash_review'\]/.test(core.match(/var PHARMACIST_ACTIONS[^;]*;/)[0]), 'a pharmacist can close and read');
-check(/can\('cash_close'\)[\s\S]*cash_drawer_summary/.test(src) && /can\('cash_review'\)[\s\S]*from\('cash_closings'\)/.test(src), 'the screen asks only for what the role may see');
+check(/can\('cash_close'\)[\s\S]*cash_drawer_summary/.test(src) && /var reviewing = can\('cash_review'\)/.test(src) && /if \(reviewing\) \{\s*jobs\.push\(fetchCashHistory\(\)\)/.test(src) && /from\('cash_closings'\)/.test(src), 'the screen asks only for what the role may see');
 
 // wiring
 check(/reportsView === 'cash'[^}]*loadCashDrawer/.test(reports) && /view: 'cash'/.test(reports), 'the Reports hub opens the cash drawer');

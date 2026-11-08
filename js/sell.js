@@ -56,8 +56,8 @@ function drawSell() {
   redrawKeepingFocus(c,
     (heldSalesCache.length ? heldSalesCard() : '') +
     '<div class="searchbox field" style="display:flex;gap:8px;align-items:center">' +
-    '<input id="sellSearchInput" type="search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" placeholder="Search a drug, or scan its barcode…" value="' + esc(sellFilter) + '" oninput="sellFilter=this.value;refreshSellLists()" onkeydown="sellSearchKeydown(event)" style="flex:1">' +
-    (barcodeCameraSupported() ? '<button class="btn secondary" title="Scan barcode" aria-label="Scan barcode" onclick="sellScanBarcode()">' + icon('barcode', 18) + '</button>' : '') +
+    '<input id="sellSearchInput" type="search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" placeholder="Search a drug…" value="' + esc(sellFilter) + '" oninput="sellFilter=this.value;refreshSellLists()" onkeydown="sellSearchKeydown(event)" style="flex:1">' +
+    (barcodeCameraSupported() ? '<button class="btn secondary scan-btn" title="Scan barcode" aria-label="Scan barcode" onclick="sellScanBarcode()">' + icon('barcode', 18) + ' Scan barcode</button>' : '') +
     '</div>' +
     '<div id="sellMatches">' + (r.searching ? r.html : '') + '</div>' +
     (STATE.cart.length ? cartSummaryCard() : '') +

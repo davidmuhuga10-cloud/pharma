@@ -36,7 +36,7 @@ check(/from\('supplier_returns'\)[^;]*eq\('supplier_id'/.test(sup), 'the supplie
 check(/rpc\('record_supplier_return'/.test(act) && /act\(btn, async function/.test(act.slice(act.indexOf('async function saveSupplierReturn'))), 'saving goes through the database function, button locked while it works');
 check(/can\('suppliers'\) \? '<button[^']*openSupplierReturn/.test(act), 'the button on a batch is only for people who may manage suppliers');
 check(/askConfirm\('Return stock'/.test(act), 'it asks to confirm before removing stock');
-check(/Credit/.test(sup.slice(sup.indexOf('function exportSupplierStatement'))) && /'Credit'/.test(sup.slice(sup.indexOf('function printSupplierStatement'))), 'the Excel and printed statements have a Credit column');
+check(/Credit/.test(sup.slice(sup.indexOf('function exportSupplierStatement'))) && /SUPPLIER_STMT_COLS = \[[^\]]*'Credit'/.test(sup) && /tableHtml\(SUPPLIER_STMT_COLS/.test(sup.slice(sup.indexOf('function printSupplierStatement'))), 'the Excel and printed statements have a Credit column');
 check(/supplier_return: 'Returned to supplier'/.test(ctl), 'the controlled drugs register names the movement');
 check(/add value if not exists 'supplier_return'/.test(migA), 'the new movement kind is added in its own migration file');
 check(/'supplier_return'\)\);/.test(mig.replace(/\s+/g, ' ')) || /'stock_take', 'supplier_return'/.test(mig), 'the controlled drugs register accepts the new kind');

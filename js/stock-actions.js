@@ -5,6 +5,11 @@
 // A "what to buy" list from what is low or out, so nobody has to notice at the counter.
 
 var pendingReorderList = [];
+var reorderPage = 1;
+var REORDER_COLS = ['Drug', 'Current stock', 'Reorder level', 'Suggested order', 'Status'];
+function reorderCells(n) {
+  return [n.name, n.current + ' ' + n.unit, n.reorderLevel, n.suggested, n.current <= 0 ? stCell('Out of stock', 'bad') : stCell('Low', 'warn')];
+}
 
 function openReorderList() {
   var needed = STATE.drugsCache.filter(function (d) { return d.qty_in_stock <= d.reorder_level; })
@@ -13,16 +18,26 @@ function openReorderList() {
       return { name: d.name, unit: d.unit, current: d.qty_in_stock, reorderLevel: d.reorder_level, suggested: suggested };
     });
   pendingReorderList = needed;
+  reorderPage = 1;
   var body = sheet('Reorder List', '');
+  drawReorderList(body);
+}
+
+function drawReorderList(body) {
+  body = body || $('#sheetBody');
+  if (!body) return;
+  var pg = pageSlice(pendingReorderList, reorderPage);
+  reorderPage = pg.page;
   body.innerHTML =
     '<div class="toolbar-row"><div class="toolbar-segment toolbar-end">' +
     '<button class="btn" onclick="exportReorderExcel()">' + icon('download',15) + ' Excel</button>' +
     '<button class="btn" onclick="printReorderList()">' + icon('printer',15) + ' Print</button>' +
     '</div></div>' +
-    '<div class="card">' + (needed.length ? needed.map(function (n) {
-      return listRow(n.name, 'Have ' + n.current + ' ' + esc(n.unit) + ' · reorder level ' + n.reorderLevel, '<b>Order ' + n.suggested + '</b>');
-    }).join('') : '<div class="empty">Nothing needs reordering right now.</div>') + '</div>';
+    showingHtml(pg) +
+    rtTable(REORDER_COLS, pg.rows.map(reorderCells), { empty: 'Nothing needs reordering right now.', num: [false, false, true, true, false] }) +
+    pagerHtml(pg, 'goReorderPage');
 }
+function goReorderPage(p) { reorderPage = p; drawReorderList(); }
 
 function exportReorderExcel() {
   var rows = pendingReorderList.map(function (n) {
@@ -31,19 +46,17 @@ function exportReorderExcel() {
   exportExcel((STATE.pharmacy.name || 'Pharma') + ' - reorder list.xlsx', 'Reorder', rows);
 }
 
+// Print carries the whole list (every page), same as Excel.
 function printReorderList() {
-  var needed = STATE.drugsCache.filter(function (d) { return d.qty_in_stock <= d.reorder_level; });
-  var rows = needed.map(function (d) {
-    var suggested = Math.max(d.reorder_level * 3 - d.qty_in_stock, d.reorder_level || 5);
-    return [d.name, d.qty_in_stock + ' ' + d.unit, d.reorder_level, suggested];
-  });
-  printHtml('Reorder List', todayStr(), tableHtml(['Drug', 'Current stock', 'Reorder level', 'Suggested order'], rows), needed.length + ' items');
+  var rows = pendingReorderList.map(reorderCells);
+  printHtml('Reorder List', todayStr(), tableHtml(REORDER_COLS, rows, 'Total: ' + rows.length + ' drugs to reorder'), rows.length + ' items');
 }
 
 // Drugs brought in without an expiry date (e.g. a relaxed Excel import) are
 // flagged by has_unknown_expiry in v_drug_stock. This lets the pharmacy find
 // the batch later and enter the real date.
 function openUnknownExpiryList() {
+  unknownExpiryPage = 1;
   sheet('Batches with no expiry date', '<div class="empty">Loading…</div>');
   loadUnknownExpiryList();
 }
@@ -68,23 +81,24 @@ async function loadUnknownExpiryList() {
   }
 }
 
+var unknownExpiryPage = 1;
 function renderUnknownExpiryList() {
   var body = $('#sheetBody');
   if (!body) return;
   var batches = STATE.unknownExpiryBatches || [];
+  var pg = pageSlice(batches, unknownExpiryPage);
+  unknownExpiryPage = pg.page;
   body.innerHTML =
-    '<div class="tiny" style="margin-bottom:10px">These batches were brought into stock without an expiry date. Set the real date once you have it — this only needs doing once per batch.</div>' +
-    (batches.length ? '<div class="card">' + batches.map(function (b) {
-      var drugName = (b.drugs && b.drugs.name) || 'Unknown drug';
-      var unit = (b.drugs && b.drugs.unit) || 'unit';
-      return '<div class="list-row"><div><div class="name">' + esc(drugName) + '</div>' +
-        '<div class="meta">' + b.quantity_remaining + ' ' + esc(unit) + (b.batch_no ? ' · batch ' + esc(b.batch_no) : '') + '</div></div>' +
-        '<div class="right" style="display:flex;gap:8px;align-items:center">' +
-        '<input type="date" id="expInput_' + b.id + '">' +
-        '<button class="btn small" id="expSaveBtn_' + b.id + '" onclick="saveBatchExpiry(\'' + b.id + '\')">Save</button>' +
-        '</div></div>';
-    }).join('') + '</div>' : '<div class="empty">Nothing left to flag — every batch has an expiry date.</div>');
+    '<div class="tiny" style="margin-bottom:10px">These batches were brought into stock without an expiry date. Set the real date once you have it. This only needs doing once per batch.</div>' +
+    showingHtml(pg) +
+    rtTable(['Drug', 'Batch', 'Qty', 'Set expiry date'], pg.rows.map(function (b) {
+      return [(b.drugs && b.drugs.name) || 'Unknown drug', b.batch_no || '—', b.quantity_remaining + ' ' + ((b.drugs && b.drugs.unit) || 'unit'),
+        { html: '<span style="display:inline-flex;gap:8px;align-items:center"><input type="date" id="expInput_' + esc(b.id) + '">' +
+          '<button class="btn small" id="expSaveBtn_' + esc(b.id) + '" onclick="saveBatchExpiry(\'' + esc(b.id) + '\')">Save</button></span>' }];
+    }), { empty: 'Nothing left to flag. Every batch has an expiry date.', num: [false, false, false, false] }) +
+    pagerHtml(pg, 'goUnknownExpiryPage');
 }
+function goUnknownExpiryPage(p) { unknownExpiryPage = p; renderUnknownExpiryList(); }
 
 async function saveBatchExpiry(batchId) {
   var btn = $('#expSaveBtn_' + batchId);

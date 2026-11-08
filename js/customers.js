@@ -199,20 +199,42 @@ function customersListHtml() {
   return '<div class="kpi-grid" style="margin-bottom:14px">' +
     kpi('Owed to you', fmt(owed), owed > 0.5 ? 't-red' : 't-green') +
     kpi('Customers owing', owing, 't-amber') + '</div>' +
-    '<div class="searchbox field"><input id="custSearchInput" placeholder="Search by name or phone…" value="' + esc(custFilter) + '" oninput="custFilter=this.value;drawCustomersList()"></div>' +
+    '<div class="searchbox field"><input id="custSearchInput" placeholder="Search by name or phone…" value="' + esc(custFilter) + '" oninput="custFilter=this.value;custPage=1;drawCustomersList()"></div>' +
     '<div class="toolbar-row">' +
     (can('customers') ? '<button class="btn primary" onclick="openCustomerForm()">+ New customer</button>' : '') +
-    '<button class="btn ' + (custOnlyOwing ? 'secondary' : 'ghost') + '" onclick="custOnlyOwing=!custOnlyOwing;drawCustomersList()">' + (custOnlyOwing ? 'Showing owing only' : 'Owing only') + '</button>' +
+    '<button class="btn ' + (custOnlyOwing ? 'secondary' : 'ghost') + '" onclick="custOnlyOwing=!custOnlyOwing;custPage=1;drawCustomersList()">' + (custOnlyOwing ? 'Showing owing only' : 'Owing only') + '</button>' +
     '</div><div id="custList">' + customerRowsHtml(rows) + '</div>';
 }
+var custPage = 1;      // 10 customers per page
+var custStmtPage = 1;  // 10 statement lines per page
+var refillPage = 1;    // 10 refills per page
+function goCustPage(p) { custPage = p; var el = $('#custList'); if (el) el.innerHTML = customerRowsHtml(customerFilteredRows()); }
+function customerFilteredRows() {
+  var q = custFilter.toLowerCase();
+  return customersCache.filter(function (r) {
+    if (!r.active && !(Number(r.balance) > 0.5)) return false;
+    if (custOnlyOwing && !(Number(r.balance) > 0.5)) return false;
+    return !q || String(r.name || '').toLowerCase().indexOf(q) !== -1 || String(r.phone || '').indexOf(q.replace(/\D/g, '') || '\u0000') !== -1;
+  });
+}
+// Owing in red text, overpaid and settled in green: plain coloured text, no badge.
+function balanceStatus(b) {
+  b = Number(b) || 0;
+  return b > 0.5 ? stCell('Owes', 'bad') : (b < -0.5 ? stCell('Overpaid', 'ok') : stCell('Settled', 'ok'));
+}
 function customerRowsHtml(rows) {
-  return '<div class="card">' + (rows.length ? rows.map(function (r) {
-    var meta = [r.phone ? showPhone(r.phone) : 'No phone', Number(r.balance) > 0.5 && r.last_payment_at ? 'last paid ' + fmtDate(String(r.last_payment_at).slice(0, 10)) : null].filter(Boolean).join(' · ');
-    return '<div class="list-row" style="cursor:pointer" onclick="openCustomerDetail(\'' + r.customer_id + '\')">' +
-      '<div style="display:flex;align-items:center;gap:12px"><div class="row-avatar ' + (Number(r.balance) > 0.5 ? 'bad' : '') + '">' + esc((r.name || '?').charAt(0).toUpperCase()) + '</div>' +
-      '<div><div class="name">' + esc(r.name) + (r.active ? '' : ' <span class="badge warn">Closed</span>') + '</div><div class="meta">' + esc(meta) + '</div></div></div>' +
-      '<div class="right">' + balanceBadge(r.balance) + '</div></div>';
-  }).join('') : '<div class="empty">' + (customersCache.length ? 'No customers match.' : 'No customers yet. Add the people who buy on credit (kopa) or come back for regular medicine.') + '</div>') + '</div>';
+  var pg = pageSlice(rows, custPage);
+  custPage = pg.page;
+  return showingHtml(pg) +
+    rtTable(['Customer', 'Phone', 'Last paid', 'Balance', 'Status'], pg.rows.map(function (r) {
+      return [r.name + (r.active ? '' : ' (closed)'), r.phone ? showPhone(r.phone) : 'No phone',
+        Number(r.balance) > 0.5 && r.last_payment_at ? fmtDate(String(r.last_payment_at).slice(0, 10)) : '—', fmt(Math.abs(Number(r.balance) || 0)), balanceStatus(r.balance)];
+    }), {
+      rowClick: function (i) { return "openCustomerDetail('" + pg.rows[i].customer_id + "')"; },
+      empty: customersCache.length ? 'No customers match.' : 'No customers yet. Add the people who buy on credit (kopa) or come back for regular medicine.',
+      num: [false, false, false, true, false]
+    }) +
+    pagerHtml(pg, 'goCustPage');
 }
 function drawCustomersList() {
   if (custTab !== 'customers') return;
@@ -269,6 +291,7 @@ function retryCustomerDetail() { if (custDetailId) openCustomerDetail(custDetail
 
 async function openCustomerDetail(id) {
   custDetailId = id;
+  custStmtPage = 1;
   STATE.tab = 'customers';
   var c = $('#content');
   if (!c) return;
@@ -296,16 +319,14 @@ function drawCustomerDetail() {
   var d = custDetail, r = d.row;
   var bal = Number(r.balance) || 0;
   var canPay = can('customers');
-  var rowsHtml = d.statement.length ? d.statement.slice().reverse().map(function (s) {
-    var isPay = s.kind === 'payment';
-    var label = s.kind === 'credit' ? 'On credit · ' + s.ref : s.kind === 'credit_note' ? 'Return credited' + (s.note ? ' · ' + s.note : '') : 'Payment' + (s.ref ? ' · ' + s.ref : '');
-    var meta = fmtDateTime(s.entry_at) + (s.voided ? ' · reversed' + (s.note ? ': ' + s.note : '') : (isPay && s.note ? ' · ' + s.note : ''));
-    return '<div class="list-row"' + (s.voided ? ' style="text-decoration:line-through"' : '') + '><div><div class="name">' + esc(label) + '</div><div class="meta">' + esc(meta) + '</div></div>' +
-      '<div class="right"><div class="name" style="color:' + (s.kind === 'credit' ? 'var(--red)' : 'var(--green)') + '">' + (s.kind === 'credit' ? '+' : '−') + fmt(s.amount) + '</div>' +
-      (s.voided ? '' : '<div class="meta">Balance ' + fmt(s.running) + '</div>') +
-      (isPay && !s.voided && can('void') ? '<button class="btn ghost small" style="margin-top:4px" onclick="openVoidCustomerPayment(\'' + s.pay_id + '\')">Reverse</button>' : '') +
-      '</div></div>';
-  }).join('') : '<div class="empty">Nothing on this account yet.</div>';
+  // Newest line first; print and the statement itself run oldest to newest.
+  var stPg = pageSlice(d.statement.slice().reverse(), custStmtPage);
+  custStmtPage = stPg.page;
+  var rowsHtml = showingHtml(stPg) + rtTable(CUST_STMT_COLS.concat(canPay ? ['Action'] : []), stPg.rows.map(function (s) {
+    var cells = custStmtCells(s);
+    if (canPay) cells.push({ html: s.kind === 'payment' && !s.voided && can('void') ? '<button class="btn ghost small" onclick="event.stopPropagation();openVoidCustomerPayment(\'' + esc(s.pay_id) + '\')">Reverse</button>' : '' });
+    return cells;
+  }), { empty: 'Nothing on this account yet.', num: [false, false, true, true, true, false].concat(canPay ? [false] : []) }) + pagerHtml(stPg, 'goCustStmtPage');
   var refillsHtml = d.refills.length ? d.refills.map(function (p) { return refillRowHtml(p, false); }).join('') : '<div class="empty">No refills set up for this customer.</div>';
 
   c.innerHTML =
@@ -325,7 +346,15 @@ function drawCustomerDetail() {
     '<div class="section-title">Refills' + (canPay ? ' <button class="btn secondary small" style="margin-left:8px" onclick="openRefillForm(\'' + r.customer_id + '\')">+ Add</button>' : '') + '</div>' +
     '<div class="card">' + refillsHtml + '</div>' +
     '<div class="section-title">Statement' + (d.statement.length ? ' <button class="btn ghost small" style="margin-left:8px" onclick="printCustomerStatement()">' + icon('printer', 14) + ' Print</button>' : '') + '</div>' +
-    '<div class="card">' + rowsHtml + '</div>';
+    rowsHtml;
+}
+function goCustStmtPage(p) { custStmtPage = p; drawCustomerDetail(); }
+
+var CUST_STMT_COLS = ['Date', 'Details', 'Credit given', 'Paid', 'Balance', 'Status'];
+function custStmtCells(s) {
+  var label = s.kind === 'credit' ? 'On credit · ' + s.ref : s.kind === 'credit_note' ? 'Return credited' + (s.note ? ' · ' + s.note : '') : 'Payment' + (s.ref ? ' · ' + s.ref : '');
+  return [fmtDateTime(s.entry_at), label, s.kind === 'credit' ? fmt(s.amount) : '', s.kind === 'credit' ? '' : fmt(s.amount),
+    s.voided ? '' : fmt(s.running), s.voided ? stCell('Reversed', 'bad') : stCell(s.kind === 'credit' ? 'Credit' : 'Paid', s.kind === 'credit' ? 'warn' : 'ok')];
 }
 
 function openCustomerPayment() {
@@ -375,12 +404,9 @@ function remindCustomerBalance() {
 }
 function printCustomerStatement() {
   var d = custDetail;
-  var rows = d.statement.map(function (s) {
-    return [fmtDateTime(s.entry_at), s.kind === 'credit' ? 'On credit ' + s.ref : s.kind === 'credit_note' ? 'Return credited' : 'Payment ' + (s.ref || ''),
-      s.kind === 'credit' ? fmt(s.amount) : '', s.kind === 'credit' ? '' : fmt(s.amount), s.voided ? 'Reversed' : fmt(s.running)];
-  });
+  var rows = d.statement.map(custStmtCells);
   printHtml('Customer statement', d.row.name,
-    '<p style="margin:4px 0">Balance owed: <b>' + esc(fmt(d.row.balance)) + '</b></p>' + tableHtml(['Date', 'Details', 'Credit given', 'Paid', 'Balance'], rows));
+    tableHtml(CUST_STMT_COLS, rows, 'Balance owed: ' + fmt(d.row.balance)), rows.length + ' lines · Balance owed ' + fmt(d.row.balance));
 }
 
 // --- Refills ---
@@ -391,6 +417,22 @@ function refillStatus(p) {
   if (n === 0) return '<span class="badge warn">Due today</span>';
   return '<span class="badge ' + (n >= -7 ? 'warn' : 'good') + '">in ' + (-n) + (n === -1 ? ' day' : ' days') + '</span>';
 }
+// Plain coloured text: late in red, due today and the next 7 days in amber, later in black.
+function refillStatusCell(p) {
+  var n = Number(p.days_overdue);
+  if (n > 0) return stCell(n + (n === 1 ? ' day late' : ' days late'), 'bad');
+  if (n === 0) return stCell('Due today', 'warn');
+  return stCell('In ' + (-n) + (n === -1 ? ' day' : ' days'), n >= -7 ? 'warn' : 'ink');
+}
+function refillActionsHtml(p) {
+  var canAct = can('customers');
+  return '<div class="batch-actions">' +
+    (can('sms') && p.phone && p.sms_ok ? '<button class="btn secondary small" onclick="openRefillReminder(\'' + p.plan_id + '\')">Remind</button>' : '') +
+    (p.phone ? '<a class="btn ghost small" style="text-decoration:none;text-align:center" target="_blank" rel="noopener" href="' + esc(whatsappLink(p.phone, refillMessage(p))) + '">WhatsApp</a>' : '') +
+    (canAct ? '<button class="btn ghost small" onclick="doMarkRefilled(this,\'' + p.plan_id + '\')">Refilled</button>' +
+      '<button class="btn ghost small" onclick="openRefillForm(\'' + p.customer_id + '\',\'' + p.plan_id + '\')">Edit</button>' : '') + '</div>';
+}
+function goRefillPage(p) { refillPage = p; drawCustomers(); }
 function refillRowHtml(p, withCustomer) {
   var reminded = p.last_reminded_on ? ' · reminded ' + fmtDate(p.last_reminded_on) : '';
   var canAct = can('customers');
@@ -418,10 +460,17 @@ function refillsHtml() {
   return '<div class="tiny" style="margin-bottom:10px">People who come back for the same medicine (blood pressure, diabetes, family planning). Add a refill from a customer, or press <b>+ New refill</b>. Selling that medicine to that customer moves the date on by itself.</div>' +
     '<div class="toolbar-row">' + (can('customers') ? '<button class="btn ' + (bulk ? 'secondary' : 'primary') + '" onclick="openRefillForm()">+ New refill</button>' : '') + bulk + '</div>' +
     '<div class="dash-filter-row"><div class="dash-tabs">' + [['due', 'Due'], ['soon', 'Next 7 days'], ['all', 'All']].map(function (i) {
-      return '<button class="dash-tab' + (f === i[0] ? ' active' : '') + '" onclick="refillFilter=\'' + i[0] + '\';drawCustomers()">' + i[1] + '</button>';
+      return '<button class="dash-tab' + (f === i[0] ? ' active' : '') + '" onclick="refillFilter=\'' + i[0] + '\';refillPage=1;drawCustomers()">' + i[1] + '</button>';
     }).join('') + '</div></div>' +
-    '<div class="card">' + (rows.length ? rows.map(function (p) { return refillRowHtml(p, true); }).join('') :
-      '<div class="empty">' + (f === 'due' ? 'Nobody is due for a refill right now.' : f === 'soon' ? 'Nobody is due in the next 7 days.' : 'No refills set up yet.') + '</div>') + '</div>';
+    (function () {
+      var pg = pageSlice(rows, refillPage);
+      refillPage = pg.page;
+      return showingHtml(pg) + rtTable(['Customer', 'Medicine', 'Phone', 'Reminded', 'Status', 'Action'], pg.rows.map(function (p) {
+        return [p.customer_name, p.drug_name + (p.qty ? ' × ' + p.qty : ''), p.phone ? showPhone(p.phone) : 'No phone', p.last_reminded_on ? fmtDate(p.last_reminded_on) : '—',
+          refillStatusCell(p), { html: refillActionsHtml(p) }];
+      }), { empty: f === 'due' ? 'Nobody is due for a refill right now.' : f === 'soon' ? 'Nobody is due in the next 7 days.' : 'No refills set up yet.', num: [false, false, false, false, false, false] }) +
+        pagerHtml(pg, 'goRefillPage');
+    })();
 }
 function todayKe() {
   // Nairobi's date as YYYY-MM-DD, the same "today" the database uses

@@ -11,6 +11,10 @@ var controlledCache = [];
 var controlledDetailId = null;
 var controlledLedger = null;   // { drug, rows }
 var controlledNames = {};
+var controlledPage = 1;   // register: 10 drugs per page
+var ledgerPage = 1;       // one drug's ledger: 10 movements per page
+var stakesPage = 1;       // past stock takes: 10 per page
+var stViewPage = 1;       // one stock take's differences: 10 per page
 
 function canSeeControlled() { return can('controlled') || can('view_controlled'); }
 
@@ -38,15 +42,19 @@ function drawControlled() {
     '<div class="tiny" style="margin-bottom:10px">Every movement of these drugs (received, sold with patient and prescription, returned, corrected, written off) is recorded automatically and cannot be edited. Selling one asks for the patient, the prescriber and the prescription number.</div>' +
     (can('controlled') ? '<div class="toolbar-row"><button class="btn primary" onclick="openMarkControlled()">+ Mark a drug as controlled</button></div>' : '') +
     (bad.length ? '<div class="inline-notice">' + icon('warn', 15) + '<span>' + bad.length + (bad.length === 1 ? ' drug has' : ' drugs have') + ' a shelf figure that differs from its ledger. Open it, then count it in Stock take.</span></div>' : '') +
-    '<div class="card">' + (controlledCache.length ? controlledCache.map(function (r) {
-      var diff = Number(r.shelf_qty) !== Number(r.ledger_qty);
-      return '<div class="list-row" style="cursor:pointer" onclick="openControlledLedger(\'' + r.drug_id + '\')">' +
-        '<div><div class="name">' + esc(r.name) + ' <span class="badge ' + (r.control_class === 'dda' ? 'bad' : 'warn') + '">' + CONTROL_LABEL[r.control_class] + '</span></div>' +
-        '<div class="meta">' + (r.last_movement ? 'last movement ' + fmtDateTime(r.last_movement) : 'no movements yet') + '</div></div>' +
-        '<div class="right"><div class="name">' + esc(qtyUnit(r.shelf_qty, r.unit)) + '</div>' +
-        (diff ? '<span class="badge bad">Ledger says ' + r.ledger_qty + '</span>' : '<span class="badge good">Matches</span>') + '</div></div>';
-    }).join('') : '<div class="empty">No drug is marked as controlled yet. Mark morphine, pethidine, diazepam and similar drugs to start their register.</div>') + '</div>';
+    (function () {
+      var pg = pageSlice(controlledCache, controlledPage);
+      controlledPage = pg.page;
+      return showingHtml(pg) + rtTable(['Drug', 'Class', 'Last movement', 'On the shelf', 'Ledger', 'Status'], pg.rows.map(function (r) {
+        var diff = Number(r.shelf_qty) !== Number(r.ledger_qty);
+        return [r.name, stCell(CONTROL_LABEL[r.control_class], r.control_class === 'dda' ? 'bad' : 'warn'), r.last_movement ? fmtDateTime(r.last_movement) : 'No movements yet',
+          qtyUnit(r.shelf_qty, r.unit), String(r.ledger_qty), diff ? stCell('Ledger differs', 'bad') : stCell('Matches', 'ok')];
+      }), { rowClick: function (i) { return "openControlledLedger('" + pg.rows[i].drug_id + "')"; },
+        empty: 'No drug is marked as controlled yet. Mark morphine, pethidine, diazepam and similar drugs to start their register.', num: [false, false, false, false, true, false] }) +
+        pagerHtml(pg, 'goControlledPage');
+    })();
 }
+function goControlledPage(p) { controlledPage = p; drawControlled(); }
 async function openMarkControlled() {
   var body = sheet('Mark a drug as controlled', '<div class="empty">Loading…</div>');
   var list = [];
@@ -73,6 +81,7 @@ function doMarkControlled() {
 function retryControlledLedger() { if (controlledDetailId) openControlledLedger(controlledDetailId); }
 async function openControlledLedger(drugId) {
   controlledDetailId = drugId;
+  ledgerPage = 1;
   STATE.tab = 'controlled';
   var c = $('#content');
   if (!c) return;
@@ -113,14 +122,22 @@ function drawControlledLedger() {
     (diff ? '<div class="inline-notice">' + icon('warn', 15) + '<span>The shelf figure and the ledger differ. Count it in Stock take so the difference is explained and recorded.</span></div>' : '') +
     '<div class="toolbar-row"><button class="btn ghost" onclick="exportControlledLedger()">' + icon('download', 15) + ' Excel</button>' +
     '<button class="btn ghost" onclick="printControlledLedger()">' + icon('printer', 15) + ' Print</button></div>' +
-    '<div class="card">' + (rows.length ? rows.map(function (r) {
-      var q = Number(r.quantity_delta);
-      return '<div class="list-row" style="align-items:flex-start"><div style="min-width:0"><div class="name">' + esc(LEDGER_KIND[r.kind] || r.kind) + '</div>' +
-        '<div class="meta wrap">' + esc(ledgerDetailText(r)) + '</div>' +
-        '<div class="meta">' + esc(fmtDateTime(r.entry_at) + (r.profiles && r.profiles.full_name ? ' · ' + r.profiles.full_name : '')) + '</div></div>' +
-        '<div class="right"><div class="name" style="color:' + (q < 0 ? 'var(--red)' : 'var(--green)') + '">' + (q > 0 ? '+' : '') + q + '</div><div class="meta">Balance ' + r.balance_after + '</div></div></div>';
-    }).join('') : '<div class="empty">No movements yet. Every sale, restock and correction of a controlled drug is recorded here automatically.</div>') + '</div>' +
+    (function () {
+      var pg = pageSlice(rows, ledgerPage);
+      ledgerPage = pg.page;
+      return showingHtml(pg) + rtTable(LEDGER_COLS, pg.rows.map(ledgerCells),
+        { empty: 'No movements yet. Every sale, restock and correction of a controlled drug is recorded here automatically.', num: [false, false, true, true, false, false] }) +
+        pagerHtml(pg, 'goLedgerPage');
+    })() +
     (rows.length >= 300 ? '<div class="tiny" style="margin-top:8px">Showing the latest 300 movements.</div>' : '');
+}
+function goLedgerPage(p) { ledgerPage = p; drawControlledLedger(); }
+var LEDGER_COLS = ['Date', 'Movement', 'Qty', 'Balance', 'Details', 'By'];
+// Stock going out is red text, stock coming in is green; the number carries the sign.
+function ledgerCells(r) {
+  var q = Number(r.quantity_delta);
+  return [fmtDateTime(r.entry_at), LEDGER_KIND[r.kind] || r.kind, { t: (q > 0 ? '+' : '') + q, c: q < 0 ? 'st-bad' : 'st-ok' }, String(r.balance_after),
+    ledgerDetailText(r) || '—', (r.profiles && r.profiles.full_name) || '—'];
 }
 function ledgerExportRows() {
   var d = controlledLedger.drug;
@@ -135,9 +152,10 @@ function exportControlledLedger() {
 }
 function printControlledLedger() {
   var d = controlledLedger.drug;
-  var rows = ledgerExportRows().map(function (r) { return [r['Date'], r['Movement'], r['Quantity'], r['Balance after'], [r['Patient'], r['Prescriber'], r['Rx number'] ? 'Rx ' + r['Rx number'] : '', r['Invoice'], r['Note']].filter(Boolean).join(' · '), r['By']]; });
+  // oldest to newest on paper, so the running balance reads downwards
+  var rows = controlledLedger.rows.slice().reverse().map(ledgerCells);
   printHtml('Controlled drug register', d.name + ' (' + CONTROL_LONG[d.control_class] + ')',
-    '<p style="margin:4px 0">Balance now: <b>' + esc(qtyUnit(d.ledger_qty, d.unit)) + '</b></p>' + tableHtml(['Date', 'Movement', 'Qty', 'Balance', 'Details', 'By'], rows));
+    tableHtml(LEDGER_COLS, rows, 'Balance now: ' + qtyUnit(d.ledger_qty, d.unit)), rows.length + ' movements · Balance now ' + qtyUnit(d.ledger_qty, d.unit));
 }
 
 // --- Stock take: count the shelf, see the differences, approve ---
@@ -179,6 +197,7 @@ async function renderStockTake() {
   stViewing = null;
   drawStockTake();
 }
+function goStakesPage(p) { stakesPage = p; drawStockTake(); }
 function stCountedN() { return Object.keys(stItems).length; }
 function stDiffN() { return Object.keys(stItems).filter(function (k) { return stItems[k].counted_qty !== stItems[k].system_qty; }).length; }
 
@@ -190,13 +209,17 @@ function drawStockTake() {
       '<div class="tiny" style="margin-bottom:10px">Count what is really on the shelves. Pharma shows the difference from what the system says, you give a reason for each, and one approval makes the system match the shelf. Sales can carry on while you count.</div>' +
       (canCountStock() ? '<div class="toolbar-row"><button class="btn primary" onclick="openStartStockTake()">Start a stock take</button></div>' : '') +
       '<div class="section-title">Past stock takes</div>' +
-      '<div class="card">' + (stockTakes.length ? stockTakes.map(function (t) {
-        var badge = t.status === 'approved' ? '<span class="badge good">Done</span>' : '<span class="badge warn">Cancelled</span>';
-        var v = t.total_cost_variance != null ? Number(t.total_cost_variance) : null;
-        return '<div class="list-row" style="cursor:pointer" onclick="openStockTakeView(\'' + t.id + '\')"><div><div class="name">' + esc(t.label) + '</div>' +
-          '<div class="meta">' + esc(fmtDateTime(t.created_at)) + (v != null ? ' · ' + (v < 0 ? 'lost ' + fmt(-v) : v > 0 ? 'gained ' + fmt(v) : 'no change in value') + ' at cost' : '') + '</div></div>' +
-          '<div class="right">' + badge + '</div></div>';
-      }).join('') : '<div class="empty">No stock takes yet. Start one to count what is physically on the shelf and fix any difference.</div>') + '</div>';
+      (function () {
+        var pg = pageSlice(stockTakes, stakesPage);
+        stakesPage = pg.page;
+        return showingHtml(pg) + rtTable(['Name', 'Date', 'Change at cost', 'Status'], pg.rows.map(function (t) {
+          var v = t.total_cost_variance != null ? Number(t.total_cost_variance) : null;
+          return [t.label, fmtDateTime(t.created_at), v == null ? '—' : (v < 0 ? { t: 'Lost ' + fmt(-v), c: 'st-bad' } : v > 0 ? { t: 'Gained ' + fmt(v), c: 'st-warn' } : 'No change'),
+            t.status === 'approved' ? stCell('Done', 'ok') : stCell('Cancelled', 'warn')];
+        }), { rowClick: function (i) { return "openStockTakeView('" + pg.rows[i].id + "')"; },
+          empty: 'No stock takes yet. Start one to count what is physically on the shelf and fix any difference.', num: [false, false, false, false] }) +
+          pagerHtml(pg, 'goStakesPage');
+      })();
     return;
   }
   var q = stFilter.toLowerCase();
@@ -232,7 +255,22 @@ function stRowHtml(d) {
     '<div class="right" style="display:flex;align-items:center;gap:8px"><span id="stbadge-' + d.drug_id + '">' + stDiffBadge(d.drug_id) + '</span>' +
     (canCountStock() ? '<input type="number" min="0" inputmode="numeric" class="stcount" style="width:84px" placeholder="Count" value="' + (it ? it.counted_qty : '') + '" onchange="stCount(\'' + d.drug_id + '\',this)">' : '') + '</div></div>';
 }
-async function stCount(drugId, el) {
+// A count is saved when the box loses focus, and that save takes a moment. Tapping
+// "Review & approve" straight after typing used to open the review BEFORE the last
+// save finished and say "Nothing has been counted yet". Every save is remembered here
+// so the review can wait for them first.
+var stPending = [];
+function stCount(drugId, el) {
+  var p = stCountSave(drugId, el);
+  stPending.push(p);
+  var done = function () { stPending = stPending.filter(function (x) { return x !== p; }); };
+  p.then(done, done);
+  return p;
+}
+async function stSettle() {
+  while (stPending.length) await Promise.all(stPending.slice());
+}
+async function stCountSave(drugId, el) {
   var raw = el.value.trim();
   try {
     if (raw === '') {
@@ -285,9 +323,13 @@ function stAvgCost(d) {
   var q = Number(d.qty_in_stock);
   return q > 0 ? Number(d.stock_value_cost) / q : 0;
 }
-function openStockTakeReview() {
-  var diffs = stDrugs.filter(function (d) { var it = stItems[d.drug_id]; return it && it.counted_qty !== it.system_qty; });
+async function openStockTakeReview() {
   var body = sheet('Review differences', '');
+  if (stPending.length) {
+    body.innerHTML = '<div class="empty">Please wait… saving your last counts.</div>';
+    await stSettle();
+  }
+  var diffs = stDrugs.filter(function (d) { var it = stItems[d.drug_id]; return it && it.counted_qty !== it.system_qty; });
   if (!stCountedN()) { body.innerHTML = '<div class="empty">Nothing has been counted yet.</div>'; return; }
   var est = diffs.reduce(function (a, d) { var it = stItems[d.drug_id]; return a + (it.counted_qty - it.system_qty) * stAvgCost(d); }, 0);
   body.innerHTML =
@@ -316,6 +358,7 @@ function doApproveStockTake() {
   });
 }
 async function openStockTakeView(id) {
+  stViewPage = 1;
   var t = stockTakes.find(function (x) { return x.id === id; });
   var c = $('#content');
   c.innerHTML = '<div class="empty">Loading…</div>';
@@ -335,12 +378,16 @@ function drawStockTakeView() {
     '<div class="card" style="margin-bottom:12px"><div class="name" style="font-weight:700">' + esc(t.label) + '</div><div class="meta">' + esc(fmtDateTime(t.created_at)) + ' · ' + (t.status === 'approved' ? 'approved' : 'cancelled') + '</div></div>' +
     '<div class="kpi-grid" style="margin-bottom:12px">' + kpi('Drugs counted', items.length, 't-violet') +
     (t.total_cost_variance != null ? kpi('Change at cost', fmt(t.total_cost_variance), Number(t.total_cost_variance) < 0 ? 't-red' : 't-green') : kpi('Differences', diffs.length, 't-amber')) + '</div>' +
-    '<div class="card">' + (diffs.length ? diffs.map(function (i) {
-      var d = i.counted_qty - i.system_qty;
-      return listRow((i.drugs && i.drugs.name) || 'Drug', 'System ' + i.system_qty + ' · counted ' + i.counted_qty + (i.reason ? ' · ' + esc(i.reason) : ''),
-        '<span class="badge ' + (d < 0 ? 'bad' : 'warn') + '">' + (d > 0 ? '+' : '') + d + '</span>');
-    }).join('') : '<div class="empty">No differences.</div>') + '</div>';
+    (function () {
+      var pg = pageSlice(diffs, stViewPage);
+      stViewPage = pg.page;
+      return showingHtml(pg) + rtTable(['Drug', 'System', 'Counted', 'Difference', 'Reason'], pg.rows.map(function (i) {
+        var d = i.counted_qty - i.system_qty;
+        return [(i.drugs && i.drugs.name) || 'Drug', String(i.system_qty), String(i.counted_qty), { t: (d > 0 ? '+' : '') + d, c: d < 0 ? 'st-bad' : 'st-warn' }, i.reason || '—'];
+      }), { empty: 'No differences.', num: [false, true, true, true, false] }) + pagerHtml(pg, 'goStViewPage');
+    })();
 }
+function goStViewPage(p) { stViewPage = p; drawStockTakeView(); }
 
 // --- Drug detail: controlled status ---
 
