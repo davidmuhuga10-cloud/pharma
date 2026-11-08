@@ -15,7 +15,7 @@ const appId = cfg.appId;
 check(/^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)+$/.test(appId), 'appId "' + appId + '" is not a valid package name');
 check(read('capacitor.config.json') === read(main + 'assets/capacitor.config.json'), 'capacitor.config.json differs from android/app/src/main/assets/capacitor.config.json (run: npx cap sync android)');
 check(cfg.appName === 'Pharma', 'appName should be "Pharma"');
-check(cfg.server && cfg.server.url === 'https://pharmacymngt.netlify.app', 'server.url should be the live site');
+check(cfg.server && cfg.server.url === 'https://pharmamanagement.site', 'server.url should be the live site');
 check(cfg.server && cfg.server.cleartext === false, 'server.cleartext must be false');
 
 const gradle = read('android/app/build.gradle');

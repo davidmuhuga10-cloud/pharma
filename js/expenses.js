@@ -18,7 +18,7 @@ var EXP_CATEGORY_LABELS = {
 async function renderExpenses() {
   var c = $('#content');
   if (!can('expenses') && !can('view_expenses')) { c.innerHTML = '<div class="card empty">You do not have access to Expenses.</div>'; return; }
-  c.innerHTML = '<div class="empty">Loading expenses…</div>';
+  c.innerHTML = listSkeletonHtml(6);
   try {
     // Only this year is loaded; "Year" is the widest range offered.
     var yearStart = new Date().getFullYear() + '-01-01';

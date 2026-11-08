@@ -1,5 +1,5 @@
 // nativeShell.js - runs ONLY inside the Pharma Android app (a Capacitor 8
-// WebView shell loading https://pharmacymngt.netlify.app; see
+// WebView shell loading https://pharmamanagement.site; see
 // capacitor.config.json and android/). In a normal browser window.Capacitor
 // does not exist and this file returns on its first line.
 // Loaded in <head> of index.html, before style.css, so the layout step runs

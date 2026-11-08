@@ -1,4 +1,4 @@
-# Pharma — pharmacymngt.netlify.app
+# Pharma — pharmamanagement.site
 # The app itself is behind a login; only the sign-in page is worth indexing.
 User-agent: *
 Allow: /$
@@ -7,4 +7,4 @@ Disallow: /admin.html
 Disallow: /admin.js
 Disallow: /admin.css
 
-Sitemap: https://pharmacymngt.netlify.app/sitemap.xml
+Sitemap: https://pharmamanagement.site/sitemap.xml

@@ -8,7 +8,7 @@ var heldSalesCache = [];
 async function renderSell() {
   var c = $('#content');
   if (!can('sell')) { c.innerHTML = '<div class="card empty">You do not have access to Sell.</div>'; return; }
-  c.innerHTML = '<div class="empty">Loading drugs…</div>';
+  c.innerHTML = listSkeletonHtml(6);
   try {
     var { data: stock } = await fetchAllRows(function () { return sb.from('v_drug_stock').select('*').gt('qty_in_stock', 0).order('name'); }, 'drug_id');
     STATE.drugsCache = stock || [];

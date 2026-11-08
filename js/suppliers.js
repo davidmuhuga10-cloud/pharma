@@ -15,7 +15,7 @@ var lpoNotes = '';
 async function renderSuppliers() {
   var c = $('#content');
   if (!can('suppliers') && !can('view_suppliers')) { c.innerHTML = '<div class="card empty">You do not have access to Suppliers.</div>'; return; }
-  c.innerHTML = '<div class="empty">Loading suppliers…</div>';
+  c.innerHTML = listSkeletonHtml(5);
   try {
     var both = await Promise.all([
       sb.from('suppliers').select('*').eq('pharmacy_id', STATE.profile.pharmacy_id).order('name'),

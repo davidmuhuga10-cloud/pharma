@@ -1,5 +1,5 @@
 // No browser pop-ups: alert(), confirm() and prompt() print the website's address
-// ("pharmacymngt.netlify.app says") and cannot be styled. Customers must never see that, so
+// ("pharmamanagement.site says") and cannot be styled. Customers must never see that, so
 // every question goes through the in-app pop-ups in js/core.js (askConfirm / askText).
 // Run from the project folder: node tests/no-native-dialogs.test.js
 const fs = require('fs'), path = require('path');

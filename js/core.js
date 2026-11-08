@@ -285,6 +285,17 @@ function askText(title, message, placeholder, okLabel) { return askDialog({ titl
 // Runs an action button's request. The button is disabled and shows
 // "Please wait..." until the request ends, so it cannot be tapped twice. Every
 // button that sends a request should go through this.
+// Placeholder rows shown while a list loads, in the shape the real rows will
+// take, so the screen never looks frozen and nothing jumps when data lands.
+function listSkeletonHtml(rows) {
+  var one = '<div class="skel-row">' +
+    '<span class="skel skel-avatar"></span>' +
+    '<span style="flex:1"><span class="skel" style="height:12px;width:58%"></span>' +
+    '<span class="skel" style="height:10px;width:34%;margin-top:8px"></span></span>' +
+    '<span class="skel" style="height:18px;width:44px;border-radius:0"></span></div>';
+  return '<div class="card" aria-hidden="true">' + new Array((rows || 6) + 1).join(one) + '</div>';
+}
+
 function act(btn, fn) {
   if (!btn) { fn().catch(function (e) { toast(friendlyError(e), 'bad'); }); return; }
   var original = btn.innerHTML;

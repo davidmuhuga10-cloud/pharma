@@ -97,10 +97,13 @@ Sources: [PharmaPOS](https://pharmacypos.co.ke/) · [DawaTrack eTIMS guide](http
 - **SMS/WhatsApp reorder nudges**: "Amoxicillin 250mg is out of stock" or
   "Panadol Extra expires in 21 days — 35 units left" pushed to the owner's
   phone, not something they have to remember to check a dashboard for.
-- **Offline-first PWA**: exactly like Kodi and Shule, installs to the home
-  screen with no app-store friction, and a sale can still be recorded during
-  a network blip in a rural sub-county and sync once back online — this
-  matters a lot outside Nairobi.
+- **Installable PWA**: exactly like Kodi and Shule, installs to the home
+  screen with no app-store friction, and the app shell is cached so it still
+  opens on a bad connection. **Offline *selling* was built in Nov 2026 and
+  then deliberately removed** — recording sales on the device and syncing them
+  later created more problems than it solved (duplicate sales, stock counts
+  that disagreed with the server). Pharma is online-only for anything that
+  writes. Do not re-plan around offline selling without revisiting that.
 - **eTIMS-ready invoice numbering & VAT fields** built into the sales record
   from day one, even before a direct KRA integration exists, so switching
   that on later is a settings change, not a rebuild.
@@ -167,8 +170,10 @@ Everything else planned for "beyond the brief" did ship in v2:
   void/return/discount/claims).
 - **English/Swahili toggle** per staff account.
 
-**Still deliberately not built:** automated SMS/WhatsApp alerts (needs
-Africa's Talking or similar, not yet connected — everything else is designed
-to slot that in later without a rebuild, the same way Kodi grew feature by
-feature), direct KRA eTIMS submission, and M-Pesa STK push at checkout.
+**Still deliberately not built** (as of Nov 2026): direct KRA eTIMS
+submission, M-Pesa STK push at checkout, and automated WhatsApp alerts.
+
+SMS *is* now built and live: customer reminders, refill nudges and an opt-in
+evening summary, sent through Africa's Talking, with credit bought by M-Pesa
+at KES 1 per SMS. Offline selling was built and then removed — see section 4.
 shows is needed.

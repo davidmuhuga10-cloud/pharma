@@ -119,7 +119,7 @@ function drawControlledLedger() {
         '<div class="meta wrap">' + esc(ledgerDetailText(r)) + '</div>' +
         '<div class="meta">' + esc(fmtDateTime(r.entry_at) + (r.profiles && r.profiles.full_name ? ' · ' + r.profiles.full_name : '')) + '</div></div>' +
         '<div class="right"><div class="name" style="color:' + (q < 0 ? 'var(--red)' : 'var(--green)') + '">' + (q > 0 ? '+' : '') + q + '</div><div class="meta">Balance ' + r.balance_after + '</div></div></div>';
-    }).join('') : '<div class="empty">No movements yet.</div>') + '</div>' +
+    }).join('') : '<div class="empty">No movements yet. Every sale, restock and correction of a controlled drug is recorded here automatically.</div>') + '</div>' +
     (rows.length >= 300 ? '<div class="tiny" style="margin-top:8px">Showing the latest 300 movements.</div>' : '');
 }
 function ledgerExportRows() {
@@ -196,7 +196,7 @@ function drawStockTake() {
         return '<div class="list-row" style="cursor:pointer" onclick="openStockTakeView(\'' + t.id + '\')"><div><div class="name">' + esc(t.label) + '</div>' +
           '<div class="meta">' + esc(fmtDateTime(t.created_at)) + (v != null ? ' · ' + (v < 0 ? 'lost ' + fmt(-v) : v > 0 ? 'gained ' + fmt(v) : 'no change in value') + ' at cost' : '') + '</div></div>' +
           '<div class="right">' + badge + '</div></div>';
-      }).join('') : '<div class="empty">No stock takes yet.</div>') + '</div>';
+      }).join('') : '<div class="empty">No stock takes yet. Start one to count what is physically on the shelf and fix any difference.</div>') + '</div>';
     return;
   }
   var q = stFilter.toLowerCase();

@@ -2,6 +2,23 @@
 
 Newest first. The detailed story for each item is in `PHARMA_PROJECT_STATUS.md`.
 
+## 2026-11-08 (later): Documentation corrected, offline leftovers identified
+
+- `PRODUCT_SPEC.md` still promised an **offline-first PWA where "a sale can still be recorded during a network blip"**. That was built in Nov 2026 and then deliberately removed, because syncing sales later caused duplicate sales and stock counts that disagreed with the server. The spec now says so plainly, so nobody re-plans around it.
+- The same file still listed SMS alerts as "deliberately not built". SMS has been live for a while (customer reminders, refill nudges, the evening summary, credit bought by M-Pesa at KES 1 each). Corrected; eTIMS, M-Pesa STK push and WhatsApp alerts remain genuinely unbuilt.
+- `README.md` was missing nine test files from its run list; all are listed now.
+- Three files from the abandoned offline work are still in the repo and are dead: `js/offline-sale.js`, `tests/offline-sale.test.js`, `migrations/2026-11-07_offline_selling.sql`. Nothing loads them, `index.html` and `sw.js` do not list them, and that migration was never applied to the live database. They are removed in this commit.
+- Whole suite re-run against the repo itself rather than a working copy: every JS test green, 565 SQL checks pass.
+
+## 2026-11-08: Custom domain, link previews, loading states, lifecycle test
+
+- **Custom domain.** Everything now points at `pharmamanagement.site`. The old address was still hard-coded in nine places, two of them user-visible: the Android app's own config (so the installed app loaded the old domain) and the offline "retry" button in `www/error.html` and its Android copy.
+- **Link previews and search.** `index.html` had no description, canonical, Open Graph or Twitter tags at all, so sharing the link showed a bare URL. Added, plus a new 1200x630 `icons/link-preview.png`. `robots.txt` and `sitemap.xml` now point at the real domain.
+- **Loading states.** Inventory, Sell, Customers, Suppliers and Expenses showed the word "Loading..."; they now show placeholder rows shaped like the real list (`listSkeletonHtml()` in core.js), so nothing jumps when data arrives.
+- **First-time guidance.** One line added to the bare empty states: insurance claims, cash closings, the controlled-drugs register and stock takes.
+- **Full lifecycle test.** One pharmacy walked start to finish as the real signed-in role: sign up (90-day trial), add stock, sell, SMS wallet, trial expires, locked out of selling and restocking, admin activates, selling resumes with stock intact. 565 checks pass.
+- Cache bumped to `hodhi-shell-v4b`.
+
 ## 2026-11-08: Pre-launch audit - security, performance, SEO
 
 - **Security fix (cross-pharmacy leak).** `evening_summary_text()` could be called by any signed-in user with any pharmacy's id, and never checked it was their own. It returned that pharmacy's day: number of sales, total takings, whether the cash drawer balanced and by how much, and low/expiring stock counts. Nothing in the app called it directly, so the grant was removed - no screen changes. Applied to the live database. New test proves a second pharmacy is refused.

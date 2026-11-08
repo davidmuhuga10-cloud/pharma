@@ -135,7 +135,7 @@ async function loadSmsLog() {
 async function renderCustomers() {
   var c = $('#content');
   if (!canSeeCustomers()) { c.innerHTML = '<div class="card empty">You do not have access to Customers.</div>'; return; }
-  c.innerHTML = '<div class="empty">Loading customers…</div>';
+  c.innerHTML = listSkeletonHtml(6);
   try {
     await loadCustomers();
     if (custTab === 'refills' && !custDetailId) await loadRefills();

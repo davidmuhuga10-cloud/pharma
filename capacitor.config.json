@@ -3,7 +3,7 @@
   "appName": "Pharma",
   "webDir": "www",
   "server": {
-    "url": "https://pharmacymngt.netlify.app",
+    "url": "https://pharmamanagement.site",
     "androidScheme": "https",
     "cleartext": false,
     "errorPath": "error.html"

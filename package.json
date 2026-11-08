@@ -2,7 +2,7 @@
   "name": "pharma",
   "version": "1.0.0",
   "private": true,
-  "description": "Pharma — pharmacy stock and sales. Android app shell (Capacitor) around https://pharmacymngt.netlify.app.",
+  "description": "Pharma — pharmacy stock and sales. Android app shell (Capacitor) around https://pharmamanagement.site.",
   "scripts": {
     "android:sync": "cap sync android",
     "android:open": "cap open android",

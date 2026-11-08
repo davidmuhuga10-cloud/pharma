@@ -60,7 +60,7 @@ function cashDifferenceLabel(d) {
 }
 
 function cashHistoryHtml(rows) {
-  if (!rows || !rows.length) return '<div class="section-title">Past closings</div><div class="card"><div class="empty">No closings yet.</div></div>';
+  if (!rows || !rows.length) return '<div class="section-title">Past closings</div><div class="card"><div class="empty">No closings yet. Close the drawer at the end of each day to compare counted cash against what was sold.</div></div>';
   return '<div class="section-title">Past closings</div><div class="card">' + rows.map(function (r) {
     var who = r.profiles && r.profiles.full_name ? ' · ' + esc(r.profiles.full_name) : '';
     var off = Math.abs(Number(r.difference) || 0) >= 0.005;

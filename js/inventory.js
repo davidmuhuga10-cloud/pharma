@@ -5,7 +5,7 @@ var invFilter = '';
 async function renderInventory() {
   var c = $('#content');
   if (!can('view_inventory')) { c.innerHTML = '<div class="card empty">You do not have access to Inventory.</div>'; return; }
-  c.innerHTML = '<div class="empty">Loading inventory…</div>';
+  c.innerHTML = listSkeletonHtml(7);
   try {
     var { data: stock } = await fetchAllRows(function () { return sb.from('v_drug_stock').select('*').order('name'); }, 'drug_id');
     STATE.drugsCache = stock || [];

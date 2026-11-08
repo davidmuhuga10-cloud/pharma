@@ -2030,6 +2030,72 @@ async function main() {
       'evening_summary_text should not be callable by a signed-in user at all');
     await c.query('reset role');
 
+    // ----------------------------------------------------------------
+    // The whole journey, in order, as one new pharmacy: sign up, trial,
+    // stock, sell, buy SMS, trial ends, locked out, admin activates.
+    // Each step runs as the real signed-in role, so anything the screens
+    // could not do, this cannot do either.
+    // ----------------------------------------------------------------
+    console.log('\n== A new pharmacy, start to finish ==');
+
+    await c.query('reset role');
+    const lcOwner = (await c.query('insert into auth.users default values returning id')).rows[0].id;
+    await asUser(c, lcOwner);
+
+    // 1. Sign up.
+    const lcPh = (await c.query("select bootstrap_pharmacy('Lifecycle Chemist', 'Jane Owner', '0722111222') as id")).rows[0].id;
+    const lcSub = (await c.query('select my_subscription() as s')).rows[0].s;
+    assert(lcSub.status === 'trial' && lcSub.days_left >= 89 && lcSub.days_left <= 90,
+      'a new pharmacy starts on a 3-month free trial (' + lcSub.days_left + ' days left)');
+    assert(lcSub.locked === false, 'a brand-new pharmacy is not locked out');
+    assert((await c.query('select my_role() as r')).rows[0].r === 'owner', 'the person who signs up is the owner');
+
+    // 2. Add stock.
+    const lcDrug = (await c.query("insert into drugs (pharmacy_id, name, form, unit, reorder_level) values ($1,'Amoxil 500mg','capsule','capsule',10) returning id", [lcPh])).rows[0].id;
+    await c.query("select record_restock($1,$2,100,30,50,(current_date + interval '400 days')::date,'B1','Local Supplier')", [lcPh, lcDrug]);
+    assert(Number((await c.query('select qty_in_stock n from v_drug_stock where drug_id = $1', [lcDrug])).rows[0].n) === 100,
+      'stock received shows on the shelf');
+
+    // 3. Sell it.
+    const lcSale = (await c.query('select record_sale($1,$2::jsonb,$3::jsonb) as r',
+      [lcPh, JSON.stringify([{ drug_id: lcDrug, quantity: 3 }]), JSON.stringify([{ method: 'cash', amount: 150 }])])).rows[0].r;
+    assert(!!lcSale, 'a sale goes through and returns a receipt');
+    assert(Number((await c.query('select qty_in_stock n from v_drug_stock where drug_id = $1', [lcDrug])).rows[0].n) === 97,
+      'selling 3 takes the stock down to 97');
+
+    // 4. Buy SMS credit. The wallet is only ever credited by the paid callback.
+    const lcWallet = (await c.query('select my_sms_wallet() as w')).rows[0].w;
+    assert(lcWallet !== null, 'a new pharmacy has an SMS wallet to top up');
+
+    // 5. The trial runs out.
+    await c.query('reset role');
+    await c.query("update pharmacies set subscription_expires_at = now() - interval '1 day' where id = $1", [lcPh]);
+    await asUser(c, lcOwner);
+    assert((await c.query('select my_subscription() as s')).rows[0].s.locked === true,
+      'when the trial ends the pharmacy is locked');
+    await assertThrows(c.query('select record_sale($1,$2::jsonb,$3::jsonb)',
+      [lcPh, JSON.stringify([{ drug_id: lcDrug, quantity: 1 }]), JSON.stringify([{ method: 'cash', amount: 50 }])]),
+      'a locked pharmacy cannot sell, even with a valid basket',
+      'an expired trial must stop a real sale, not only an empty one');
+    await assertThrows(c.query("select record_restock($1,$2,10,30,50,(current_date + interval '400 days')::date,'B2','S')", [lcPh, lcDrug]),
+      'a locked pharmacy cannot receive stock either', 'an expired trial must stop restocking');
+
+    // 6. The admin takes the first payment and activates it.
+    await c.query('reset role');
+    // Only one platform admin is ever allowed, so use the one already set up.
+    const lcAdmin = (await c.query('select user_id from platform_admins limit 1')).rows[0].user_id;
+    await asUser(c, lcAdmin);
+    await c.query('select admin_activate_pharmacy($1, 365)', [lcPh]);
+    await asUser(c, lcOwner);
+    const lcAfter = (await c.query('select my_subscription() as s')).rows[0].s;
+    assert(lcAfter.status === 'active' && lcAfter.locked === false,
+      'after the admin activates it, the pharmacy is active and unlocked again');
+    const lcSale2 = (await c.query('select record_sale($1,$2::jsonb,$3::jsonb) as r',
+      [lcPh, JSON.stringify([{ drug_id: lcDrug, quantity: 2 }]), JSON.stringify([{ method: 'cash', amount: 100 }])])).rows[0].r;
+    assert(!!lcSale2, 'selling works again straight after activation');
+    assert(Number((await c.query('select qty_in_stock n from v_drug_stock where drug_id = $1', [lcDrug])).rows[0].n) === 95,
+      'and nothing was lost while it was locked - stock carries on from 97');
+
   });
 
   console.log('\n' + '='.repeat(60));

@@ -29,7 +29,7 @@ function drawClaims() {
         '<div class="right"><div>' + fmt(c.amount) + '</div><select style="margin-top:4px" onchange="updateClaimStatus(this,\'' + c.id + '\',this.value)">' +
         ['pending', 'submitted', 'paid', 'rejected'].map(function (s) { return '<option value="' + s + '"' + (c.status === s ? ' selected' : '') + '>' + s.charAt(0).toUpperCase() + s.slice(1) + '</option>'; }).join('') +
         '</select></div></div>';
-    }).join('') : '<div class="empty">No insurance claims yet.</div>') + '</div>';
+    }).join('') : '<div class="empty">No insurance claims yet. A claim is created when you sell to a customer on an insurance scheme.</div>') + '</div>';
 }
 
 async function updateClaimStatus(sel, id, status) {
