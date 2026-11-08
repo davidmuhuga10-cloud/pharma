@@ -513,6 +513,7 @@ h2 { font-size: 16px; }
 .kpi.active { outline: 3px solid var(--ink); outline-offset: 1px; }
 @media (min-width: 760px) { .kpi-grid.five { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
 @media (max-width: 759px) { .kpi-grid.five > .kpi:first-child { grid-column: 1 / -1; } }
+@media (min-width: 760px) { .kpi-grid.six { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
 .range-bar { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; margin-bottom: 12px; }
 .range-bar .dash-tabs { flex: 0 1 auto; }
 .range-dates { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
@@ -555,35 +556,27 @@ h2 { font-size: 16px; }
   #printArea.print-receipt .print-title { font-size: 15px; font-weight: 700; margin: 10px 0; }
   #printArea.print-receipt .print-footer { margin-top: 16px; font-size: 11px; color: #000; }
 
-  /* Every report (everything that is not a receipt): green letterhead band, gold double rule,
-     ribbon title, striped table, green footer band, and a double green/gold frame on each page.
-     Colours are forced on so a "no backgrounds" print setting does not wipe the band. */
-  #printArea:not(.print-receipt) {
-    -webkit-print-color-adjust: exact; print-color-adjust: exact;
-    padding: 6mm 7mm 4mm; font-family: "Segoe UI", Arial, sans-serif;
-  }
-  .print-frame { position: fixed; inset: 3mm; border: 2px solid #0F5132; outline: 1px solid #B8860B; outline-offset: -5px; pointer-events: none; }
-  #printArea:not(.print-receipt) .print-letterhead { background: #0F5132; color: #fff; text-align: center; padding: 14px 18px 12px; }
-  .print-letterhead .pbadge { width: 44px; height: 44px; margin: 0 auto 8px; background: #fff; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
-  #printArea:not(.print-receipt) .print-letterhead .pname { font: 700 22px/1.2 Georgia, Cambria, "Times New Roman", serif; letter-spacing: 2px; text-transform: uppercase; }
-  #printArea:not(.print-receipt) .print-letterhead .pmeta { font-size: 12px; margin-top: 4px; letter-spacing: .3px; }
-  .print-rule { height: 7px; border-top: 3px solid #B8860B; border-bottom: 2px solid #B8860B; margin-top: 3px; }
-  .print-titlebar { text-align: center; margin: 12px 0 4px; }
-  .print-ribbon { display: inline-block; background: #0F5132; color: #fff; padding: 6px 24px; font-size: 13px; font-weight: 800; letter-spacing: 1.4px; text-transform: uppercase; border-radius: 2px; }
-  .print-meta { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; font-size: 12px; margin: 8px 2px; color: #000; }
-  .print-table { width: 100%; border-collapse: collapse; font-size: 12px; border: 1px solid #0F5132; color: #000; }
-  .print-table th { background: #0F5132; color: #fff; font-size: 11px; font-weight: 800; letter-spacing: .5px; text-transform: uppercase; text-align: left; padding: 6px 7px; border-right: 1px solid #fff; }
-  .print-table td { padding: 5px 7px; border-top: 1px solid #CFC9BF; border-right: 1px solid #CFC9BF; text-align: left; }
-  .print-table tbody tr:nth-child(even) td { background: #F5F2EC; }
-  .print-table th.no, .print-table td.no { width: 28px; text-align: center; }
+  /* Every report (everything that is not a receipt): plain black on white, no frame, band or colour, so it
+     prints cleanly on any printer. Each row stays on one line; the table repeats its heading on every page. */
+  #printArea:not(.print-receipt) { padding: 8mm 9mm 6mm; font-family: Arial, "Segoe UI", sans-serif; color: #000; }
+  #printArea:not(.print-receipt) .print-letterhead { text-align: center; padding-bottom: 6px; border-bottom: 1px solid #000; }
+  #printArea:not(.print-receipt) .print-letterhead .pname { font-size: 18px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; }
+  #printArea:not(.print-receipt) .print-letterhead .pmeta { font-size: 11px; margin-top: 3px; }
+  .print-titlebar { text-align: center; margin: 10px 0 2px; }
+  .print-ribbon { display: inline-block; font-size: 14px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; }
+  .print-meta { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; font-size: 11px; margin: 6px 0 8px; color: #000; }
+  .print-table { width: 100%; border-collapse: collapse; font-size: 11px; color: #000; border: 1px solid #000; }
+  .print-table th { font-size: 10px; font-weight: 800; text-transform: uppercase; text-align: left; padding: 4px 6px; border: 0.5px solid #000; border-top: 1px solid #000; border-bottom: 1.5px solid #000; white-space: nowrap; }
+  .print-table td { padding: 3px 6px; border: 0.5px solid #000; text-align: left; white-space: nowrap; }
+  .print-table.wide { font-size: 10px; }
+  .print-table.wide th { font-size: 9px; }
+  .print-table th.no, .print-table td.no { width: 24px; text-align: center; padding-left: 2px; padding-right: 2px; }
   .print-table th.num, .print-table td.num { text-align: right; }
-  .print-table tfoot td { background: #E8F3EC; border-top: 2px solid #0F5132; font-weight: 800; text-align: right; padding: 7px 10px; }
+  .print-table tfoot td { border-top: 1.5px solid #000; border-bottom: 1px solid #000; font-weight: 800; text-align: right; padding: 5px 6px; }
   .print-table tr { break-inside: avoid; }
   .print-table thead { display: table-header-group; }
-  .print-table .st-bad { color: #B3261E; font-weight: 800; }
-  .print-table .st-warn { color: #7A5605; font-weight: 800; }
-  .print-table .st-ok { color: #0F5132; font-weight: 800; }
-  .print-bandfoot { margin-top: 16px; background: #0F5132; color: #fff; text-align: center; font: 700 11px/1.3 Georgia, Cambria, "Times New Roman", serif; letter-spacing: 2.2px; text-transform: uppercase; padding: 8px 12px; border-top: 3px solid #B8860B; break-inside: avoid; }
+  .print-table .st-bad, .print-table .st-warn, .print-table .st-ok, .print-table .st-ink { color: #000; font-weight: 800; }
+  .print-bandfoot { margin-top: 10px; text-align: center; font-size: 10px; border-top: 1px solid #000; padding-top: 4px; break-inside: avoid; }
 
   /* A sale receipt, sized for an 80mm thermal till roll. This is just a hint:
      the browser's own print dialog still lets anyone pick a different

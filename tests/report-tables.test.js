@@ -1,6 +1,6 @@
 // Every report and list table looks the same: 10 rows a page with Prev/Next, plain coloured
 // status text (no badge background), numbers right-aligned, a From-To range where dates matter,
-// and a printed copy with the green letterhead that carries the WHOLE list. This checks the
+// and a printed copy in plain black and white that carries the WHOLE list. This checks the
 // shared helpers in js/export.js and that each screen really uses them, without a browser.
 // Run from the project folder:   node tests/report-tables.test.js
 const fs = require('fs'), path = require('path'), vm = require('vm');
@@ -60,19 +60,28 @@ const b = run("rangeBounds('2026-11-01', '2026-11-08')");
 check(new Date(b.start).getTime() === new Date(2026, 10, 1).getTime(), 'the range starts at midnight of the From date');
 check(new Date(b.end).getTime() === new Date(2026, 10, 9).getTime(), 'it ends at midnight AFTER the To date (the database end is not included), so the whole To day counts');
 
-// ---- print ----
+// ---- print: plain black and white, one line per row, KES once in the heading ----
 const th = run("letterheadHtml('Sales Report', 'Today', false)");
-check(/class="pbadge"/.test(th) && /print-ribbon/.test(th) && /print-rule/.test(th) && /Test &lt;Pharmacy&gt;/.test(th), 'a report head has the badge, name (escaped), gold rule and ribbon title');
+check(/print-ribbon/.test(th) && /Sales Report/.test(th) && /Test &lt;Pharmacy&gt;/.test(th) && !/pbadge|print-rule/.test(th), 'a report head has the pharmacy name (escaped) and the title, with no badge or decorative rule');
 const rh = run("letterheadHtml('Receipt', '', true)");
 check(/print-title/.test(rh) && !/print-ribbon|pbadge/.test(rh), 'a receipt keeps the plain head for the 80mm roll');
 run("printHtml('Sales Report', 'Today', '<p>x</p>', '12 sales')");
-check(area.className === 'print-only' && /print-frame/.test(area.innerHTML) && /print-bandfoot/.test(area.innerHTML) && /12 sales/.test(area.innerHTML), 'a report prints with the frame, the footer band and its summary line');
+check(area.className === 'print-only' && !/print-frame/.test(area.innerHTML) && /print-bandfoot/.test(area.innerHTML) && /12 sales/.test(area.innerHTML), 'a report prints with no border frame, a plain footer line and its summary line');
 run("printHtml('Receipt', '', '<p>y</p>', null, { receipt: true })");
 check(area.className === 'print-only print-receipt' && !/print-frame|print-bandfoot/.test(area.innerHTML) && /print-footer/.test(area.innerHTML), 'a receipt has no frame or band');
-const ph = run(`tableHtml(['Drug', 'Qty', 'Status'], [['A', 'KES 5', {t:'Expired', c:'st-bad'}], ['B', 'KES 1,000', 'ok']], 'Total: 2')`);
+const ph = run(`tableHtml(['Drug', 'Cost', 'Status'], [['A', 'KES 5', {t:'Expired', c:'st-bad'}], ['B', 'KES 1,000.50', 'ok']], 'Total: 2')`);
 check(/<th class="no">#<\/th>/.test(ph) && /<td class="no">2<\/td>/.test(ph), 'the printed table is numbered');
-check(/<td class="num">KES 1,000/.test(ph) && /st-bad/.test(ph) && /<tfoot>[\s\S]*Total: 2/.test(ph), 'printed numbers are right-aligned, status is coloured text, and the total line is there');
-check(/@page receipt80/.test(cssAll) && /print-bandfoot/.test(cssAll) && /\.print-frame/.test(cssAll) && /print-color-adjust: exact/.test(cssAll), 'the print styles are in style.css (frame, footer band, colours forced on)');
+check(/<td class="num">1,000\.50<\/td>/.test(ph) && !/<td[^>]*>KES /.test(ph) && /<th class="num">Cost \(KES\)<\/th>/.test(ph), 'money cells print as plain numbers and the currency appears once in the column heading, so KES never wraps above the number');
+check(/st-bad/.test(ph) && /<tfoot>[\s\S]*Total: 2/.test(ph), 'status is still marked and the total line is there');
+const dash = run(`tableHtml(['Drug', 'Unit cost'], [['A', '–'], ['B', 'KES 5']], '')`);
+check(/Unit cost \(KES\)/.test(dash) && /<td class="num">–<\/td>/.test(dash), 'a dash for "no cost" does not stop the column being a money column');
+const mixed = run(`tableHtml(['Item', 'Owes (now)'], [['A', 'KES 5'], ['B', 'Settled']], '')`);
+check(/KES 5/.test(mixed), 'a column that mixes money and words keeps its KES, nothing is guessed');
+const printCss = cssAll.slice(cssAll.indexOf('/* Every report (everything that is not a receipt)'), cssAll.indexOf('/* A sale receipt'));
+check(printCss.length > 500 && !/#0F5132|#B8860B|#B3261E|#7A5605|#E8F3EC|#F5F2EC|#CFC9BF|\.print-frame/i.test(printCss), 'the report print styles are black and white: no green, gold, red, tinted rows or frame');
+check(/\.print-table td\s*\{[^}]*white-space:\s*nowrap/.test(printCss) && /\.print-table th\s*\{[^}]*white-space:\s*nowrap/.test(printCss), 'every printed row stays on one line');
+check(/\.print-table\s*\{[^}]*border:\s*1px solid #000/.test(printCss) && /\.print-table td\s*\{[^}]*border:\s*0\.5px solid #000/.test(printCss) && /\.print-table th\s*\{[^}]*border:\s*0\.5px solid #000/.test(printCss), 'the printed table is a full grid: a line round it, between every row and between every column');
+check(/@page receipt80/.test(cssAll) && /print-bandfoot/.test(cssAll), 'the print styles are in style.css (footer line, receipt page)');
 
 // ---- every screen uses the shared table ----
 const screens = {
@@ -111,6 +120,9 @@ check(n('expired') === 1 && n('within30') === 2 && n('within90') === 4 && n('unk
 check(n('all') === 6, '"All needing attention" is expired + the next 90 days + unknown, and leaves out the batch 200 days away');
 vm.runInContext("expiryCustomFrom = '" + iso(5) + "'; expiryCustomTo = '" + iso(65) + "';", ectx);
 check(n('custom') === 3, 'a From-To window lists only batches expiring inside it (10, 30 and 60 days away; not -5, 90 or 200)');
+check(n('full') === 7, '"All batches" lists every batch in stock, including the ones expiring far in the future, so the whole list can be printed');
+check(vm.runInContext("EXPIRY_CATEGORIES.some(c => c.key === 'full')", ectx), 'there is a tile for the full list');
+check(vm.runInContext("expirySorted('full').map(r => r.id).join()", ectx) === '1,2,6,3,7,4,5', 'the full list is soonest first, far-off batches after, batches with no date last: ' + vm.runInContext("expirySorted('full').map(r => r.id).join()", ectx));
 const st = d => vm.runInContext('expiryStatus(' + JSON.stringify(d) + ')', ectx);
 check(st(mk(1, -5)).tone === 'bad' && /Expired/.test(st(mk(1, -5)).text), 'expired reads in red text');
 check(st(mk(1, 10)).tone === 'bad' && st(mk(1, 60)).tone === 'warn' && st(mk(1, 0, true)).tone === 'ink' && /No date/.test(st(mk(1, 0, true)).text), 'within 30 days red, within 90 days amber, no date plain black');

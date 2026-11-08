@@ -10,7 +10,7 @@
 // expiryReportData holds one flat array (`all`); every tile count and every list is
 // worked out from it by expiryCategoryRows(), so a tile, its list, its print and its
 // Excel can never disagree.
-var expiryCategory = 'all'; // 'all' | 'expired' | 'within30' | 'within90' | 'unknown' | 'custom'
+var expiryCategory = 'all'; // 'all' (needing attention) | 'expired' | 'within30' | 'within90' | 'unknown' | 'custom' | 'full' (every batch)
 var expiryPage = 1;
 var expiryCustomFrom = '';
 var expiryCustomTo = '';
@@ -42,12 +42,14 @@ async function loadExpiryReport() {
   }
 }
 
+// "All batches" ('full') is every batch in stock, whatever its date, so the whole list can be printed.
 // Thresholds are cumulative (0-30, 0-90), not separate bands: a drug expiring
 // in 12 days appears under both "30 Days" and "90 Days". Expired items are
 // their own bucket, and "All needing attention" is expired + the next 90 days + unknown.
 function expiryCategoryRows(cat) {
   var all = (expiryReportData && expiryReportData.all) || [];
   if (cat === 'all') return all.filter(function (r) { return r.expiry_unknown || r.days <= 90; });
+  if (cat === 'full') return all.slice();
   if (cat === 'expired') return all.filter(function (r) { return !r.expiry_unknown && r.days < 0; });
   if (cat === 'within30') return all.filter(function (r) { return !r.expiry_unknown && r.days >= 0 && r.days <= 30; });
   if (cat === 'within90') return all.filter(function (r) { return !r.expiry_unknown && r.days >= 0 && r.days <= 90; });
@@ -72,7 +74,8 @@ var EXPIRY_CATEGORIES = [
   { key: 'expired', label: 'Expired', kind: 't-red', title: 'Expired' },
   { key: 'within30', label: 'Expiring in 30 days', kind: 't-red', title: 'Expiring in 30 days' },
   { key: 'within90', label: 'Expiring in 90 days', kind: 't-amber', title: 'Expiring in 90 days' },
-  { key: 'unknown', label: 'Unknown expiry', kind: 't-neutral', title: 'Unknown expiry' }
+  { key: 'unknown', label: 'Unknown expiry', kind: 't-neutral', title: 'Unknown expiry' },
+  { key: 'full', label: 'All batches', kind: '', title: 'All batches (full list)' }
 ];
 
 function expiryTitle(cat) {
@@ -109,7 +112,7 @@ function drawExpiryReportBody() {
   var pg = pageSlice(rows, expiryPage);
   expiryPage = pg.page;
   body.innerHTML =
-    '<div class="kpi-grid five" style="margin-bottom:14px">' +
+    '<div class="kpi-grid six" style="margin-bottom:14px">' +
     EXPIRY_CATEGORIES.map(function (c) {
       return '<button class="kpi kpi-clickable ' + c.kind + (cat === c.key ? ' active' : '') + '" onclick="openExpiryCategory(\'' + c.key + '\')">' +
         '<div class="label">' + esc(c.label) + '</div><div class="value">' + expiryCategoryRows(c.key).length + '</div></button>';
