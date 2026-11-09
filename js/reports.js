@@ -140,12 +140,14 @@ async function exportReportExcel() {
     return {
       'Invoice': s.invoice_number || '',
       'Date/time': new Date(s.sold_at).toLocaleString('en-GB'),
+      'Discount': Number(s.discount_amount || 0),
       'Amount': Number(s.total_amount || 0),
       'Payment method(s)': reportMethodLabel(s),
       'Reference(s)': pays.map(function (p) { return p.reference || ''; }).filter(Boolean).join('; '),
       'Customer': s.customer_name || '',
       'Insurance scheme': s.insurance_scheme || '',
-      'Voided': s.voided ? 'Yes' : ''
+      'Reversed': s.voided ? 'Yes' : '',
+      'Reversed by': s.voided ? (s.voided_by_name || '') : ''
     };
   });
   exportExcel((STATE.pharmacy.name || 'Pharma') + ' - sales - ' + reportRangeLabel() + ' - ' + todayStr() + '.xlsx', 'Sales', rows);
@@ -167,7 +169,7 @@ function reportSaleRow(s) {
   return [s.invoice_number || '—',
     new Date(s.sold_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }),
     reportMethodLabel(s) ? payLabel(reportMethodLabel(s)) : '—', s.customer_name || '—',
-    s.voided ? stCell('Voided', 'bad') : stCell('Completed', 'ok'), fmt(s.total_amount)];
+    s.voided ? stCell('Reversed', 'bad') : stCell('Completed', 'ok'), fmt(s.total_amount)];
 }
 
 var reportTxPage = 1;
@@ -282,7 +284,7 @@ async function openSaleDetail(saleId) {
   var s = reportData.sales.find(function (x) { return x.id === saleId; });
   if (!s) return;
   var pays = s.payments || [];
-  var body = sheet((s.invoice_number || 'Sale detail') + (s.voided ? ' — VOIDED' : ''), '');
+  var body = sheet((s.invoice_number || 'Sale detail') + (s.voided ? ' — REVERSED' : ''), '');
   body.innerHTML = '<div class="empty">Loading…</div>';
   var itemsRes = await sb.from('sale_items')
     .select('id, drug_id, quantity, unit_price, line_total, patient_name, prescriber_name, rx_number, drugs(name)')
@@ -291,7 +293,8 @@ async function openSaleDetail(saleId) {
   var items = itemsRes.data || [];
   body.innerHTML =
     '<div class="tiny" style="margin-bottom:8px">' + new Date(s.sold_at).toLocaleString('en-GB') + (s.customer_name ? ' · ' + esc(s.customer_name) : '') + '</div>' +
-    (s.voided ? '<div class="badge bad" style="margin-bottom:10px">Voided' + (s.void_reason ? ': ' + esc(s.void_reason) : '') + '</div>' : '') +
+    (s.voided ? '<div style="margin-bottom:10px;color:var(--red)">Reversed' + (s.voided_by_name ? ' by ' + esc(s.voided_by_name) : '') +
+      (s.voided_at ? ' · ' + new Date(s.voided_at).toLocaleString('en-GB') : '') + (s.void_reason ? ' · ' + esc(s.void_reason) : '') + '</div>' : '') +
     '<div class="section-title" style="margin-top:0">Items</div>' +
     '<div class="card">' + items.map(function (it) {
       var name = it.drugs ? it.drugs.name : 'Unknown';
@@ -306,8 +309,21 @@ async function openSaleDetail(saleId) {
       // listRow() escapes its name argument but not meta, and the reference is
       // free text typed at the till (M-Pesa code, scheme/member note).
       return listRow(payLabel(p.method), esc(p.reference || ''), fmt(p.amount));
-    }).join('') + '<div class="list-row"><div class="name">Total</div><div class="name">' + fmt(s.total_amount) + '</div></div></div>' +
-    (!s.voided && can('void') ? '<button class="btn danger" onclick="openVoidSale(\'' + saleId + '\')">Void entire sale</button>' : '');
+    }).join('') +
+    (Number(s.discount_amount) > 0
+      ? '<div class="list-row"><div class="name">Bill</div><div class="name">' + fmt(s.subtotal) + '</div></div>' +
+        '<div class="list-row"><div class="name">Discount</div><div class="name">−' + fmt(s.discount_amount) + '</div></div>' : '') +
+    '<div class="list-row"><div class="name">Total</div><div class="name">' + fmt(s.total_amount) + '</div></div></div>' +
+    (canReverseSale(s) ? '<button class="btn danger" onclick="openVoidSale(\'' + saleId + '\')">Reverse sale</button>' : '');
+}
+
+// The owner and pharmacists can reverse any sale. Everyone else can reverse the
+// sale they made themselves today (the database enforces the same rule).
+function canReverseSale(s) {
+  if (s.voided) return false;
+  if (can('void')) return true;
+  return !!(STATE.profile && s.created_by && s.created_by === STATE.profile.id &&
+    new Date(s.sold_at).toDateString() === new Date().toDateString());
 }
 
 function openReturnItem(saleItemId, maxQty, drugName) {
@@ -335,11 +351,10 @@ async function doReturnItem(saleItemId) {
 }
 
 function openVoidSale(saleId) {
-  var body = sheet('Void this sale?', '');
+  var body = sheet('Reverse this sale?', '');
   body.innerHTML =
-    '<div class="tiny" style="margin-bottom:10px">This restores all sold stock and marks the sale voided. Cannot be undone.</div>' +
     '<div class="field"><label>Reason</label><input id="voidReason" placeholder="Required"></div>' +
-    '<button class="btn danger" id="voidSaveBtn" onclick="doVoidSale(\'' + saleId + '\')">Void sale</button>';
+    '<button class="btn danger" id="voidSaveBtn" onclick="doVoidSale(\'' + saleId + '\')">Reverse sale</button>';
 }
 
 async function doVoidSale(saleId) {
@@ -349,7 +364,7 @@ async function doVoidSale(saleId) {
     if (!reason) { toast('A reason is required.', 'bad'); return; }
     var { error } = await sb.rpc('void_sale', { p_pharmacy_id: STATE.profile.pharmacy_id, p_sale_id: saleId, p_reason: reason });
     if (error) { toast(friendlyError(error), 'bad'); return; }
-    toast('Sale voided.', 'good');
+    toast('Sale reversed.', 'good');
     closeSheet();
     loadReport();
   });

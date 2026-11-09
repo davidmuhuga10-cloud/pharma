@@ -219,6 +219,27 @@ function changeQty(i, delta) {
 var checkoutPayments = [];
 // The server's own price for the current cart (see openCheckout).
 var lastQuote = null;
+// Shillings taken off the whole bill, as typed ('' = none). Not per drug.
+var checkoutDiscount = '';
+function checkoutDiscountValue() {
+  var v = parseFloat(checkoutDiscount);
+  return isFinite(v) ? Math.round(v * 100) / 100 : 0;
+}
+// A discount is fine when it is 0 or more and leaves something to pay.
+function checkoutDiscountOk(gross) {
+  var d = checkoutDiscountValue();
+  return d >= 0 && d < gross;
+}
+function setCheckoutDiscount(v) {
+  checkoutDiscount = v;
+  var body = $('#checkoutBody');
+  var gross = parseFloat(body.dataset.gross);
+  var total = checkoutDiscountOk(gross) ? Math.round((gross - checkoutDiscountValue()) * 100) / 100 : gross;
+  // The amount to collect changed, so start the payment again as one line for the new total.
+  var first = checkoutPayments[0] || { method: 'mpesa', reference: '' };
+  checkoutPayments = [{ method: first.method, amount: total, reference: first.reference || '' }];
+  drawCheckoutPayments();
+}
 
 // The cart is priced from drugs.default_price, which record_restock sets to the
 // LATEST restock price. record_sale instead charges what the batch it takes
@@ -234,6 +255,7 @@ async function openCheckout() {
   var body = sheet('Checkout', '<div class="card empty">Checking stock and prices…</div>');
   body.id = 'checkoutBody';
   lastQuote = null;
+  checkoutDiscount = '';
 
   var items = STATE.cart.map(function (c) { return { drug_id: c.drug_id, quantity: c.qty }; });
   var quote;
@@ -263,12 +285,13 @@ async function openCheckout() {
 
   lastQuote = quote;
   var total = Math.round((Number(quote.total) || 0) * 100) / 100;
-  checkoutPayments = [{ method: 'cash', amount: total, reference: '' }];
+  checkoutPayments = [{ method: 'mpesa', amount: total, reference: '' }];
   checkoutCustomerId = '';
   // Saved customers for credit (kopa). If this fails, cash sales still work.
   // A copy loaded in the last minute is reused, so each checkout does not reload
   // every balance.
   try { if (Date.now() - customersLoadedAt > 60000) await loadCustomers(); } catch (e) { /* keep whatever was loaded before */ }
+  body.dataset.gross = total;
   body.dataset.total = total;
   body.dataset.priceNote = Math.abs(total - indicative) > 0.01 ? '1' : '';
   var head = document.querySelector('.mask .sheet-head h2');
@@ -285,7 +308,13 @@ function setCheckoutCustomer(v) { checkoutCustomerId = v; drawCheckoutPayments()
 
 function drawCheckoutPayments() {
   var body = $('#checkoutBody');
-  var total = parseFloat(body.dataset.total);
+  var gross = parseFloat(body.dataset.gross);
+  var discountOk = checkoutDiscountOk(gross);
+  var discount = discountOk ? checkoutDiscountValue() : 0;
+  var total = Math.round((gross - discount) * 100) / 100;
+  body.dataset.total = total;
+  var head = document.querySelector('.mask .sheet-head h2');
+  if (head) head.textContent = 'Checkout — ' + fmt(total);
   var paid = checkoutPayments.reduce(function (a, p) { return a + (parseFloat(p.amount) || 0); }, 0);
   var balance = Math.round((total - paid) * 100) / 100;
   // Typed customer details survive a redraw (the sheet is rebuilt whenever a
@@ -316,8 +345,10 @@ function drawCheckoutPayments() {
       ? '<div class="tiny" style="margin-bottom:10px">Owes ' + fmt(cust.balance) + (cust.credit_limit != null ? ' · limit ' + fmt(cust.credit_limit) : ' · no limit') +
         ' · after this sale ' + fmt(Number(cust.balance) + credit) + '</div>' : '') +
     (overBy > 0.005 ? '<div class="inline-notice" style="color:var(--red)">' + icon('warn', 15) + '<span>This is ' + fmt(overBy) + ' over their credit limit. Take more cash, or ask the owner or pharmacist to raise the limit.</span></div>' : '');
-  var canConfirm = balance === 0 && overBy <= 0.005 && !needCustomer;
+  var canConfirm = balance === 0 && overBy <= 0.005 && !needCustomer && discountOk;
   redrawKeepingFocus(body,
+    '<div class="field"><label for="pDiscount"' + (discountOk ? '' : ' style="color:var(--red)"') + '>Discount (KES)' + (discountOk ? '' : ' — must be less than ' + fmt(gross)) + '</label>' +
+    '<input id="pDiscount" type="number" min="0" step="0.01" inputmode="decimal" value="' + esc(checkoutDiscount) + '" oninput="setCheckoutDiscount(this.value)"></div>' +
     '<div class="section-title" style="margin-top:0">Payment</div>' +
     (body.dataset.priceNote
       ? '<div class="tiny" style="margin-bottom:8px">This total is priced from the batches the sale will actually come out of — soonest expiry first, with any markdown applied — so it differs from the shelf price shown in the cart.</div>'
@@ -351,7 +382,7 @@ function addPaymentLine() {
   var body = $('#checkoutBody');
   var total = parseFloat(body.dataset.total);
   var paid = checkoutPayments.reduce(function (a, p) { return a + (parseFloat(p.amount) || 0); }, 0);
-  checkoutPayments.push({ method: 'cash', amount: Math.max(0, Math.round((total - paid) * 100) / 100), reference: '' });
+  checkoutPayments.push({ method: 'mpesa', amount: Math.max(0, Math.round((total - paid) * 100) / 100), reference: '' });
   drawCheckoutPayments();
 }
 
@@ -374,7 +405,8 @@ async function completeSale() {
         perDrug[l.drug_id] = a;
       });
     }
-    var quotedTotal = lastQuote ? Number(lastQuote.total) || 0 : null;
+    var discount = checkoutDiscountOk(parseFloat($('#checkoutBody').dataset.gross)) ? checkoutDiscountValue() : 0;
+    var quotedTotal = lastQuote ? (Number(lastQuote.total) || 0) - discount : null;
     var soldItems = STATE.cart.map(function (c) {
       var a = perDrug[c.drug_id];
       return {
@@ -416,7 +448,8 @@ async function completeSale() {
       p_payments: payments,
       p_customer_name: customer,
       p_insurance_scheme: insuranceLine ? insuranceLine.reference : null,
-      p_customer_id: customerId
+      p_customer_id: customerId,
+      p_discount: discount
     });
     if (error) { toast(friendlyError(error), 'bad'); return; }
     // record_sale creates the insurance claim in the same transaction, for every
@@ -427,7 +460,7 @@ async function completeSale() {
     STATE.cart = [];
     var invoiceNo = null;
     try { var { data: s } = await sb.from('sales').select('invoice_number').eq('id', saleId).single(); invoiceNo = s ? s.invoice_number : null; } catch (e) {}
-    showReceipt(soldItems, payments, customer, invoiceNo, quotedTotal);
+    showReceipt(soldItems, payments, customer, invoiceNo, quotedTotal, discount);
     lastQuote = null;
     renderSell();
   });
@@ -435,20 +468,23 @@ async function completeSale() {
 
 var pendingReceipt = null; // holds the last completed sale for the print button below
 
-function showReceipt(items, payments, customer, invoiceNo, chargedTotal) {
+function showReceipt(items, payments, customer, invoiceNo, chargedTotal, discount) {
   // chargedTotal is what record_sale billed (see openCheckout). Fall back to
   // summing the lines only if it is missing.
   var total = (chargedTotal == null)
     ? items.reduce(function (a, c) { return a + c.qty * c.price; }, 0)
     : chargedTotal;
-  pendingReceipt = { items: items, payments: payments, customer: customer, invoiceNo: invoiceNo, total: total };
+  discount = Number(discount) || 0;
+  pendingReceipt = { items: items, payments: payments, customer: customer, invoiceNo: invoiceNo, total: total, discount: discount };
   var body = sheet('Sale complete' + (invoiceNo ? ' — ' + invoiceNo : ''), '');
   body.innerHTML =
     // listRow() escapes its first argument, so patient_name is passed raw here
     // (escaping twice printed an apostrophe as "&#39;").
     '<div class="card">' + items.map(function (it) {
       return listRow(it.name + (it.patient_name ? ' (' + it.patient_name + ')' : ''), it.qty + ' × ' + fmt(it.price), fmt(it.qty * it.price));
-    }).join('') + '<div class="list-row"><div class="name">Total</div><div class="name">' + fmt(total) + '</div></div></div>' +
+    }).join('') +
+    (discount > 0 ? '<div class="list-row"><div class="name">Discount</div><div class="name">−' + fmt(discount) + '</div></div>' : '') +
+    '<div class="list-row"><div class="name">Total</div><div class="name">' + fmt(total) + '</div></div></div>' +
     '<button class="btn primary" onclick="printReceipt()">' + icon('printer',15) + ' Print receipt</button>' +
     '<button class="btn ghost" style="margin-top:8px" onclick="closeSheet()">Done</button>';
 }
@@ -473,6 +509,7 @@ function printReceipt() {
   var body =
     (extra.length ? '<div class="r80-meta">' + extra.join(' · ') + '</div>' : '') +
     '<div class="r80-rule"></div>' + itemsHtml + '<div class="r80-rule"></div>' +
+    (d.discount > 0 ? '<div class="r80-sub"><span>Discount</span><span>-' + fmt(d.discount) + '</span></div>' : '') +
     '<div class="r80-row r80-total r80-sub"><span>Total</span><span>' + fmt(d.total) + '</span></div>' +
     '<div class="r80-rule"></div>' + payHtml;
   printHtml('Receipt', '', body, null, { receipt: true });

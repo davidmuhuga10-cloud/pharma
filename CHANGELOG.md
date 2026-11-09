@@ -2,6 +2,17 @@
 
 Newest first. The detailed story for each item is in `PHARMA_PROJECT_STATUS.md`.
 
+## 2026-11-09 (later): Discount on the whole bill, and reversing a sale
+
+- **Discount at checkout.** One box, "Discount (KES)", typed in shillings (not a percentage), taken off the whole bill and never off a single drug. No cap, no reason, no permission switch: every role can use it, including owners who sell on their own account. It must stay below the bill (it can never take a sale to zero or below). The payment line follows the new total.
+- **Checkout now starts on M-Pesa** (was Cash); the seller can change it, and a split line also starts on M-Pesa.
+- **Nothing is edited after a sale.** A sale with a mistake is reversed (the old "Void entire sale" is now "Reverse sale", the same word as Customers and Expenses). The owner and pharmacists can reverse any sale; any other member of staff can reverse the sale they made themselves, today. The sale detail shows "Reversed by <name> · date time · reason", the Sales Report Excel has Discount, Reversed and Reversed by columns.
+- **Receipt** (screen and 80mm print) shows a Discount line above the Total. The sale detail shows Bill, Discount and Total.
+- **Money stays right with no other change:** `sales.total_amount` is the amount charged, so takings, the dashboard, profit and the evening summary already use it. Returns refund the discounted share of a line. Top sellers are unchanged (they add up line totals, so on discounted sales their money is a little above takings).
+- **Database (migration `2026-11-09_sale_discount.sql`, with a rollback file):** `sales.discount_amount`, `sales.voided_by`; `record_sale` gets an optional `p_discount` (the old 6-argument version is dropped so the name is not ambiguous; the previous app version still works); `record_return`, `void_sale` and `sales_report_page` updated. Tried against the live database inside a call that always rolls back (11 checks, nothing saved).
+- New `tests/sale-discount.test.js` (in `npm test`; shown failing on the old code first). Cache bumped to `hodhi-shell-v4f`.
+- Not checked: a real phone, a real thermal print, and a credit or insurance sale being reversed by a seller (those pay-later records are not touched by a reversal, same as when a pharmacist reverses one).
+
 ## 2026-11-09: Per-staff permissions and the Seller dashboard
 
 - **Each member of staff has their own permissions.** Settings -> Staff -> Permissions (and the admin portal, for any pharmacy) shows the person's switches: profit and margin, stock value, debt the shop owes, whole-shop sales and graph, top sellers, customer credit, Stock Valuation report, Sales Report, cost prices on Inventory, Excel and Print, and the controlled drugs register (no access / view only / view and record). Presets: Sales and stock only; Everything except profit, margin and stock value; Everything, like the owner; Custom. Every save is logged (who, when, before, after); the last save wins. Owner and co-owner are never limited.

@@ -106,12 +106,8 @@ These cannot be done from the code and are not yet confirmed:
 4. **The paying pharmacy is recorded as `trial` with expiry 2027-12-31.** Mark it as paid in the admin console so billing reports are right.
 5. **Direct writes to `drugs`.** A signed-in attendant can change fields such as `is_prescription` and `reorder_level` through the API, bypassing role checks in the app's functions. Fixing it needs the screens that edit drugs moved to a role-checked function first; do not simply revoke the privilege, or those screens break.
 
-## After deploying the staff-permissions release (9 Nov 2026)
+## Deploying the discount release (9 Nov 2026)
 
-The migration `migrations/2026-11-09_staff_access.sql` is already on the live project. One part was left switched off on purpose so the old app could not meet a restricted Seller: the trigger that gives every NEW Seller the "Sales and stock only" preset. Once the new app is live (Netlify deploy finished), run once in the Supabase SQL editor:
+The migration `migrations/2026-11-09_sale_discount.sql` is already on the live project (9 Nov 2026; the app that was live before keeps working with it). Deploy the new app (cache `hodhi-shell-v4f`) to switch the discount on. On a NEW project, run the migration before deploying. The new checkout calls `record_sale` with a discount, which the old database does not accept. Check: `select column_name from information_schema.columns where table_name='sales' and column_name in ('discount_amount','voided_by');` returns two rows. To undo: `migrations/2026-11-09_sale_discount.ROLLBACK_if_needed.sql` (sale totals stay right; the record of discounts and who reversed what is dropped).
 
-```sql
-alter table public.profiles enable trigger profiles_default_access;
-```
-
-Check: `select tgenabled from pg_trigger where tgname = 'profiles_default_access';` returns `O`. Existing staff are unaffected (nothing saved = everything); change a person under Settings -> Staff -> Permissions. To undo the whole feature, run `migrations/2026-11-09_staff_access.ROLLBACK_if_needed.sql` (it deletes the saved permissions and the change log).
+The staff-permissions trigger `profiles_default_access` is already enabled (checked 9 Nov 2026).
