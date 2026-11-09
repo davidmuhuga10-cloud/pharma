@@ -845,6 +845,11 @@ body.nav-open .navdrawer { transform: none; }
    so `order` can sandwich the card between them. */
 .auth-hero, .auth-lfoot, .auth-title { display: none; }
 .auth-pre { display: none; }
+/* Accept the Terms: tick box on Create account / Staff join, one line on Log in. Black text, green links, 20px box. */
+.agree { display: flex; gap: 10px; align-items: flex-start; margin: 14px 0; font-size: 13px; line-height: 1.4; color: #000; cursor: pointer; }
+.agree input { width: 20px; height: 20px; min-width: 20px; margin: 1px 0 0; flex: none; accent-color: var(--green); }
+.agree a, .agree-note a { color: var(--green); font-weight: 700; }
+.agree-note { margin: 10px 0 0; font-size: 12px; line-height: 1.4; text-align: center; color: #000; }
 .auth-toggle b { font-weight: 700; }
 .auth-forgot { text-align: center; margin-top: 10px; }
 .auth-forgot a { color: var(--green); font-weight: 600; display: inline-block; padding: 10px 6px; margin: -10px -6px; }

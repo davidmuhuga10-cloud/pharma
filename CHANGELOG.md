@@ -2,6 +2,31 @@
 
 Newest first. The detailed story for each item is in `PHARMA_PROJECT_STATUS.md`.
 
+## 2026-11-09 (midnight): Accept the Terms when creating an account
+
+- **Create account** and **Staff join** now show an unticked box, "I agree to the Terms of Service and Privacy Policy" (both words link to the new pages, opening in a new tab so nothing typed is lost). Without the tick, no text code is sent and the screen says "Please tick the box to accept the Terms of Service and Privacy Policy." **Log in** has no box, only a small line under the button: "By signing in you accept our Terms and Privacy Policy." Approved from a sketch built from the real sign-in styles; box and line are black text with green links, the box is 20px (tap size), phone layout otherwise unchanged (`termsAgreeHtml()` in `js/auth.js`, `.agree` / `.agree-note` in `style.css`).
+- The tick is checked in the browser only; the acceptance is not saved in the database (no date/time record per account). Saving it would need a small database change and is not done.
+- Cache bumped to `hodhi-shell-v4l`.
+- Test: `tests/accept-terms.test.js` (shown failing first).
+
+## 2026-11-09 (late night): Terms, Privacy, Cookie Policy, Features, Pricing and a Blog
+
+- Added nine new public pages, all plain static HTML outside the app shell: `terms.html`, `privacy.html`, `cookies.html`, `features.html`, `pricing.html`, `blog.html` and three starter posts (`blog-stock-batch-expiry.html`, `blog-mpesa-credit-sales.html`, `blog-stock-take.html`).
+- The legal pages are attributed to **Flovo Digital** (the company behind Pharma), with its real contact details (`info@flovodigital.com`, `+254 705 041 512`). As instructed: no business registration number and no physical/office address anywhere.
+- Terms of Service is written at the same depth as Shule Web's (27 numbered clauses plus a data-processing Schedule with three annexes), but every fact in it is real to Pharma: the SMS Wallet (top up by M-Pesa, refill/credit/custom/evening-summary SMS, auto-refund on a failed send), that Pharma records sales but is not a bank, that insurance-claim tracking is not insurance, that controlled-drug records do not replace Pharmacy and Poisons Board duties, and the real roles. Liability cap, indemnity, disclaimers and suspension rights protect Flovo Digital. Governing law is Kenya, with Nairobi mediation before court.
+- Pricing says what is real (free for 3 months) and invents no figures afterwards: it asks people to WhatsApp or email for a quotation.
+- Cookie Policy lists exactly what the app stores (sign-in session, profile/dashboard caches, install-prompt timing, offline app files), checked against the code. There is no advertising or tracking.
+- `robots.txt` explicitly allows the nine pages; `sitemap.xml` lists them.
+- Deliberately did not touch the sign-in screen (`js/auth.js`, `index.html` markup): the phone design is not to be changed. The new pages link back to `index.html` for sign-in.
+- No `sw.js` cache bump: none of the new pages are in the offline-shell precache list.
+- Test: `tests/marketing-pages.test.js`; `tests/banned-colours.test.js` now also scans the new pages.
+
+## 2026-11-10 (night): Search result info for Google
+
+- Added a `SoftwareApplication` block (JSON-LD) to `index.html` so Google can show Pharma's category and free-trial price in search results, not just the title and description. Nothing visible on the page changed. Cache bumped to `hodhi-shell-v4k`.
+- Test: `tests/seo-schema.test.js`.
+- `robots.txt`, `sitemap.xml`, title, meta description, canonical link and Open Graph tags were already in place and correct; this was the one gap. Submitted to Google Search Console (domain verified by DNS TXT record).
+
 ## 2026-11-09 (night): The platform admin is hidden from a pharmacy's Staff list
 
 - Settings > Staff in Goodlife listed "Pharma Admin, Co-owner (you)": the platform admin's own account. The admin lives in Demo Pharmacy and had Goodlife open for support; the database lets anyone read their own profile row, so it came up in the other pharmacy's list. Support and admin accounts must not show in any pharmacy. A new read-only database function `hidden_staff_ids()` names the platform admins among the people the caller can see (their pharmacy plus their own row) and the Staff list drops them. If the database cannot answer, the list shows as before and Settings still opens. Nothing about how the admin signs in or works changed.

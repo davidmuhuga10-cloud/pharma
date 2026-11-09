@@ -45,6 +45,15 @@ function authLinks(list) {
   }).join('<span class="auth-sep"> &middot; </span>') + '</div>';
 }
 
+// The "I agree to the Terms" box on Create account and Staff join. Starts unticked;
+// doSignup / doJoin refuse to send the phone code until it is ticked. The links open in
+// a new tab so nothing already typed is lost.
+function termsAgreeHtml(id) {
+  return '<label class="agree"><input type="checkbox" id="' + id + '"><span>I agree to the ' +
+    '<a href="terms.html" target="_blank" rel="noopener">Terms of Service</a> and ' +
+    '<a href="privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</span></label>';
+}
+
 // One sign-in design for every screen size: cross mark, tagline, four feature
 // chips and the form as a card with two links under it. Phones stack them
 // (green header, card below). At 860px+ it is a split screen with the same
@@ -80,6 +89,7 @@ function renderLogin() {
     '<div class="field"><label>Password</label>' + pwField('loPw', '••••••••') + '</div>' +
     '<div id="loErr" class="error-text"></div>' +
     '<button class="btn primary" id="loBtn" onclick="doLogin()">Log in</button>' +
+    '<p class="agree-note">By signing in you accept our <a href="terms.html" target="_blank" rel="noopener">Terms</a> and <a href="privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</p>' +
     '<div class="tiny auth-forgot"><a href="#" onclick="renderForgotPassword();return false;">Forgot password?</a></div>' +
     AUTH_FOOT + '</div>' +
     authLinks([['New pharmacy?', 'Create an account', 'renderSignup()'], ['Have a code?', 'Staff login', 'renderJoin()']]);
@@ -95,6 +105,7 @@ function renderSignup() {
     '<div class="field"><label>Your name</label><input id="suName" placeholder="e.g. Daud Kinyua"></div>' +
     '<div class="field"><label>Phone number</label><input id="suPhone" type="tel" placeholder="07XXXXXXXX"></div>' +
     '<div class="field"><label>Password</label>' + pwField('suPw', 'At least 8 characters') + '</div>' +
+    termsAgreeHtml('suAgree') +
     '<div id="suErr" class="error-text"></div>' +
     '<button class="btn primary" id="suBtn" onclick="doSignup()">Create pharmacy account</button>' +
     AUTH_FOOT + '</div>' +
@@ -113,6 +124,7 @@ function renderJoin() {
     '<div class="field"><label>Your name</label><input id="jnName" placeholder="e.g. Daud Kinyua"></div>' +
     '<div class="field"><label>Phone number</label><input id="jnPhone" type="tel" placeholder="07XXXXXXXX"></div>' +
     '<div class="field"><label>Password</label>' + pwField('jnPw', 'At least 8 characters') + '</div>' +
+    termsAgreeHtml('jnAgree') +
     '<div id="jnErr" class="error-text"></div>' +
     '<button class="btn primary" id="jnBtn" onclick="doJoin()">Join pharmacy</button>' +
     AUTH_FOOT + '</div>' + authLinks([['', 'Back to log in', 'renderLogin()']]);
@@ -260,6 +272,7 @@ async function doJoin() {
     var phone = $('#jnPhone').value.trim();
     var pw = $('#jnPw').value;
     if (!code || !phone || pw.length < 8) { err.textContent = 'Fill in the staff code, phone number, and an 8+ character password.'; return; }
+    if (!$('#jnAgree').checked) { err.textContent = 'Please tick the box to accept the Terms of Service and Privacy Policy.'; return; }
     await startSignupVerify({ kind: 'staff', code: code, fullName: fullName, phone: phone, pw: pw }, err);
   });
 }
@@ -302,6 +315,7 @@ async function doSignup() {
     var phone = $('#suPhone').value.trim();
     var pw = $('#suPw').value;
     if (!pharmacyName || !phone || pw.length < 8) { err.textContent = 'Fill in the pharmacy name, phone number, and an 8+ character password.'; return; }
+    if (!$('#suAgree').checked) { err.textContent = 'Please tick the box to accept the Terms of Service and Privacy Policy.'; return; }
     await startSignupVerify({ kind: 'owner', pharmacyName: pharmacyName, fullName: fullName, phone: phone, pw: pw }, err);
   });
 }
