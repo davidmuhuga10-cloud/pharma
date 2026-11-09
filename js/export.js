@@ -149,10 +149,13 @@ function rangeBarRead() {
 
 // The title / Excel / Print row every report screen starts with.
 function reportHeadHtml(title, excelFn, printFn) {
+  // The owner can switch Excel and Print off for one person (permission "export").
+  var okExcel = typeof can !== 'function' || can('export');
+  var okPrint = typeof can !== 'function' || can('print');
   return '<div class="report-head"><div class="section-title" style="margin:0">' + esc(title) + '</div>' +
     '<div class="toolbar-segment">' +
-    (excelFn ? '<button class="btn" onclick="' + excelFn + '()">' + icon('download', 15) + ' Excel</button>' : '') +
-    (printFn ? '<button class="btn" onclick="' + printFn + '()">' + icon('printer', 15) + ' Print</button>' : '') +
+    (excelFn && okExcel ? '<button class="btn" onclick="' + excelFn + '()">' + icon('download', 15) + ' Excel</button>' : '') +
+    (printFn && okPrint ? '<button class="btn" onclick="' + printFn + '()">' + icon('printer', 15) + ' Print</button>' : '') +
     '</div></div>';
 }
 

@@ -45,10 +45,46 @@ var STOCK_TAKER_ACTIONS = ['view_dashboard', 'view_inventory', 'view_reports', '
 // can also write. An accountant sees the figures but none of the write buttons.
 var ACCOUNTANT_ACTIONS = ['view_dashboard', 'view_reports', 'print', 'export', 'claims', 'view_suppliers', 'view_expenses', 'view_customers', 'view_controlled', 'cash_review'];
 
+// ---- Per-staff permissions ------------------------------------------------
+// profiles.access holds what the owner switched off for one person (null =
+// everything, as before). Owner and co-owner are never limited. This hides
+// screens and figures; the dashboard functions and v_drug_stock also blank the
+// same figures in the database (migrations/2026-11-09_staff_access.sql).
+// The switch list, the presets and the editor are in js/staff-access.js.
+function staffAccessOf(profile) {
+  return profile && profile.access && typeof profile.access === 'object' ? profile.access : null;
+}
+function isOwnerRole(role) { return role === 'owner' || role === 'co_owner'; }
+// Does this person hold the permission? (keys: ACCESS_KEYS in js/staff-access.js)
+function canSee(key) {
+  var p = STATE.profile;
+  if (!p) return false;
+  if (isOwnerRole(p.role)) return true;
+  var a = staffAccessOf(p);
+  if (!a || !(key in a)) return true;
+  return a[key] !== false;
+}
+// Controlled drugs register: 'off' | 'view' | 'record'.
+function controlledLevelOf(profile) {
+  if (!profile) return 'off';
+  if (isOwnerRole(profile.role)) return 'record';
+  var a = staffAccessOf(profile);
+  if (a && (a.controlled === 'off' || a.controlled === 'view' || a.controlled === 'record')) return a.controlled;
+  if (profile.role === 'pharmacist') return 'record';
+  if (profile.role === 'stock_taker' || profile.role === 'accountant') return 'view';
+  return 'off';
+}
+function controlledLevel() { return controlledLevelOf(STATE.profile); }
 function can(action) {
   if (!STATE.profile) return false;
   var role = STATE.profile.role;
   if (role === 'owner' || role === 'co_owner') return true;
+  var acc = staffAccessOf(STATE.profile);
+  if (acc) {
+    if ((action === 'export' || action === 'print') && acc.export === false) return false;
+    if (action === 'controlled' && acc.controlled) return acc.controlled === 'record';
+    if (action === 'view_controlled' && acc.controlled) return acc.controlled !== 'off';
+  }
   if (role === 'pharmacist') return PHARMACIST_ACTIONS.indexOf(action) !== -1;
   if (role === 'stock_taker') return STOCK_TAKER_ACTIONS.indexOf(action) !== -1;
   if (role === 'accountant') return ACCOUNTANT_ACTIONS.indexOf(action) !== -1;

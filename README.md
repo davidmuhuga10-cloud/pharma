@@ -9,7 +9,7 @@ Live site: https://pharmamanagement.site
 | File | What it is |
 |---|---|
 | `index.html`, `style.css` | The app's one HTML page and one stylesheet |
-| `js/` | The app's code, split by area (`core`, `shell`, `auth`, `dashboard`, `inventory`, `import`, `stock-actions`, `sell`, `reports`, `reports-stock`, `claims-settings`, `suppliers`, `expenses`, `customers`, `controlled-stocktake`, `main`). Plain scripts that share one global scope, loaded in the order listed in `index.html`; `main.js` (starts the app) must stay last |
+| `js/` | The app's code, split by area (`core`, `staff-access`, `shell`, `auth`, `dashboard`, `inventory`, `import`, `stock-actions`, `sell`, `reports`, `reports-stock`, `claims-settings`, `suppliers`, `expenses`, `customers`, `controlled-stocktake`, `main`). Plain scripts that share one global scope, loaded in the order listed in `index.html`; `main.js` (starts the app) must stay last |
 | `config.js` | Supabase URL and public (anon) key |
 | `sw.js`, `manifest.json` | Offline app shell and install settings |
 | `nativeShell.js`, `capacitor.config.json`, `www/`, `android/` | The Android app: a Capacitor shell around the live site (see `android/ANDROID_APP.md`) |
@@ -26,6 +26,7 @@ Live site: https://pharmamanagement.site
 - **Phone (under 860px):** top bar with a hamburger that opens the left drawer; bottom bar with Home, Inventory, Sell, Expenses, Reports.
 - **Desktop (860px and up):** the phone menu docked open down the left (logo, pharmacy name, grouped rows, like Kodi); split sign-in screen.
 - **Inventory:** five filter boxes (All, Low stock, Out of stock, Expiring, Unknown expiry), search or scan, a table 10 drugs a page on desktop (the phone keeps its old list); Excel and Print carry the whole picked list.
+- **Staff permissions:** Settings -> Staff -> Permissions (or the admin portal) sets, person by person, what each can see: profit, stock value, debt, whole-shop sales, reports, cost prices, Excel/Print, controlled drugs. A Seller with limits gets the Seller dashboard. Switches and presets live in `js/staff-access.js`.
 - **Customers:** credit (kopa) balances and statements, refills, SMS reminders. **Stock take** and **Controlled drugs** are reached from Inventory (and the phone menu).
 - **Plans:** every pharmacy starts a 90-day free trial; the admin marks the first payment and can add or take away days. When the plan ends the pharmacy is locked out until the admin extends or activates it.
 - **Sign-in:** phone + password log-in (every password box has a show/hide eye); new pharmacies create an account; staff with an invite code use "Have a code? Staff login". The app shows the view for the person's role.

@@ -883,7 +883,7 @@ function drawDetail(d) {
   var staff = d.staff || [];
   var staffHtml =
     '<div class="card adm-section"><div class="card-head"><div><h2>Staff<span class="count-pill">' + staff.length + '</span></h2><div class="sub">Everyone with an account at this pharmacy</div></div></div>' +
-    (staff.length ? '<div class="table-scroll"><table class="adm-table"><thead><tr><th>Name</th><th>Role</th><th>Phone</th><th>Account created</th><th>Last sign-in</th><th class="num">Sign-ins · 30d</th><th>Access</th></tr></thead><tbody>' +
+    (staff.length ? '<div class="table-scroll"><table class="adm-table"><thead><tr><th>Name</th><th>Role</th><th>Phone</th><th>Account created</th><th>Last sign-in</th><th class="num">Sign-ins · 30d</th><th>Access</th><th>Permissions</th></tr></thead><tbody>' +
       staff.map(function (s) {
         var expired = s.account_expires_at && toDate(s.account_expires_at) <= new Date();
         var access = !s.active ? '<span class="badge bad"><span class="dot"></span>Disabled</span>'
@@ -895,7 +895,8 @@ function drawDetail(d) {
           '<td>' + esc(roleLabel(s.role)) + '</td><td>' + esc(s.phone || '—') + '</td>' +
           '<td title="' + esc(exactTime(s.created_at)) + '">' + esc(fmtDate(s.created_at)) + '</td>' +
           '<td title="' + esc(exactTime(s.last_sign_in_at)) + '">' + esc(fmtWhen(s.last_sign_in_at)) + '</td>' +
-          '<td class="num">' + num(s.sign_ins_30d) + '</td><td>' + access + '</td></tr>';
+          '<td class="num">' + num(s.sign_ins_30d) + '</td><td>' + access + '</td>' +
+          '<td>' + (s.role === 'owner' || s.role === 'co_owner' ? '<span class="sub">Always everything</span>' : '<button class="btn small" onclick="admOpenAccess(\'' + p.id + '\',\'' + s.id + '\')">Permissions</button>') + '</td></tr>';
       }).join('') + '</tbody></table></div>' : '<div class="empty-note">No staff accounts.</div>') +
     '</div>';
 
@@ -909,6 +910,34 @@ function drawDetail(d) {
   barChart($('#chartDetail'), d.daily, 'sales', function (x) {
     return '<b>' + esc(fmtDate(x.day)) + '</b><br><span class="sw"></span>' + num(x.sales) + (x.sales === 1 ? ' sale' : ' sales') + ' · ' + kes(x.sales_value) +
       '<br>' + num(x.sign_ins) + (x.sign_ins === 1 ? ' sign-in' : ' sign-ins');
+  });
+}
+
+// --- Staff permissions: what one member of staff may see, any pharmacy ---
+// Same switches and presets as Settings (js/staff-access.js). Saves through
+// admin_set_staff_access(), which writes the change log ("Platform admin").
+async function admOpenAccess(pharmacyId, userId) {
+  var r;
+  try { r = await sb.rpc('admin_staff_access', { p_pharmacy_id: pharmacyId }); } catch (e) { r = { error: e }; }
+  if (r.error) { toast(friendlyError(r.error), 'bad'); return; }
+  var s = (r.data.staff || []).filter(function (x) { return x.id === userId; })[0];
+  if (!s) { toast('That staff member was not found.', 'bad'); return; }
+  var log = (r.data.log || []).slice(0, 5).map(function (l) {
+    return '<div class="acc-log-row"><span>' + esc(l.staff_name || 'Staff') + ': ' + esc(accessLogLine(l)) + '</span><span>' +
+      esc(l.changed_by_name || 'Unknown') + ' · ' + esc(fmtWhen(l.changed_at)) + '</span></div>';
+  }).join('');
+  modal('Permissions · ' + (s.full_name || 'Staff member'),
+    '<div class="sub acc-intro">' + esc(roleLabel(s.role)) + '. Switch off what this person should not see.</div>' +
+    accessEditorHtml(s.access, 'ap') +
+    '<button class="btn primary" id="apSaveBtn" onclick="admSaveAccess(\'' + userId + '\')">Save permissions</button>' +
+    (log ? '<div class="acc-log"><div class="acc-title">Recent changes</div>' + log + '</div>' : ''));
+}
+function admSaveAccess(userId) {
+  act($('#apSaveBtn'), async function () {
+    var r = await sb.rpc('admin_set_staff_access', { p_profile_id: userId, p_access: accessFromEditor('ap') });
+    if (r.error) { toast(friendlyError(r.error), 'bad'); return; }
+    toast('Permissions saved.', 'good');
+    closeModal();
   });
 }
 

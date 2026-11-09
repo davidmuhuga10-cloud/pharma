@@ -130,6 +130,46 @@ function printClaimsReport() {
 // Business profile (name, address, phone...) printed on every report and
 // receipt, plus the low-stock and expiry-warning thresholds.
 
+// ---- Staff permissions (Settings -> Staff -> Permissions) ----
+// Every staff member has their own. The owner (or co-owner) sets what that
+// person sees; the switches and presets are in js/staff-access.js. Saving goes
+// through set_staff_access(), which also writes the change log.
+var staffById = {};
+
+function openStaffPermissions(id) {
+  var s = staffById[id];
+  if (!s) return;
+  sheet('Permissions · ' + (s.full_name || 'Staff member'),
+    '<div class="tiny acc-intro">' + esc(roleLabel(s.role)) + '. Switch off what this person should not see. Their menu, dashboard, reports and downloads follow it.</div>' +
+    accessEditorHtml(s.access, 'sp') +
+    '<button class="btn primary" id="spSaveBtn" onclick="saveStaffPermissions(\'' + id + '\')">Save permissions</button>' +
+    '<div id="spLog" class="acc-log"></div>');
+  loadStaffAccessLog(id);
+}
+
+async function loadStaffAccessLog(id) {
+  try {
+    var r = await sb.from('staff_access_log').select('changed_at,changed_by_name,new_access,via').eq('profile_id', id).order('changed_at', { ascending: false }).limit(5);
+    var box = $('#spLog');
+    if (!box || r.error || !r.data || !r.data.length) return;
+    box.innerHTML = '<div class="acc-title">Recent changes</div>' + r.data.map(function (l) {
+      return '<div class="acc-log-row"><span>' + esc(accessLogLine(l)) + '</span><span>' + esc(l.changed_by_name || 'Unknown') + ' · ' + esc(fmtDateTime(l.changed_at)) + '</span></div>';
+    }).join('');
+  } catch (e) { /* the log is a nicety; the permissions still save */ }
+}
+
+async function saveStaffPermissions(id) {
+  var btn = $('#spSaveBtn');
+  act(btn, async function () {
+    var access = accessFromEditor('sp');
+    var r = await sb.rpc('set_staff_access', { p_profile_id: id, p_access: access });
+    if (r.error) { toast(friendlyError(r.error), 'bad'); return; }
+    toast('Permissions saved.', 'good');
+    closeSheet();
+    renderSettings();
+  });
+}
+
 async function renderSettings() {
   var c = $('#content');
   var p = STATE.pharmacy || {};
@@ -184,9 +224,13 @@ async function renderSettings() {
         var badge = s.active === false ? '<span class="badge bad">Disabled</span>' :
           expired ? '<span class="badge bad">Expired</span>' : '<span class="badge good">Active</span>';
         var expiryNote = (s.account_expires_at && !expired) ? ' · expires ' + fmtDate(s.account_expires_at) : '';
+        staffById[s.id] = s;
+        var limitable = !isOwnerRole(s.role);
         return '<div class="list-row"><div><div class="name">' + esc(s.full_name || '(no name)') + (isMe ? ' (you)' : '') + '</div>' +
-          '<div class="meta">' + esc(roleLabel(s.role)) + (s.phone ? ' · ' + esc(s.phone) : '') + esc(expiryNote) + '</div></div>' +
+          '<div class="meta">' + esc(roleLabel(s.role)) + (s.phone ? ' · ' + esc(s.phone) : '') + esc(expiryNote) + '</div>' +
+          (limitable ? '<div class="meta"><b>Sees: ' + esc(accessSummary(s.access)) + '</b></div>' : '') + '</div>' +
           '<div class="right">' + badge +
+          (limitable ? '<div style="margin-top:6px"><button class="btn secondary small" onclick="openStaffPermissions(\'' + s.id + '\')">Permissions</button></div>' : '') +
           (isMe ? '' : '<div style="margin-top:6px"><button class="btn ghost small" onclick="toggleStaffActive(this,\'' + s.id + '\',' + (s.active === false) + ')">' +
             (s.active === false ? 'Reactivate' : 'Disable') + '</button></div>') +
           '</div></div>';

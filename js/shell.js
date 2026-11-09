@@ -267,7 +267,7 @@ function navMenuItems() {
     out.push({ grp: 'Money' });
     if (seeSuppliers) out.push({ tab: 'suppliers', label: 'Suppliers', ic: '&#128666;' });
     if (seeExpenses) out.push({ tab: 'expenses', label: 'Expenses', ic: '&#128181;' });
-    if (seeReports) out.push({ report: 'valuation', label: 'Stock <br>Valuation', ic: '&#128176;' });
+    if (seeReports && canSee('rpt_valuation')) out.push({ report: 'valuation', label: 'Stock <br>Valuation', ic: '&#128176;' });
     if (can('claims')) out.push({ report: 'claims', label: 'Insurance <br>Claims', ic: '&#127973;' });
     if (can('cash_close') || can('cash_review')) out.push({ report: 'cash', label: 'Close the <br>Cash Drawer', ic: '&#128178;' });
   }

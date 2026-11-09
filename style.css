@@ -432,6 +432,34 @@ h2 { font-size: 16px; }
 /* Stat tiles: a 2-up grid on phone (Sales + Profit, then Stock value + Debt owed), 4-up on desktop. A grid keeps the pairing exact whatever the content width. */
 .dash-stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
 @media (min-width: 860px) { .dash-stat-grid { grid-template-columns: repeat(4, 1fr); } }
+/* Fewer tiles when the owner switched some off: spread them, never leave a gap. A lone last tile on a phone spans the row. */
+@media (min-width: 860px) {
+  .dash-stat-grid.c1 { grid-template-columns: 1fr; }
+  .dash-stat-grid.c2 { grid-template-columns: repeat(2, 1fr); }
+  .dash-stat-grid.c3 { grid-template-columns: repeat(3, 1fr); }
+}
+.dash-stat-grid.c1 { grid-template-columns: 1fr; }
+@media (max-width: 859px) { .dash-stat-grid.c3 > .dash-stat:last-child { grid-column: 1 / -1; } }
+/* Seller dashboard: names only for out of stock and low stock (plain coloured text, no badges) */
+.dash-name-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 13px; font-weight: 600; color: var(--ink); }
+.dash-name-row:last-of-type { border-bottom: 0; }
+.dash-name-row .nm { min-width: 0; overflow-wrap: anywhere; }
+.dash-name-row .qty { flex: 0 0 auto; font-weight: 800; white-space: nowrap; }
+.dash-name-row .qty.warning, .dash-card-head .v.warning { color: var(--amber-ink); }
+.dash-name-row .qty.critical, .dash-card-head .v.critical { color: var(--red); }
+.dash-name-empty { text-align: center; margin-top: 14px; }
+/* Staff permissions editor (Settings sheet and the admin dialog) */
+.acc-intro { margin-bottom: 12px; color: var(--ink); }
+.acc-group { margin-bottom: 14px; }
+.acc-title { font-size: 11.5px; font-weight: 800; color: var(--ink); text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 4px; }
+.acc-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 14px; font-weight: 600; color: var(--ink); cursor: pointer; }
+.acc-row input[type="checkbox"] { flex: 0 0 auto; width: 20px; height: 20px; accent-color: var(--green); }
+.acc-ed select { width: 100%; }
+.acc-log { margin-top: 16px; }
+.acc-log-row { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 12.5px; font-weight: 600; color: var(--ink); }
+.acc-log-row span:last-child { flex: 0 0 auto; text-align: right; }
+.dash-top-wrap { margin-bottom: 16px; }
+.dash-top-wrap > .card { margin-bottom: 0; }
 .dash-stat { border: 1px solid transparent; border-left: 4px solid transparent; border-right: 4px solid transparent; border-radius: var(--radius); padding: 12px 14px; }
 .dash-stat.clickable { cursor: pointer; transition: box-shadow 0.15s, transform 0.15s; }
 .dash-stat.clickable:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }

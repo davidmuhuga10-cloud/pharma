@@ -16,14 +16,15 @@ var DASH_CACHE_KEY = 'hodhi_dash_cache_v2';  // v2: the week view became a rolli
 function saveDashCache() {
   try {
     if (dashRange === 'custom') return;
-    var s = JSON.stringify({ pid: STATE.profile.pharmacy_id, range: dashRange, snap: dashSnap, data: dashData, at: Date.now() });
+    var s = JSON.stringify({ pid: STATE.profile.pharmacy_id, uid: STATE.profile.id, range: dashRange, snap: dashSnap, data: dashData, at: Date.now() });
     if (s.length < 800000) localStorage.setItem(DASH_CACHE_KEY, s);
   } catch (e) {}
 }
 function readDashCache() {
   try {
     var c = JSON.parse(localStorage.getItem(DASH_CACHE_KEY) || 'null');
-    if (!c || c.pid !== STATE.profile.pharmacy_id || c.range !== dashRange || dashRange === 'custom') return null;
+    // Saved per person: a Seller must never open the owner's saved figures.
+    if (!c || c.pid !== STATE.profile.pharmacy_id || c.uid !== STATE.profile.id || c.range !== dashRange || dashRange === 'custom') return null;
     if (Date.now() - c.at > 36 * 3600 * 1000) return null;
     return (c.snap && c.data) ? c : null;
   } catch (e) { return null; }
@@ -83,8 +84,15 @@ function fetchDashboardData() {
   return sb.rpc('dashboard_data', { p_pharmacy_id: STATE.profile.pharmacy_id, p_range: dashRange === 'custom' ? 'today' : dashRange });
 }
 
+// A person who may not see whole-shop sales gets the Seller dashboard: their own
+// sales today, stock to watch, top sellers by units and expiring batches.
+function dashSellerView() { return !canSee('see_shop_sales'); }
+var dashSellerRangeSet = false;
+
 async function renderDashboard() {
   var c = $('#content');
+  // The Seller dashboard opens on Today (its top sellers tabs are Today / 7 Days / Month).
+  if (dashSellerView() && !dashSellerRangeSet) { dashSellerRangeSet = true; dashRange = 'today'; dashData = null; }
   // Show the last dashboard we have the moment the tab opens, with a thin
   // "updating" bar, then swap in fresh numbers. Placeholders only when there is
   // nothing to show yet.
@@ -106,9 +114,13 @@ async function renderDashboard() {
       fetchDashboardData(),
       // Alerts (customer debts, refills due, controlled-drug mismatch, open stock
       // take). Optional: the dashboard still draws if this fails.
-      sb.rpc('dashboard_extras', { p_pharmacy_id: STATE.profile.pharmacy_id }).then(function (r) { return r; }, function () { return { data: null }; })
+      sb.rpc('dashboard_extras', { p_pharmacy_id: STATE.profile.pharmacy_id }).then(function (r) { return r; }, function () { return { data: null }; }),
+      // Seller dashboard only: this person's own sales today (optional, like the alerts).
+      dashSellerView()
+        ? sb.rpc('my_sales_today').then(function (r) { return r; }, function () { return { data: null }; })
+        : Promise.resolve({ data: null })
     ]);
-    var stockRes = results[0], expRes = results[1], oweRes = results[2], dashRes = results[3], extrasRes = results[4];
+    var stockRes = results[0], expRes = results[1], oweRes = results[2], dashRes = results[3], extrasRes = results[4], mineRes = results[5];
     if (dashRes.error) throw dashRes.error;
     if (stockRes.error) throw stockRes.error;
 
@@ -134,7 +146,8 @@ async function renderDashboard() {
       // Name and quantity list for the "is this drug in stock?" box, kept so each
       // keystroke needs no extra request.
       drugList: stockRes.data || [],
-      extras: (extrasRes && !extrasRes.error && extrasRes.data) || null
+      extras: (extrasRes && !extrasRes.error && extrasRes.data) || null,
+      mine: (mineRes && !mineRes.error && mineRes.data) || null
     };
     dashData = dashRes.data;
     saveDashCache();
@@ -220,6 +233,8 @@ function dashQuickRestock() {
 function drawDashboard() {
   var c = $('#content');
   var refetching = dashLoading ? ' dash-refetching' : '';
+  if (dashSellerView()) { drawSellerDashboard(c, refetching); return; }
+  var topCard = canSee('see_top_sellers') ? '<div class="dash-col' + refetching + '">' + dashTopSellersCard(dashData) + '</div>' : '';
   c.innerHTML =
     (dashStale ? '<div class="updating-bar" aria-hidden="true"></div>' : '') +
     dashAlertHtml(dashSnap) +
@@ -227,12 +242,65 @@ function drawDashboard() {
     dashQuickAccessHtml() +
     dashFilterRowHtml() +
     '<div class="card dash-graph-card t-sales' + refetching + '">' + dashSalesGraphHtml(dashData) + '</div>' +
-    '<div class="dash-stat-grid' + refetching + '">' + dashStatGridHtml(dashData, dashSnap) + '</div>' +
+    '<div class="dash-stat-grid c' + dashStatTiles(dashData, dashSnap, false).length + refetching + '">' + dashStatGridHtml(dashData, dashSnap) + '</div>' +
     '<div class="card dash-list-card t-orange">' + dashStockHealthHtml(dashSnap) + '</div>' +
     '<div class="dash-row">' +
-      '<div class="dash-col' + refetching + '">' + dashTopSellersCard(dashData) + '</div>' +
+      topCard +
       '<div class="dash-col">' + dashExpiringCard(dashSnap) + '</div>' +
     '</div>';
+}
+
+// The Seller dashboard (no whole-shop sales): alerts, Sell and Close the cash
+// drawer, the stock check box, My sales today, what is out or low (names only),
+// top sellers by units, and expiring batches.
+function drawSellerDashboard(c, refetching) {
+  var snap = dashSnap || {};
+  var tiles = dashStatTiles(dashData, snap, true);
+  var cols = tiles.length;
+  c.innerHTML =
+    (dashStale ? '<div class="updating-bar" aria-hidden="true"></div>' : '') +
+    dashAlertHtml(snap) +
+    dashExtrasHtml(snap) +
+    dashQuickAccessHtml(true) +
+    '<div class="dash-stat-grid c' + cols + '">' + dashStatTilesHtml(tiles) + '</div>' +
+    '<div class="dash-row">' +
+      '<div class="dash-col">' + dashNameListCard('Out of stock', snap.outOfStock, 'critical', false) + '</div>' +
+      '<div class="dash-col">' + dashNameListCard('Low stock', snap.lowStock, 'warning', true) + '</div>' +
+    '</div>' +
+    (canSee('see_top_sellers') ? '<div class="dash-top-wrap' + refetching + '">' + dashTopTabsHtml() + dashTopSellersCard(dashData) + '</div>' : '') +
+    dashExpiringCard(snap);
+}
+
+// Today / 7 Days / Month tabs for the Seller's top sellers card.
+function dashTopTabsHtml() {
+  return '<div class="dash-filter-row"><div class="dash-tabs">' +
+    ['today', 'week', 'month'].map(function (r) {
+      return '<button class="dash-tab' + (dashRange === r ? ' active' : '') + '" onclick="setDashRange(\'' + r + '\')">' + DASH_RANGE_LABELS[r] + '</button>';
+    }).join('') + '</div></div>';
+}
+
+// Names only (no money): the drugs that are out or running low, as a short list.
+function dashNameListCard(title, list, kind, showQty) {
+  list = list || [];
+  var top = list.slice(0, 5);
+  var rows = top.map(function (d) {
+    return '<div class="dash-name-row"><span class="nm">' + esc(d.name) + '</span>' +
+      (showQty ? '<span class="qty ' + kind + '">' + esc(qtyUnit(d.qty_in_stock, d.unit)) + ' left</span>' : '') + '</div>';
+  }).join('');
+  var empty = list.length === 0 ? '<div class="tiny dash-name-empty">Nothing here. Good.</div>' : '';
+  var more = list.length > 5 ? '<button class="dash-view-all" onclick="openStockNamesFull(\'' + (kind === 'critical' ? 'out' : 'low') + '\')">View all ' + list.length + ' &rarr;</button>' : '';
+  return '<div class="card dash-list-card t-' + (kind === 'critical' ? 'red' : 'orange') + '"><div class="dash-card-head"><div class="t">' + esc(title) + '</div>' +
+    '<div class="v ' + kind + '">' + list.length + '</div></div>' + rows + empty + more + '</div>';
+}
+
+function openStockNamesFull(which) {
+  var snap = dashSnap || {};
+  var list = which === 'out' ? (snap.outOfStock || []) : (snap.lowStock || []);
+  var body = '<div class="card">' + (list.length ? list.map(function (d) {
+    return '<div class="dash-name-row"><span class="nm">' + esc(d.name) + '</span>' +
+      (which === 'low' ? '<span class="qty warning">' + esc(qtyUnit(d.qty_in_stock, d.unit)) + ' left</span>' : '') + '</div>';
+  }).join('') : '<div class="empty">Nothing here.</div>') + '</div>';
+  sheet(which === 'out' ? 'Out of stock' : 'Low stock', body);
 }
 
 // Urgent strip: out-of-stock count and the soonest-expiring batch (within
@@ -254,10 +322,14 @@ function dashAlertHtml(snap) {
 }
 
 // Sell and Restock shortcuts plus the live "is this drug in stock?" search.
-function dashQuickAccessHtml() {
+function dashQuickAccessHtml(sellerView) {
+  // The Seller dashboard offers Close the cash drawer in place of Restock.
+  var second = sellerView
+    ? ((can('cash_close') || can('cash_review')) ? '<button class="btn secondary" onclick="goReport(\'cash\')">' + icon('wallet', 15) + ' Close cash drawer</button>' : '')
+    : '<button class="btn secondary" onclick="dashQuickRestock()">' + icon('box', 15) + ' Restock</button>';
   return '<div class="dash-actions">' +
     '<button class="btn primary" onclick="setTab(\'sell\')">' + icon('sell', 15) + ' Sell</button>' +
-    '<button class="btn secondary" onclick="dashQuickRestock()">' + icon('box', 15) + ' Restock</button>' +
+    second +
     '</div>' +
     '<div class="dash-quick-search">' +
     '<input id="dashStockCheckInput" placeholder="Check if a drug is in stock…" autocomplete="off" oninput="dashStockCheckSearch(this.value)" onblur="setTimeout(function(){var b=document.getElementById(\'dashStockCheckResults\');if(b)b.classList.remove(\'open\');},150)">' +
@@ -479,30 +551,50 @@ function dashGoSales() { goReport('sales'); }
 function dashGoStockValue() { goReport('valuation'); }
 function dashGoDebtOwed() { if (!veilBusy) setTab('suppliers'); }
 
-function dashStatGridHtml(d, snap) {
+// The tiles this person may see. The Seller dashboard leads with "My sales
+// today" (their own sales only) in place of the whole-shop Sales tile.
+function dashStatTiles(d, snap, sellerView) {
   snap = snap || {};
   var salesTotal = d ? Number(d.sales_total || 0) : 0;
   var profitTotal = d ? Number(d.profit_total || 0) : 0;
   var profitPrev = d ? Number(d.profit_prev_total || 0) : 0;
   var marginPct = salesTotal > 0 ? Math.round((profitTotal / salesTotal) * 100) : null;
-
-  var stats = [
-    { label: 'Sales', value: fmt(salesTotal), color: DCOLOR.sales, bg: DCOLOR.salesLight, click: 'dashGoSales',
-      sub: dashDeltaText(salesTotal, d ? d.sales_prev_total : 0, DASH_VS_LABEL[dashRange]) || DASH_PERIOD_LABEL[dashRange] },
-    { label: 'Profit', value: fmt(profitTotal), color: DCOLOR.sales, bg: DCOLOR.salesLight, click: 'dashGoSales',
-      sub: marginPct === null ? 'No sales yet' : (dashDeltaText(profitTotal, profitPrev, DASH_VS_LABEL[dashRange]) || (marginPct + '% margin')) },
-    { label: 'Stock value', value: fmt(snap.stockValue || 0), color: DCOLOR.orange, bg: DCOLOR.orangeLight, click: 'dashGoStockValue',
-      sub: (snap.drugCount || 0) + ' drugs tracked' },
-    { label: 'Debt owed', value: fmt(snap.supplierOwed || 0), color: DCOLOR.magenta, bg: DCOLOR.magentaLight, click: 'dashGoDebtOwed',
-      sub: (snap.suppliersOwedCount || 0) + ((snap.suppliersOwedCount || 0) === 1 ? ' supplier' : ' suppliers') }
-  ];
-  return stats.map(function (p) {
-    return '<div class="dash-stat clickable" style="background:' + p.bg + ';border-color:' + p.color + '" onclick="' + p.click + '()" role="button" tabindex="0">' +
+  var tiles = [];
+  if (sellerView) {
+    var m = snap.mine || {};
+    var n = Number(m.count || 0);
+    tiles.push({ label: 'My sales today', value: fmt(Number(m.total || 0)), color: DCOLOR.sales, bg: DCOLOR.salesLight, click: null,
+      sub: n === 0 ? 'No sales yet today' : n + (n === 1 ? ' sale' : ' sales') + (m.last_sold_at ? ' · last at ' + new Date(m.last_sold_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '') });
+  } else {
+    tiles.push({ label: 'Sales', value: fmt(salesTotal), color: DCOLOR.sales, bg: DCOLOR.salesLight, click: canSee('rpt_sales') ? 'dashGoSales' : null,
+      sub: dashDeltaText(salesTotal, d ? d.sales_prev_total : 0, DASH_VS_LABEL[dashRange]) || DASH_PERIOD_LABEL[dashRange] });
+  }
+  if (canSee('see_profit') && !sellerView) {
+    tiles.push({ label: 'Profit', value: fmt(profitTotal), color: DCOLOR.sales, bg: DCOLOR.salesLight, click: canSee('rpt_sales') ? 'dashGoSales' : null,
+      sub: marginPct === null ? 'No sales yet' : (dashDeltaText(profitTotal, profitPrev, DASH_VS_LABEL[dashRange]) || (marginPct + '% margin')) });
+  }
+  if (canSee('see_stock_value')) {
+    tiles.push({ label: 'Stock value', value: fmt(snap.stockValue || 0), color: DCOLOR.orange, bg: DCOLOR.orangeLight, click: canSee('rpt_valuation') ? 'dashGoStockValue' : null,
+      sub: (snap.drugCount || 0) + ' drugs tracked' });
+  }
+  if (canSee('see_debt')) {
+    tiles.push({ label: 'Debt owed', value: fmt(snap.supplierOwed || 0), color: DCOLOR.magenta, bg: DCOLOR.magentaLight, click: (can('suppliers') || can('view_suppliers')) ? 'dashGoDebtOwed' : null,
+      sub: (snap.suppliersOwedCount || 0) + ((snap.suppliersOwedCount || 0) === 1 ? ' supplier' : ' suppliers') });
+  }
+  return tiles;
+}
+function dashStatTilesHtml(tiles) {
+  return tiles.map(function (p) {
+    var tap = p.click ? ' clickable" onclick="' + p.click + '()" role="button" tabindex="0' : '';
+    return '<div class="dash-stat' + tap + '" style="background:' + p.bg + ';border-color:' + p.color + '">' +
       '<div class="lab" style="color:' + p.color + '">' + esc(p.label) + '</div>' +
       '<div class="val">' + p.value + '</div>' +
       '<div class="sub">' + esc(p.sub) + '</div>' +
     '</div>';
   }).join('');
+}
+function dashStatGridHtml(d, snap) {
+  return dashStatTilesHtml(dashStatTiles(d, snap, false));
 }
 
 function segmentedBarHtml(segments, h) {
@@ -622,7 +714,8 @@ function openTopSellersFull() {
   var maxUnits = all.length ? Math.max.apply(null, all.map(function (s) { return Number(s.units || 0); })) : 1;
   var body = '<div class="card">' + (all.length ? all.map(function (s) {
     var pct = maxUnits ? Number(s.units || 0) / maxUnits * 100 : 0;
-    return dashBarRowHtml(s.name, Number(s.units || 0) + ' units · ' + fmt(s.revenue), pct, DCOLOR.blue);
+    // Money beside each drug only for people who may see the shop's sales.
+    return dashBarRowHtml(s.name, Number(s.units || 0) + ' units' + (s.revenue !== undefined ? ' · ' + fmt(s.revenue) : ''), pct, DCOLOR.blue);
   }).join('') : '<div class="empty">No sales recorded yet this period.</div>') + '</div>';
   sheet((DASH_TOPSELLERS_TITLE[dashRange] || 'Top sellers') + ' — full list', body);
 }

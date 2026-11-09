@@ -10,7 +10,8 @@ let failed = 0;
 const check = (ok, msg) => { if (!ok) { failed++; console.error('FAIL ' + msg); } };
 
 // --- each tile names a click handler, and every handler it names is actually defined ---
-const clicks = [...dash.matchAll(/click:\s*'(\w+)'/g)].map((m) => m[1]);
+// A tile only taps through when the person may open that screen: click: canSee(...) ? 'handler' : null.
+const clicks = [...dash.matchAll(/\?\s*'(dashGo\w+)'\s*:\s*null/g)].map((m) => m[1]);
 check(clicks.length === 4, 'all 4 stat tiles (Sales, Profit, Stock value, Debt owed) name a click handler');
 check(clicks[0] === 'dashGoSales' && clicks[1] === 'dashGoSales', 'Sales and Profit both go to the Sales Report (the only sales detail there is - profit is not broken out sale by sale)');
 check(clicks[2] === 'dashGoStockValue', 'Stock value goes to its own Stock Valuation Report');
@@ -26,10 +27,10 @@ check(/function dashGoDebtOwed\(\).*setTab\('suppliers'\)/.test(dash), "dashGoDe
 check(/function dashGoDebtOwed\(\)\s*\{\s*if\s*\(!veilBusy\)/.test(dash), 'Debt owed guards against double-navigating while something else is loading, same as every other nav click in the app');
 
 // --- the markup: every tile is marked clickable and wired to its handler, with keyboard/role hints ---
-const tileHtml = (dash.match(/return stats\.map\(function \(p\) \{[\s\S]*?\}\)\.join\(''\);/) || [''])[0];
-check(/class="dash-stat clickable"/.test(tileHtml), 'each tile carries the clickable class (for the hover/press styling)');
-check(/onclick="\s*'\s*\+\s*p\.click\s*\+\s*'\(\)"/.test(tileHtml), "each tile's onclick calls its own handler (p.click)");
-check(/role="button"/.test(tileHtml) && /tabindex="0"/.test(tileHtml), 'each tile is reachable and announced as a button, not just a styled div (role/tabindex)');
+const tileHtml = (dash.match(/return tiles\.map\(function \(p\) \{[\s\S]*?\}\)\.join\(''\);/) || [''])[0];
+check(/class="dash-stat'/.test(tileHtml) && /clickable"/.test(tileHtml), 'each tile carries the clickable class (for the hover/press styling)');
+check(/onclick="'\s*\+\s*p\.click\s*\+\s*'\(\)"/.test(tileHtml), "each tile's onclick calls its own handler (p.click)");
+check(/role="button"/.test(tileHtml) && /tabindex="0/.test(tileHtml), 'each tile is reachable and announced as a button, not just a styled div (role/tabindex)');
 
 // --- styling: a clickable tile looks pressable, same recipe as the Reports hub tiles ---
 check(/\.dash-stat\.clickable\s*\{[^}]*cursor:\s*pointer/.test(css), 'a clickable tile shows a pointer cursor');

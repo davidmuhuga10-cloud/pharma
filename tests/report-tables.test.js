@@ -139,10 +139,10 @@ check(/\.pg-nums\s*\{\s*display:\s*none/.test(cssAll), 'the page numbers are hid
 // ---- Inventory: boxes, search, table, print ----
 const inv = read('js/inventory.js');
 const ictx = { console, esc: ctx.esc, fmt: ctx.fmt, fmtDate: ctx.fmtDate, daysUntil: ctx.daysUntil, stCell: ctx.stCell,
-  qtyUnit: (n, u) => n + ' ' + u, STATE: { pharmacy: { expiry_warn_days: 90 }, drugsCache: [] }, invFilter: '' };
+  qtyUnit: (n, u) => n + ' ' + u, canSee: () => true, STATE: { pharmacy: { expiry_warn_days: 90 }, drugsCache: [] }, invFilter: '' };
 vm.createContext(ictx);
-vm.runInContext(['invWarnDays', 'invBoxes', 'invInBox', 'invRows', 'invTitle', 'invStatusCell', 'invExpiryCell', 'invCells', 'daysLeftNote', 'daysLeftLabel']
-  .map(f => grab('js/inventory.js', f)).join('\n') + "\nvar invBox = 'all'; var INV_COLS = ['Drug','In stock','Reorder at','Stock value','Soonest expiry','Status'];", ictx);
+vm.runInContext(['invShowValue', 'invCols', 'invNumCols', 'invWarnDays', 'invBoxes', 'invInBox', 'invRows', 'invTitle', 'invStatusCell', 'invExpiryCell', 'invCells', 'daysLeftNote', 'daysLeftLabel']
+  .map(f => grab('js/inventory.js', f)).join('\n') + "\nvar invBox = 'all'; var INV_COLS_ALL = ['Drug','In stock','Reorder at','Stock value','Soonest expiry','Status'];", ictx);
 const drug = (name, qty, reorder, days, unknown, barcode) => ({ drug_id: name, name, unit: 'tablet', qty_in_stock: qty, reorder_level: reorder,
   soonest_expiry: days == null ? null : iso(days), has_unknown_expiry: !!unknown, stock_value_retail: qty * 10, barcode: barcode || null });
 ictx.STATE.drugsCache = [drug('Amoxil', 50, 20, 400), drug('Brufen', 5, 20, 400), drug('Cetrizine', 0, 20, null), drug('Dettol', 30, 10, 20), drug('Epanutin', 30, 10, null, true, '999')];
@@ -161,7 +161,7 @@ const cells = vm.runInContext("STATE.drugsCache.map(invCells)", ictx);
 check(cells[0].length === 6, 'a row has the six columns of the approved table');
 check(cells[2][5].c === 'st-bad' && cells[1][5].c === 'st-warn' && cells[0][5].c === 'st-ok', 'status is plain coloured text: red out, amber low, green in stock');
 check(!/badge/.test(inv.slice(inv.indexOf('function invCells'), inv.indexOf('function drawInventory'))), 'no badge background in the Inventory table');
-check(/invRows\(\)\.map\(function \(d\) \{\s*return \{\s*'Drug'/.test(inv) && /var list = invRows\(\)/.test(inv), 'Excel and Print carry the whole picked list, not the page on screen');
+check(/invRows\(\)\.map\(function \(d\) \{\s*var r = \{\s*'Drug'/.test(inv) && /var list = invRows\(\)/.test(inv), 'Excel and Print carry the whole picked list, not the page on screen');
 check(/pageSlice\(rows, invPage\)/.test(inv), 'the desktop Inventory table pages 10 at a time');
 // The phone design was approved as it was and must not change: same list rows, Out / Low / OK, notices and Load more.
 const phoneSrc = inv.slice(inv.indexOf('function invPhoneHtml'));

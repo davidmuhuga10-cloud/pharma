@@ -87,10 +87,16 @@ function invExpiryCell(d) {
   var note = days < 0 ? 'expired' : (days <= invWarnDays() ? 'in ' + days + (days === 1 ? ' day' : ' days') : '');
   return { html: '<span><b>' + esc(fmtDate(d.soonest_expiry)) + '</b>' + (note ? ' <span class="' + (days <= 30 ? 'st-bad' : 'st-warn') + '">' + esc(note) + '</span>' : '') + '</span>' };
 }
+// The Stock value column (and every cost figure) is for people allowed to see prices and stock value.
+function invShowValue() { return canSee('see_cost_prices') && canSee('see_stock_value'); }
 function invCells(d) {
-  return [{ html: esc(d.name) + daysLeftNote(d) }, qtyUnit(d.qty_in_stock, d.unit), String(d.reorder_level), fmt(d.stock_value_retail), invExpiryCell(d), invStatusCell(d)];
+  var cells = [{ html: esc(d.name) + daysLeftNote(d) }, qtyUnit(d.qty_in_stock, d.unit), String(d.reorder_level), fmt(d.stock_value_retail), invExpiryCell(d), invStatusCell(d)];
+  if (!invShowValue()) cells.splice(3, 1);
+  return cells;
 }
-var INV_COLS = ['Drug', 'In stock', 'Reorder at', 'Stock value', 'Soonest expiry', 'Status'];
+var INV_COLS_ALL = ['Drug', 'In stock', 'Reorder at', 'Stock value', 'Soonest expiry', 'Status'];
+function invCols() { return invShowValue() ? INV_COLS_ALL : INV_COLS_ALL.filter(function (c) { return c !== 'Stock value'; }); }
+function invNumCols() { return invShowValue() ? [false, true, true, true, false, false] : [false, true, true, false, false]; }
 function pickInvBox(key) { invBox = key; invPage = 1; drawInventory(); }
 function goInvPage(p) { invPage = p; drawInventory(); }
 
@@ -102,10 +108,10 @@ function drawInventory() {
   var worth = STATE.drugsCache.reduce(function (a, d) { return a + Number(d.stock_value_retail || 0); }, 0);
   var desk =
     '<div class="report-head"><div><div class="section-title" style="margin:0">Inventory</div>' +
-    '<div class="inv-sub">' + STATE.drugsCache.length + ' drugs · stock worth ' + esc(fmt(worth)) + ' at selling price. Tap a box to filter, tap a row to open the drug.</div></div>' +
+    '<div class="inv-sub">' + STATE.drugsCache.length + ' drugs · ' + (invShowValue() ? 'stock worth ' + esc(fmt(worth)) + ' at selling price. ' : '') + 'Tap a box to filter, tap a row to open the drug.</div></div>' +
     '<div class="toolbar-segment">' +
-    '<button class="btn" onclick="exportInventoryExcel()">' + icon('download', 15) + ' Excel</button>' +
-    '<button class="btn" onclick="printInventory()">' + icon('printer', 15) + ' Print</button>' +
+    (can('export') ? '<button class="btn" onclick="exportInventoryExcel()">' + icon('download', 15) + ' Excel</button>' : '') +
+    (can('print') ? '<button class="btn" onclick="printInventory()">' + icon('printer', 15) + ' Print</button>' : '') +
     (can('edit_inventory') ? '<button class="btn lime" onclick="openAddDrug()">' + t('addDrug') + '</button>' : '') +
     '</div></div>' +
     '<div class="kpi-grid five" style="margin-bottom:14px">' + invBoxes().map(function (b) {
@@ -128,10 +134,10 @@ function drawInventory() {
     '</div>' +
     '<div class="section-title" style="margin-top:6px">' + esc(invTitle()) + '</div>' +
     showingHtml(pg) +
-    rtTable(INV_COLS, pg.rows.map(invCells), {
+    rtTable(invCols(), pg.rows.map(invCells), {
       rowClick: function (i) { return "openDrugDetail('" + pg.rows[i].drug_id + "')"; },
       empty: STATE.drugsCache.length ? 'No drugs match. Try clearing the search or another box.' : 'No drugs yet. Add one to start.',
-      num: [false, true, true, true, false, false]
+      num: invNumCols()
     }) +
     pagerHtml(pg, 'goInvPage') +
     (can('edit_inventory') ? '<button class="btn ghost small" id="hiddenDrugsBtn" style="margin-top:12px" onclick="openHiddenDrugs()">' + icon('box', 15) + ' Hidden drugs</button>' : '');
@@ -162,8 +168,8 @@ function invPhoneHtml() {
     '</div>' +
     '<div class="sq-grid sq-3">' +
     (canSeeControlled() ? '<button class="btn sq-red" onclick="setTab(\'controlled\')">Controlled</button>' : '') +
-    '<button class="btn" onclick="exportInventoryExcel()">Excel</button>' +
-    '<button class="btn" onclick="printInventory()">Print</button>' +
+    (can('export') ? '<button class="btn" onclick="exportInventoryExcel()">Excel</button>' : '') +
+    (can('print') ? '<button class="btn" onclick="printInventory()">Print</button>' : '') +
     '</div>' +
     (can('restock') && reorderCount ? '<div class="inline-notice">' + icon('clipboard', 15) +
       '<a href="#" onclick="openReorderList();return false;">' + reorderCount + (reorderCount === 1 ? ' drug needs' : ' drugs need') + ' reordering — view list</a></div>' : '') +
@@ -175,7 +181,7 @@ function invPhoneHtml() {
       var expBadge = d.soonest_expiry ? (daysUntil(d.soonest_expiry) <= (STATE.pharmacy.expiry_warn_days || 90)
         ? ' <span class="badge ' + (daysUntil(d.soonest_expiry) <= 30 ? 'bad' : 'warn') + '">exp ' + fmtDate(d.soonest_expiry) + '</span>' : '') : '';
       return '<div class="list-row" onclick="openDrugDetail(\'' + d.drug_id + '\')" style="cursor:pointer">' +
-        '<div><div class="name">' + esc(d.name) + '</div><div class="meta">' + fmt(d.stock_value_retail) + ' in stock value' + expBadge + '</div>' + daysLeftNote(d) + '</div>' +
+        '<div><div class="name">' + esc(d.name) + '</div><div class="meta">' + (invShowValue() ? fmt(d.stock_value_retail) + ' in stock value' : esc(qtyUnit(d.qty_in_stock, d.unit)) + ' in stock') + expBadge + '</div>' + daysLeftNote(d) + '</div>' +
         '<div class="right">' + badge + '<div class="meta">' + esc(qtyUnit(d.qty_in_stock, d.unit)) + '</div></div></div>';
     }).join('') : '<div class="empty">No drugs match. Try clearing the search or add a new one.</div>') + '</div>' +
     (allRows.length > rows.length ? '<button class="btn ghost" style="margin-top:10px" onclick="invPhonePage++;drawInventory()">Load more (' + (allRows.length - rows.length) + ' more)</button>' : '') +
@@ -198,31 +204,40 @@ function daysLeftNote(d) {
 }
 
 function exportInventoryExcel() {
+  if (!can('export')) return;
+  var showValue = invShowValue();
   var rows = invRows().map(function (d) {
-    return {
+    var r = {
       'Drug': d.name,
       'Unit': d.unit,
       'Qty in stock': d.qty_in_stock,
       'Reorder level': d.reorder_level,
       'Status': d.qty_in_stock === 0 ? 'OUT OF STOCK' : d.qty_in_stock <= d.reorder_level ? 'LOW STOCK' : 'OK',
-      'Soonest expiry': d.soonest_expiry ? fmtDate(d.soonest_expiry) : '',
-      'Stock value (cost)': Number(d.stock_value_cost || 0),
-      'Stock value (retail)': Number(d.stock_value_retail || 0)
+      'Soonest expiry': d.soonest_expiry ? fmtDate(d.soonest_expiry) : ''
     };
+    if (showValue) {
+      r['Stock value (cost)'] = Number(d.stock_value_cost || 0);
+      r['Stock value (retail)'] = Number(d.stock_value_retail || 0);
+    }
+    return r;
   });
   exportExcel((STATE.pharmacy.name || 'Pharma') + ' - stock - ' + invTitle().toLowerCase().replace(/[^a-z0-9]+/g, '-') + ' - ' + todayStr() + '.xlsx', 'Stock', rows);
 }
 
 // Print and Excel carry every drug in the picked box that matches the search, not just the page on screen.
 function printInventory() {
+  if (!can('print')) return;
+  var showValue = invShowValue();
   var list = invRows();
   var rows = list.map(function (d) {
-    return [d.name, qtyUnit(d.qty_in_stock, d.unit), String(d.reorder_level), fmt(d.stock_value_retail), d.soonest_expiry ? fmtDate(d.soonest_expiry) : '—', invStatusCell(d)];
+    var cells = [d.name, qtyUnit(d.qty_in_stock, d.unit), String(d.reorder_level), fmt(d.stock_value_retail), d.soonest_expiry ? fmtDate(d.soonest_expiry) : '—', invStatusCell(d)];
+    if (!showValue) cells.splice(3, 1);
+    return cells;
   });
   var totalValue = list.reduce(function (a, d) { return a + Number(d.stock_value_retail || 0); }, 0);
   printHtml('Inventory', invTitle() + ' · ' + todayStr(),
-    tableHtml(INV_COLS, rows, 'Total stock value: ' + fmt(totalValue)),
-    list.length + ' drugs · Total stock value ' + fmt(totalValue));
+    tableHtml(invCols(), rows, showValue ? 'Total stock value: ' + fmt(totalValue) : ''),
+    list.length + ' drugs' + (showValue ? ' · Total stock value ' + fmt(totalValue) : ''));
 }
 
 function todayStr() { return new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }); }

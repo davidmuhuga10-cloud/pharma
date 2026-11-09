@@ -16,7 +16,15 @@ var expiryReportData = null;
 var valuationReportData = null;
 var lowStockReportData = null;
 
+// Which report screens this person may open (Stock Valuation and Sales can be switched off per person).
+function reportAllowed(view) {
+  if (view === 'valuation') return canSee('rpt_valuation');
+  if (view === 'sales') return canSee('rpt_sales');
+  return true;
+}
+
 async function renderReports() {
+  if (!reportAllowed(reportsView)) reportsView = 'hub';  // a hidden report never opens, even from a saved link
   if (reportsView === 'sales') { await loadReport(); return; }
   if (reportsView === 'expiry') { await loadExpiryReport(); return; }
   if (reportsView === 'valuation') { await loadValuationReport(); return; }
@@ -44,6 +52,7 @@ function drawReportsHub() {
     '<div class="reports-grid">' +
     REPORT_TILES.filter(function (r) {
       if (r.view === 'cash') return can('cash_close') || can('cash_review');
+      if (!reportAllowed(r.view)) return false;
       return r.view !== 'claims' || can('claims');
     }).map(function (r) {
       return '<button class="report-tile ' + r.kind + '" onclick="openReportView(\'' + r.view + '\')">' +
