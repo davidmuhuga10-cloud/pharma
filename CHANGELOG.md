@@ -2,6 +2,12 @@
 
 Newest first. The detailed story for each item is in `PHARMA_PROJECT_STATUS.md`.
 
+## 2026-11-09 (night): The platform admin is hidden from a pharmacy's Staff list
+
+- Settings > Staff in Goodlife listed "Pharma Admin, Co-owner (you)": the platform admin's own account. The admin lives in Demo Pharmacy and had Goodlife open for support; the database lets anyone read their own profile row, so it came up in the other pharmacy's list. Support and admin accounts must not show in any pharmacy. A new read-only database function `hidden_staff_ids()` names the platform admins among the people the caller can see (their pharmacy plus their own row) and the Staff list drops them. If the database cannot answer, the list shows as before and Settings still opens. Nothing about how the admin signs in or works changed.
+- Database file: `migrations/2026-11-09_hide_platform_admin_from_staff.sql` (rollback beside it, folded into `schema.sql`). Run it on the project; deploy order does not matter, until it is run the admin is simply still listed. Cache `hodhi-shell-v4j`.
+- Test: `tests/hidden-admin.test.js` (shown failing before the change).
+
 ## 2026-11-09 (evening): Whole-app screen check on phone, tablet and desktop
 
 - Went through 57 screens (every report, every pop-up and form, checkout with and without a discount and a split payment, login, sign-up, join, the menu, settings and staff permissions) at phone 360 and 393 px, tablet portrait 768x1024 and landscape 1024x768, and a 1366x768 desktop. No sideways scrolling, nothing off screen, no errors, no grey text, nothing blank.

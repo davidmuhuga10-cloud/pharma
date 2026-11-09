@@ -170,6 +170,12 @@ async function saveStaffPermissions(id) {
   });
 }
 
+// Drops the people the database says must not be listed (the platform admin account).
+function withoutHiddenStaff(list, hiddenIds) {
+  if (!Array.isArray(hiddenIds) || !hiddenIds.length) return list;
+  return list.filter(function (s) { return hiddenIds.indexOf(s.id) === -1; });
+}
+
 async function renderSettings() {
   var c = $('#content');
   var p = STATE.pharmacy || {};
@@ -183,6 +189,9 @@ async function renderSettings() {
     try {
       var staffRes = await sb.from('profiles').select('*').order('role');
       staff = staffRes.data || [];
+      // The platform admin (support) account is never shown to a pharmacy. If the database cannot
+      // answer, the list is shown as it is rather than blocking Settings.
+      try { var hid = await sb.rpc('hidden_staff_ids'); staff = withoutHiddenStaff(staff, hid && hid.data); } catch (e2) { /* keep the list */ }
       var invRes = await sb.from('staff_invites').select('*').is('used_at', null).gt('expires_at', new Date().toISOString()).order('created_at', { ascending: false });
       invites = invRes.data || [];
     } catch (e) {  /* the staff panel just shows empty; not worth blocking the settings page */ }
