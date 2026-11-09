@@ -1,8 +1,18 @@
 # Pharma — pharmamanagement.site
-# The app itself is behind a login; only the sign-in page is worth indexing.
+# The app itself is behind a login; the sign-in page and the public
+# marketing, pricing, features, blog and legal pages are worth indexing.
 User-agent: *
 Allow: /$
 Allow: /index.html
+Allow: /features.html
+Allow: /pricing.html
+Allow: /blog.html
+Allow: /blog-stock-batch-expiry.html
+Allow: /blog-mpesa-credit-sales.html
+Allow: /blog-stock-take.html
+Allow: /terms.html
+Allow: /privacy.html
+Allow: /cookies.html
 Disallow: /admin.html
 Disallow: /admin.js
 Disallow: /admin.css

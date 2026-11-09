@@ -10,7 +10,11 @@ const ROOT = path.join(__dirname, '..');
 // The app's code is split into js/*.js (there is no app.js any more), so scan every file there:
 // a missing file is skipped silently below, which is how the old 'app.js' entry stopped checking anything.
 const JS_FILES = fs.readdirSync(path.join(ROOT, 'js')).filter(f => f.endsWith('.js')).sort().map(f => 'js/' + f);
-const FILES = ['style.css', 'admin.css', ...JS_FILES, 'admin.js', 'index.html', 'admin.html', 'nativeShell.js', 'install.js', 'www/index.html', 'www/error.html'];
+// Marketing/legal pages (2026-11-09): standalone static pages outside the app
+// shell, so they carry their own self-contained <style>, but the same no-gray
+// rule applies to them.
+const MARKETING_PAGES = ['features.html', 'pricing.html', 'blog.html', 'blog-stock-batch-expiry.html', 'blog-mpesa-credit-sales.html', 'blog-stock-take.html', 'terms.html', 'privacy.html', 'cookies.html'];
+const FILES = ['style.css', 'admin.css', ...JS_FILES, 'admin.js', 'index.html', 'admin.html', 'nativeShell.js', 'install.js', 'www/index.html', 'www/error.html', ...MARKETING_PAGES];
 const RETIRED = [{ hex: '8a837c', rgb: /138\s*,\s*131\s*,\s*124/ }, { hex: '6b6560', rgb: /107\s*,\s*101\s*,\s*96/ }];
 
 function toRgb(v) {
