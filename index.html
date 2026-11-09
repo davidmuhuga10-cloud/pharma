@@ -21,6 +21,26 @@
 <meta name="twitter:title" content="Pharma — Pharmacy Stock &amp; Sales">
 <meta name="twitter:description" content="Know your stock. Never run dry, never run expired. Built for Kenyan pharmacies.">
 <meta name="twitter:image" content="https://pharmamanagement.site/icons/link-preview.png">
+<!-- Lets Google show this as a software product (price, category) in results.
+     Kept in sync with the meta tags above by hand; no build step reads this. -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Pharma",
+  "url": "https://pharmamanagement.site/",
+  "description": "Pharmacy software for Kenya: track stock and expiry dates, sell with receipts, record M-Pesa and credit, and see daily profit. Works on any phone.",
+  "applicationCategory": "BusinessApplication",
+  "operatingSystem": "Any (web, Android)",
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "KES",
+    "description": "Free for 3 months"
+  },
+  "areaServed": "KE"
+}
+</script>
 <!-- Make the installed website look like the Android app: green bar, own name, own icon.
      iPhone ignores manifest.json for these, so it needs its own tags. -->
 <meta name="mobile-web-app-capable" content="yes">
