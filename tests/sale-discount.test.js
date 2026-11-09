@@ -40,9 +40,17 @@ check(/drop column if exists discount_amount/.test(rb) && /drop column if exists
 check(/record_sale\(p_pharmacy_id uuid, p_items jsonb, p_payments jsonb, p_customer_name text DEFAULT NULL::text, p_insurance_scheme text DEFAULT NULL::text, p_customer_id uuid DEFAULT NULL::uuid\)/.test(rb), 'the rollback restores the 6-argument record_sale');
 check(/-- Folded in from migrations\/2026-11-09_sale_discount\.sql/.test(schema) && /discount_amount/.test(schema.slice(schema.indexOf('-- Folded in from migrations/2026-11-09_sale_discount.sql'))), 'schema.sql carries the change under its folded-in banner');
 
+// ---- whole shillings in the database too
+const wholeMig = fs.existsSync(path.join(root, 'migrations/2026-11-09_sale_discount_whole.sql')) ? read('migrations/2026-11-09_sale_discount_whole.sql') : '';
+const wholeRb = fs.existsSync(path.join(root, 'migrations/2026-11-09_sale_discount_whole.ROLLBACK_if_needed.sql')) ? read('migrations/2026-11-09_sale_discount_whole.ROLLBACK_if_needed.sql') : '';
+check(/sales_discount_whole/.test(wholeMig) && /discount_amount = trunc\(discount_amount\)/.test(wholeMig), 'the database refuses a discount with cents (sales_discount_whole)');
+check(/drop constraint if exists sales_discount_whole/.test(wholeRb), 'its rollback removes the constraint');
+check(/-- Folded in from migrations\/2026-11-09_sale_discount_whole\.sql/.test(schema), 'schema.sql carries the whole-shilling rule under its folded-in banner');
+
 // ---- the checkout
 check(/p_discount: discount/.test(sell), 'checkout sends the discount to record_sale');
 check(/id="pDiscount" type="number"/.test(sell), 'checkout has a number box for the discount');
+check(/id="pDiscount"[^>]*step="1"/.test(sell) && /whole shillings/.test(sell), 'the discount box steps in whole shillings and says so when it is not');
 check(/Discount \(KES\)/.test(sell) && !/Discount \(%\)|percent/i.test(sell.slice(sell.indexOf('var checkoutDiscount'), sell.indexOf('async function completeSale'))), 'the discount is typed in shillings, not as a percentage');
 check(/checkoutPayments = \[\{ method: 'mpesa'/.test(sell), 'checkout starts on M-Pesa');
 check(/checkoutPayments\.push\(\{ method: 'mpesa'/.test(sell), 'a split payment line also starts on M-Pesa');
@@ -69,12 +77,13 @@ else {
   check(ok('', 400) === true, 'an empty discount is fine (no discount)');
   check(ok('0', 400) === true, 'a zero discount is fine');
   check(ok('7', 400) === true, '7 off 400 is fine');
-  check(ok('399.99', 400) === true, 'up to the last cent below the bill is fine');
+  check(ok('399', 400) === true, 'up to the last whole shilling below the bill is fine');
+  check(ok('10.5', 400) === false && ok('399.99', 400) === false && ok('0.1', 400) === false, 'a discount must be whole shillings: 10.5, 399.99 and 0.1 are refused');
+  check(ok('10.0', 400) === true, '10.0 is the whole number 10');
   check(ok('400', 400) === false, 'a discount equal to the bill is refused');
   check(ok('450', 400) === false, 'a discount above the bill is refused');
   check(ok('-5', 400) === false, 'a negative discount is refused');
   check(ok('abc', 400) === true && ctx.checkoutDiscountValue() === 0, 'text that is not a number counts as no discount');
-  ctx.checkoutDiscount = '12.505'; check(ctx.checkoutDiscountValue() === 12.51 || ctx.checkoutDiscountValue() === 12.5, 'a discount is rounded to cents');
 }
 
 // ---- reversing a sale
@@ -97,6 +106,46 @@ check(/Reversed' \+ \(s\.voided_by_name \? ' by '/.test(reports) && /s\.voided_a
 check(/Discount<\/div>/.test(reports) && /s\.subtotal/.test(reports), 'the sale detail shows the bill, the discount and the total');
 check(/'Discount': Number\(s\.discount_amount/.test(reports), 'the Excel export carries the discount');
 check(!/Void entire sale|Void this sale/.test(reports), 'the sale screens say Reverse, like the rest of the app');
+
+// ---- where the box sits, and that checkout keeps the pop-up's side margins
+const iDisc = sell.indexOf('id="pDiscount"'), iPays = sell.indexOf('checkoutPayments.map(function (p, i)'), iSplit = sell.indexOf('onclick="addPaymentLine()">+ Split');
+check(iDisc > iPays && iDisc < iSplit, 'the Discount box sits under the payment lines and above "Split into another payment method" (not at the top, as if it were required)');
+check(/placeholder="0"/.test(sell.slice(iDisc - 100, iDisc + 300)), 'the Discount box shows a faint 0 so it reads as optional');
+const css = read('style.css');
+check(/#sheetBody, body:has\(\.topbar\) #checkoutBody \{ padding: 20px; \}/.test(css), 'checkout renames its pop-up body, so the side padding rule must name #checkoutBody too (otherwise it runs edge to edge)');
+// An M-Pesa reference is never required to confirm a sale.
+const canLine = (sell.match(/var canConfirm = [^\n]*/) || [''])[0];
+check(canLine.length > 0 && !/ref|pRef/i.test(canLine), 'Confirm does not wait for a payment reference (M-Pesa code is optional)');
+check(/reference: p\.reference \|\| null/.test(sell), 'a blank reference is sent as null');
+
+// ---- phone, tablet and the printed receipt
+check(/@media \(pointer: coarse\) \{ \.qty-ctrl button \{ width: 40px; height: 40px; \}/.test(css), 'on a touch screen the cart - / + and quantity box are 40px, not 28px');
+check(/\.r80-sub \{[^}]*font-size: 11px/.test(css), 'receipt lines that are not items (Discount, payments) print at the same size as the items');
+check(/\.r80-sub span:last-child \{ white-space: nowrap; \}/.test(css), 'a receipt amount never wraps under its label');
+
+// ---- typing a quantity into the cart
+check(/class="qty-input" type="number"/.test(sell) && /onchange="setQty\(/.test(sell), 'each cart line has a box to type the quantity');
+const sq = pick(sell, 'setQty');
+if (!sq) check(false, 'setQty exists in js/sell.js');
+else {
+  const log = { toasts: [], draws: 0 };
+  const qctx = {
+    STATE: { cart: [{ drug_id: 'd1', name: 'Panadol', unit: 'tab', qty: 1, stock: 100 }, { drug_id: 'd2', name: 'Other', unit: 'tab', qty: 3, stock: 5 }], drugsCache: [{ drug_id: 'd1', qty_in_stock: 100 }, { drug_id: 'd2', qty_in_stock: 5 }] },
+    toast: (m) => log.toasts.push(m), drawSell: () => { log.draws++; }, qtyUnit: (n, u) => n + ' ' + u + 's'
+  };
+  vm.createContext(qctx); vm.runInContext(sq, qctx);
+  qctx.setQty(0, '20'); check(qctx.STATE.cart[0].qty === 20, 'typing 20 sets the quantity to 20 in one go');
+  qctx.setQty(0, '500'); check(qctx.STATE.cart[0].qty === 100 && log.toasts.length === 1, 'more than the shelf holds is cut back to the stock, with a message');
+  qctx.setQty(0, 'abc'); check(qctx.STATE.cart[0].qty === 100, 'text that is not a number leaves the line as it was');
+  qctx.setQty(0, '-4'); check(qctx.STATE.cart[0].qty === 100, 'a negative number leaves the line as it was');
+  qctx.setQty(1, '9'); check(qctx.STATE.cart[1].qty === 5, 'the cap uses the stock of that drug');
+  qctx.setQty(0, '0'); check(qctx.STATE.cart.length === 1 && qctx.STATE.cart[0].drug_id === 'd2', 'typing 0 takes the line out of the cart');
+}
+
+// ---- whole-app screen check: small taps and cut-off names
+check(/\.rt-wrap td select \{[^}]*min-height: 36px/.test(css), 'a dropdown inside a report table (claim status) is at least 36px tall');
+check(/\.sheet \.dash-bar-label \{[^}]*white-space: normal/.test(css), 'in a full-list pop-up a long drug name wraps instead of being cut off');
+check(/\.auth-forgot a \{[^}]*padding: 10px 6px; margin: -10px -6px/.test(css), '"Forgot password?" has a bigger tap area without moving anything');
 
 console.log(failed ? failed + ' sale-discount checks failed' : 'PASS sale-discount: bill discount, M-Pesa default and sale reversal rules hold');
 process.exit(failed ? 1 : 0);

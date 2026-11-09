@@ -2,6 +2,34 @@
 
 Newest first. The detailed story for each item is in `PHARMA_PROJECT_STATUS.md`.
 
+## 2026-11-09 (evening): Whole-app screen check on phone, tablet and desktop
+
+- Went through 57 screens (every report, every pop-up and form, checkout with and without a discount and a split payment, login, sign-up, join, the menu, settings and staff permissions) at phone 360 and 393 px, tablet portrait 768x1024 and landscape 1024x768, and a 1366x768 desktop. No sideways scrolling, nothing off screen, no errors, no grey text, nothing blank.
+- **Fixed:** the claim-status dropdown in the Insurance Claims table was 21px tall; it is now at least 36px. "Forgot password?" on the login screen had a 15px tap area; the tap area is now bigger without moving anything (the screen is pixel-identical). Long drug names in the "full list" pop-ups (top sellers, expiring, out of stock) were cut off with "..."; they now wrap.
+- **Left as it is, on purpose:** the permission tick boxes are 20px but the whole row is the tap area. The small labels on the phone dashboard tiles (10px) and the bottom tab names (10.5px) are the approved phone design. Coloured badges (Rx, expiry, Low) stay on phone list rows; only the shared report tables use plain coloured text.
+- Cache bumped to `hodhi-shell-v4i`. Not checked: a real phone, a real tablet, a real thermal printer. Screens were run with a browser emulator and made-up shop data, so empty-sale item lists in that test are not a bug.
+
+## 2026-11-09 (afternoon, last): Phone, tablet and printed receipt check
+
+- Checked the new screens (cart quantity box, checkout with and without a discount, a rejected discount, split payment, receipt, reversed-sale detail) at 360, 375 and 393 px wide phones and 768 and 1024 px tablets with touch emulation: no sideways scrolling and nothing outside the screen.
+- **Touch size:** on a touch screen the cart - / + buttons and the quantity box are now 40px (they were 28px).
+- **Printed receipt (80mm):** the Discount line and the payment lines printed larger than the items, and a payment amount could wrap under its label ("KES" on one line, "1,500" on the next). They now match the items, and an amount never wraps.
+- Cache bumped to `hodhi-shell-v4h`. Not checked: a real phone and a real thermal printer.
+
+## 2026-11-09 (afternoon, later): Discount is whole shillings only
+
+- The Discount box takes whole numbers only (10 is fine, 10.5 is refused with "whole shillings, less than KES <bill>" and Confirm stays off). The bill itself can still have cents; only the discount cannot.
+- Database: migration `2026-11-09_sale_discount_whole.sql` (with a rollback file) adds `sales_discount_whole`, so a call that skips the app cannot record cents either. Not applied live when this was written.
+- `tests/sale-discount.test.js` extended (5 checks shown failing first).
+
+## 2026-11-09 (afternoon): Checkout layout fix, typed quantity in the cart
+
+- **Checkout pop-up had no side margins** (everything ran edge to edge). Checkout renames its pop-up body to `checkoutBody`, so the app's `#sheetBody` padding rule never applied; the rule now names `#checkoutBody` too. This was there before the discount work.
+- **The Discount box moved** to just under the payment lines and above "Split into another payment method", with a faint 0, so it no longer reads as a required first step.
+- **Type a quantity in the cart.** Each cart line has a box between - and +: type 20 once instead of tapping + twenty times. 0 removes the line; more than the shelf holds is cut back to the stock with a message; text or a negative number changes nothing.
+- **M-Pesa reference is optional** (it already was; now pinned by a test). Totals, discount, split lines and balance were checked end to end in a browser: 20 x 18.50 = 370, 20 off = 350, 0.10 off = 369.90, a 200 + 150 split balances to 0, and the sale is sent with the discount and the two payments adding to 350.
+- Cache bumped to `hodhi-shell-v4g`. `tests/sale-discount.test.js` extended (5 new checks shown failing first).
+
 ## 2026-11-09 (later): Discount on the whole bill, and reversing a sale
 
 - **Discount at checkout.** One box, "Discount (KES)", typed in shillings (not a percentage), taken off the whole bill and never off a single drug. No cap, no reason, no permission switch: every role can use it, including owners who sell on their own account. It must stay below the bill (it can never take a sale to zero or below). The payment line follows the new total.

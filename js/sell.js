@@ -118,7 +118,7 @@ function cartSummaryCard() {
   return '<div class="card"><div class="section-title" style="margin-top:0">Cart</div>' +
     STATE.cart.map(function (item, i) {
       return '<div class="cart-line"><div><div class="name">' + esc(item.name) + (isControlledDrug(item) ? ' <span class="badge bad">' + CONTROL_LABEL[item.control_class] + '</span>' : item.is_prescription ? ' <span class="badge warn">Rx</span>' : '') + '</div><div class="meta">' + fmt(item.price) + ' each' + (item.patient_name ? ' · Patient: ' + esc(item.patient_name) : '') + '</div></div>' +
-        '<div class="qty-ctrl"><button onclick="changeQty(' + i + ',-1)">−</button><span>' + item.qty + '</span><button onclick="changeQty(' + i + ',1)">+</button></div></div>';
+        '<div class="qty-ctrl"><button onclick="changeQty(' + i + ',-1)" aria-label="One less">−</button><input class="qty-input" type="number" inputmode="numeric" min="0" step="1" value="' + item.qty + '" aria-label="Quantity of ' + esc(item.name) + '" onchange="setQty(' + i + ',this.value)"><button onclick="changeQty(' + i + ',1)" aria-label="One more">+</button></div></div>';
     }).join('') +
     '<div class="list-row"><div class="name">Total</div><div class="name">' + fmt(total) + '</div></div>' +
     '<div class="toolbar-row" style="margin-top:10px"><button class="btn ghost" onclick="holdSale(this)">Hold sale</button><button class="btn primary" onclick="openCheckout()">Checkout</button></div></div>';
@@ -200,6 +200,27 @@ function confirmRxCapture(drugId) {
 // Cap the cart's "+" at live stock, like addToCart does, so a seller cannot go
 // past the shelf and have record_sale refuse the whole sale at Confirm. Lines
 // for the same drug (e.g. two prescriptions) share stock and are counted together.
+// A quantity typed into the cart line (so 20 packs is one entry, not 20 taps).
+// 0 takes the line out; more than the shelf holds is cut back to what is there;
+// anything that is not a whole number leaves the line as it was.
+function setQty(i, value) {
+  var item = STATE.cart[i];
+  if (!item) return;
+  var n = parseInt(value, 10);
+  if (!isFinite(n) || n < 0) { drawSell(); return; }
+  if (n === 0) { STATE.cart.splice(i, 1); drawSell(); return; }
+  var live = STATE.drugsCache.find(function (x) { return x.drug_id === item.drug_id; });
+  var available = Number(live ? live.qty_in_stock : item.stock);
+  var others = STATE.cart.reduce(function (a, c, k) { return a + (k !== i && c.drug_id === item.drug_id ? c.qty : 0); }, 0);
+  if (isFinite(available) && n + others > available) {
+    var most = Math.max(1, available - others);
+    toast('Only ' + qtyUnit(available, item.unit) + ' of ' + item.name + ' in stock.', 'bad');
+    n = most;
+  }
+  item.qty = n;
+  drawSell();
+}
+
 function changeQty(i, delta) {
   var item = STATE.cart[i];
   if (delta > 0) {
@@ -223,12 +244,12 @@ var lastQuote = null;
 var checkoutDiscount = '';
 function checkoutDiscountValue() {
   var v = parseFloat(checkoutDiscount);
-  return isFinite(v) ? Math.round(v * 100) / 100 : 0;
+  return isFinite(v) ? v : 0;
 }
-// A discount is fine when it is 0 or more and leaves something to pay.
+// A discount is fine when it is a whole number of shillings, 0 or more, and leaves something to pay.
 function checkoutDiscountOk(gross) {
   var d = checkoutDiscountValue();
-  return d >= 0 && d < gross;
+  return d >= 0 && d < gross && d === Math.floor(d);
 }
 function setCheckoutDiscount(v) {
   checkoutDiscount = v;
@@ -347,8 +368,6 @@ function drawCheckoutPayments() {
     (overBy > 0.005 ? '<div class="inline-notice" style="color:var(--red)">' + icon('warn', 15) + '<span>This is ' + fmt(overBy) + ' over their credit limit. Take more cash, or ask the owner or pharmacist to raise the limit.</span></div>' : '');
   var canConfirm = balance === 0 && overBy <= 0.005 && !needCustomer && discountOk;
   redrawKeepingFocus(body,
-    '<div class="field"><label for="pDiscount"' + (discountOk ? '' : ' style="color:var(--red)"') + '>Discount (KES)' + (discountOk ? '' : ' — must be less than ' + fmt(gross)) + '</label>' +
-    '<input id="pDiscount" type="number" min="0" step="0.01" inputmode="decimal" value="' + esc(checkoutDiscount) + '" oninput="setCheckoutDiscount(this.value)"></div>' +
     '<div class="section-title" style="margin-top:0">Payment</div>' +
     (body.dataset.priceNote
       ? '<div class="tiny" style="margin-bottom:8px">This total is priced from the batches the sale will actually come out of — soonest expiry first, with any markdown applied — so it differs from the shelf price shown in the cart.</div>'
@@ -367,6 +386,8 @@ function drawCheckoutPayments() {
         (checkoutPayments.length > 1 ? '<button class="btn small danger" style="margin-top:8px" onclick="removePaymentLine(' + i + ')">Remove</button>' : '') +
         '</div>';
     }).join('') +
+    '<div class="field" style="margin-top:4px"><label for="pDiscount"' + (discountOk ? '' : ' style="color:var(--red)"') + '>Discount (KES)' + (discountOk ? '' : ' — whole shillings, less than ' + fmt(gross)) + '</label>' +
+    '<input id="pDiscount" type="number" min="0" step="1" inputmode="numeric" placeholder="0" value="' + esc(checkoutDiscount) + '" oninput="setCheckoutDiscount(this.value)"></div>' +
     '<button class="btn ghost small" onclick="addPaymentLine()">+ Split into another payment method</button>' +
     '<div class="list-row"><div class="name">Balance</div><div class="name" style="color:' + (balance === 0 ? 'var(--green)' : 'var(--red)') + '">' + fmt(balance) + '</div></div>' +
     custHtml +
