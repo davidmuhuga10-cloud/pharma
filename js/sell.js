@@ -63,6 +63,7 @@ function drawSell() {
     (STATE.cart.length ? cartSummaryCard() : '') +
     '<div id="sellAll">' + (r.searching ? '' : r.html) + '</div>');
   syncCartBar();
+  if (document.getElementById('cartBody')) drawCartSheet();
 }
 
 function heldSalesCard() {
@@ -87,6 +88,7 @@ async function holdSale(btn) {
     });
     if (error) { toast(friendlyError(error), 'bad'); return; }
     STATE.cart = [];
+    closeSheet();
     toast('Sale held. Resume it any time from the Sell tab.', 'good');
     renderSell();
   });
@@ -113,15 +115,48 @@ async function deleteHeldSale(btn, id) {
   });
 }
 
+// One cart line: name, price, - qty +, line total and a Remove button. Used by the cart card
+// on the Sell screen and by the View cart pop-up, so both behave the same.
+function cartLineHtml(item, i) {
+  return '<div class="cart-line"><div><div class="name">' + esc(item.name) + (isControlledDrug(item) ? ' <span class="badge bad">' + CONTROL_LABEL[item.control_class] + '</span>' : item.is_prescription ? ' <span class="badge warn">Rx</span>' : '') + '</div><div class="meta">' + fmt(item.price) + ' each' + (item.patient_name ? ' · Patient: ' + esc(item.patient_name) : '') + '</div>' +
+    '<div class="meta">' + item.qty + ' × ' + fmt(item.price) + ' = <b>' + fmt(item.qty * item.price) + '</b></div></div>' +
+    '<div class="cart-side"><div class="qty-ctrl"><button onclick="changeQty(' + i + ',-1)" aria-label="One less">−</button><input class="qty-input" type="number" inputmode="numeric" min="0" step="1" value="' + item.qty + '" aria-label="Quantity of ' + esc(item.name) + '" onchange="setQty(' + i + ',this.value)"><button onclick="changeQty(' + i + ',1)" aria-label="One more">+</button></div>' +
+    '<button class="cart-remove" onclick="removeFromCart(' + i + ')" aria-label="Remove ' + esc(item.name) + ' from the cart">Remove</button></div></div>';
+}
+function cartTotal() {
+  return STATE.cart.reduce(function (a, c) { return a + c.qty * c.price; }, 0);
+}
 function cartSummaryCard() {
-  var total = STATE.cart.reduce(function (a, c) { return a + c.qty * c.price; }, 0);
   return '<div class="card"><div class="section-title" style="margin-top:0">Cart</div>' +
-    STATE.cart.map(function (item, i) {
-      return '<div class="cart-line"><div><div class="name">' + esc(item.name) + (isControlledDrug(item) ? ' <span class="badge bad">' + CONTROL_LABEL[item.control_class] + '</span>' : item.is_prescription ? ' <span class="badge warn">Rx</span>' : '') + '</div><div class="meta">' + fmt(item.price) + ' each' + (item.patient_name ? ' · Patient: ' + esc(item.patient_name) : '') + '</div></div>' +
-        '<div class="qty-ctrl"><button onclick="changeQty(' + i + ',-1)" aria-label="One less">−</button><input class="qty-input" type="number" inputmode="numeric" min="0" step="1" value="' + item.qty + '" aria-label="Quantity of ' + esc(item.name) + '" onchange="setQty(' + i + ',this.value)"><button onclick="changeQty(' + i + ',1)" aria-label="One more">+</button></div></div>';
-    }).join('') +
-    '<div class="list-row"><div class="name">Total</div><div class="name">' + fmt(total) + '</div></div>' +
-    '<div class="toolbar-row" style="margin-top:10px"><button class="btn ghost" onclick="holdSale(this)">Hold sale</button><button class="btn primary" onclick="openCheckout()">Checkout</button></div></div>';
+    STATE.cart.map(cartLineHtml).join('') +
+    '<div class="list-row"><div class="name">Total</div><div class="name">' + fmt(cartTotal()) + '</div></div>' +
+    '<div class="toolbar-row" style="margin-top:10px"><button class="btn ghost" onclick="holdSale(this)">Hold sale</button><button class="btn primary" onclick="openCheckout()">Continue to payment &rarr;</button></div></div>';
+}
+
+// The cart pop-up behind the blue bar: everything being sold, with quantity and Remove, before
+// any payment is asked for. "Back to cart" on the payment screen comes back here.
+function viewCart() {
+  if (!STATE.cart.length) { toast('Cart is empty.', 'bad'); return; }
+  var body = sheet('Cart', '');
+  body.id = 'cartBody';
+  drawCartSheet();
+}
+function drawCartSheet() {
+  var body = document.getElementById('cartBody');
+  if (!body) return;
+  if (!STATE.cart.length) { closeSheet(); return; }
+  var n = STATE.cart.reduce(function (a, c) { return a + c.qty; }, 0);
+  var head = document.querySelector('.mask .sheet-head h2');
+  if (head) head.textContent = 'Cart · ' + n + (n === 1 ? ' item' : ' items');
+  redrawKeepingFocus(body,
+    STATE.cart.map(cartLineHtml).join('') +
+    '<div class="list-row"><div class="name">Total</div><div class="name">' + fmt(cartTotal()) + '</div></div>' +
+    '<div class="toolbar-row" style="margin-top:10px"><button class="btn ghost" onclick="holdSale(this)">Hold sale</button><button class="btn primary" onclick="openCheckout()">Continue to payment &rarr;</button></div>');
+}
+function removeFromCart(i) {
+  if (!STATE.cart[i]) return;
+  STATE.cart.splice(i, 1);
+  drawSell();
 }
 
 // Enter in the search box: if what's typed is exactly one drug's barcode (typed
@@ -273,7 +308,7 @@ function setCheckoutDiscount(v) {
 async function openCheckout() {
   if (!STATE.cart.length) { toast('Cart is empty.', 'bad'); return; }
   var indicative = STATE.cart.reduce(function (a, c) { return a + c.qty * c.price; }, 0);
-  var body = sheet('Checkout', '<div class="card empty">Checking stock and prices…</div>');
+  var body = sheet('Payment', '<div class="card empty">Checking stock and prices…</div>');
   body.id = 'checkoutBody';
   lastQuote = null;
   checkoutDiscount = '';
@@ -300,7 +335,7 @@ async function openCheckout() {
       (shortItem
         ? 'Not enough ' + esc(shortItem.name) + ' left — short by ' + (quote.short_by || 0) + '. Someone may have sold it while this cart was open.'
         : 'Some of these items are no longer in stock.') +
-      '<div style="margin-top:12px"><button class="btn ghost small" onclick="closeSheet()">Back to the cart</button></div></div>';
+      '<div style="margin-top:12px"><button class="btn ghost small" onclick="viewCart()">Back to the cart</button></div></div>';
     return;
   }
 
@@ -316,7 +351,7 @@ async function openCheckout() {
   body.dataset.total = total;
   body.dataset.priceNote = Math.abs(total - indicative) > 0.01 ? '1' : '';
   var head = document.querySelector('.mask .sheet-head h2');
-  if (head) head.textContent = 'Checkout — ' + fmt(total);
+  if (head) head.textContent = 'Payment — ' + fmt(total);
   drawCheckoutPayments();
 }
 
@@ -335,7 +370,7 @@ function drawCheckoutPayments() {
   var total = Math.round((gross - discount) * 100) / 100;
   body.dataset.total = total;
   var head = document.querySelector('.mask .sheet-head h2');
-  if (head) head.textContent = 'Checkout — ' + fmt(total);
+  if (head) head.textContent = 'Payment — ' + fmt(total);
   var paid = checkoutPayments.reduce(function (a, p) { return a + (parseFloat(p.amount) || 0); }, 0);
   var balance = Math.round((total - paid) * 100) / 100;
   // Typed customer details survive a redraw (the sheet is rebuilt whenever a
@@ -368,6 +403,7 @@ function drawCheckoutPayments() {
     (overBy > 0.005 ? '<div class="inline-notice" style="color:var(--red)">' + icon('warn', 15) + '<span>This is ' + fmt(overBy) + ' over their credit limit. Take more cash, or ask the owner or pharmacist to raise the limit.</span></div>' : '');
   var canConfirm = balance === 0 && overBy <= 0.005 && !needCustomer && discountOk;
   redrawKeepingFocus(body,
+    '<button class="back-cart" onclick="viewCart()">&larr; Back to cart · ' + STATE.cart.length + (STATE.cart.length === 1 ? ' drug' : ' drugs') + ' · ' + STATE.cart.reduce(function (a, c) { return a + c.qty; }, 0) + ' items</button>' +
     '<div class="section-title" style="margin-top:0">Payment</div>' +
     (body.dataset.priceNote
       ? '<div class="tiny" style="margin-bottom:8px">This total is priced from the batches the sale will actually come out of — soonest expiry first, with any markdown applied — so it differs from the shelf price shown in the cart.</div>'
@@ -389,7 +425,7 @@ function drawCheckoutPayments() {
     '<div class="field" style="margin-top:4px"><label for="pDiscount"' + (discountOk ? '' : ' style="color:var(--red)"') + '>Discount (KES)' + (discountOk ? '' : ' — whole shillings, less than ' + fmt(gross)) + '</label>' +
     '<input id="pDiscount" type="number" min="0" step="1" inputmode="numeric" placeholder="0" value="' + esc(checkoutDiscount) + '" oninput="setCheckoutDiscount(this.value)"></div>' +
     '<button class="btn ghost small" onclick="addPaymentLine()">+ Split into another payment method</button>' +
-    '<div class="list-row"><div class="name">Balance</div><div class="name" style="color:' + (balance === 0 ? 'var(--green)' : 'var(--red)') + '">' + fmt(balance) + '</div></div>' +
+    (checkoutPayments.length > 1 || balance !== 0 ? '<div class="list-row"><div class="name">Balance</div><div class="name" style="color:' + (balance === 0 ? 'var(--green)' : 'var(--red)') + '">' + fmt(balance) + '</div></div>' : '') +
     custHtml +
     '<button class="btn primary" id="pSaveBtn" ' + (canConfirm ? '' : 'disabled') + ' onclick="completeSale()">Confirm sale — ' + fmt(total) + '</button>');
 }

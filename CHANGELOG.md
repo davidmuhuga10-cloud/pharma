@@ -2,6 +2,16 @@
 
 Newest first. The detailed story for each item is in `PHARMA_PROJECT_STATUS.md`.
 
+## 2026-11-10: View cart before payment, and the mouse wheel no longer changes number boxes
+
+- The blue bar at the bottom of Sell now says **View cart →** and opens a **Cart** pop-up: every drug with − / + buttons, a typed quantity, its line total and a red **Remove** button, then the Total, **Hold sale** and **Continue to payment →**. Before this, the bar went straight to the payment screen, so a seller could not see the drugs while paying or take one out (the cart itself was always on the Sell screen, but above the stock list, where it was easy to miss). Approved from a sketch built from the real styles.
+- The payment pop-up is now titled **Payment — KES …** (the word Checkout is gone) and has a **← Back to cart · 3 drugs · 6 items** link at the top. If stock ran short while paying, the message's button also goes back to the cart. Nothing about how a sale is priced, paid or saved changed (`quote_sale` / `record_sale` untouched, no database change).
+- **Remove** also appears on each line of the cart card on the Sell screen, whose button now reads "Continue to payment →". Holding a sale closes the pop-up; removing the last drug closes it too.
+- **Balance** only shows when the payment is split or the amount is short. With a single payment for the whole bill it was always 0 and just confused people.
+- **Mouse wheel bug:** scrolling the wheel over a number box that had the cursor in it nudged the value (a 49.95 appeared in an Amount box). Every number box in the app now lets go of focus when the wheel turns over it, so the value stays as typed and the page scrolls normally (`WHEEL-GUARD` block at the end of `js/core.js`). Typing and arrow keys still work.
+- Cache bumped to `hodhi-shell-v4m`.
+- Test: `tests/view-cart.test.js` (shown failing first; runs the Remove and wheel code for real). Whole chain passes except `android-shell.test.js`, which could not run on the working copy (Android files not staged; none were touched). NOT checked on a real phone or the Android app.
+
 ## 2026-11-09 (midnight): Accept the Terms when creating an account
 
 - **Create account** and **Staff join** now show an unticked box, "I agree to the Terms of Service and Privacy Policy" (both words link to the new pages, opening in a new tab so nothing typed is lost). Without the tick, no text code is sent and the screen says "Please tick the box to accept the Terms of Service and Privacy Policy." **Log in** has no box, only a small line under the button: "By signing in you accept our Terms and Privacy Policy." Approved from a sketch built from the real sign-in styles; box and line are black text with green links, the box is 20px (tap size), phone layout otherwise unchanged (`termsAgreeHtml()` in `js/auth.js`, `.agree` / `.agree-note` in `style.css`).

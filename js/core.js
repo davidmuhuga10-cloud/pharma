@@ -422,3 +422,12 @@ function warmXlsx() {
   else setTimeout(go, 4000);
 }
 
+// WHEEL-GUARD-START
+// Turning the mouse wheel over a number box that has the cursor in it nudges its value
+// (a 49.95 appeared in an Amount box this way). Let go of the box when the wheel turns over it:
+// the value stays as typed and the page scrolls as normal. Typing and the arrow keys still work.
+document.addEventListener('wheel', function (e) {
+  var t = e.target;
+  if (t && t.tagName === 'INPUT' && t.type === 'number' && document.activeElement === t) t.blur();
+}, { passive: true });
+// WHEEL-GUARD-END

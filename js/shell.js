@@ -440,16 +440,16 @@ function navBar() {
     '</div>';
 }
 
-// Checkout bar showing item count and total, kept in sync by drawSell() via
+// Cart bar showing item count and total, kept in sync by drawSell() via
 // syncCartBar().
 function cartFab() {
   if (!STATE.cart.length) return '';
   var n = STATE.cart.reduce(function (a, c) { return a + c.qty; }, 0);
   var total = STATE.cart.reduce(function (a, c) { return a + c.qty * c.price; }, 0);
-  return '<button class="cart-bar" onclick="openCheckout()" title="Checkout">' +
+  return '<button class="cart-bar" onclick="viewCart()" title="View cart">' +
     '<span class="cb-ic">' + icon('cart', 20) + '<span class="cb-n">' + n + '</span></span>' +
     '<span class="cb-txt">' + n + (n === 1 ? ' item' : ' items') + ' · ' + fmt(total) + '</span>' +
-    '<span class="cb-go">Checkout &rarr;</span></button>';
+    '<span class="cb-go">View cart &rarr;</span></button>';
 }
 function syncCartBar() {
   var old = document.querySelector('.cart-bar');
