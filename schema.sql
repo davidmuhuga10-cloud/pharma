@@ -1,3 +1,38 @@
+-- ############################################################################
+-- READ THIS BEFORE USING THIS FILE TO ANSWER "WHAT DOES THIS FUNCTION DO?"
+--
+-- This file is an append-only LOG of every migration, in order -- not a
+-- snapshot of the database as it is now. The same function is defined here
+-- many times over, and ONLY THE LAST DEFINITION IS REAL:
+--
+--     record_sale      appears 11 times
+--     edit_drug        appears 10 times
+--     dashboard_data   appears  6 times
+--
+-- Two more gotchas:
+--
+--   * The formatting is inconsistent. Some definitions are written
+--     `create or replace function public.x(...)` and others
+--     `create or replace function x(...)`. A search or script written for one
+--     style silently matches nothing for the other.
+--
+--   * dashboard_data_raw and dashboard_data_custom_raw have NO create
+--     statement under those names at all. They were created as dashboard_data
+--     / dashboard_data_custom and renamed with ALTER FUNCTION ... RENAME TO.
+--     Searching this file for them finds nothing; they do exist.
+--
+-- THE LIVE DATABASE IS THE SOURCE OF TRUTH. To see what a function actually
+-- does right now, run this in the Supabase SQL editor:
+--
+--     select pg_get_functiondef(
+--       'public.record_sale(uuid,jsonb,jsonb,text,text,uuid,numeric)'::regprocedure);
+--
+-- Use THIS file to rebuild a database from scratch (it is correct for that,
+-- and is tested that way). Do not use it to look up current behaviour.
+--
+-- See START_HERE.md, "Five traps".
+-- ############################################################################
+
 -- ============================================================================
 -- PHARMA — Pharmacy stock & sales system (v2, renamed from "Hodhi")
 -- Multi-tenant schema: every pharmacy's data is isolated by pharmacy_id +

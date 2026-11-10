@@ -4,6 +4,13 @@ Pharmacy stock and sales for Kenyan pharmacies: batches with expiry (FEFO), sale
 
 Live site: https://pharmamanagement.site
 
+> **New to this project? Read [`START_HERE.md`](START_HERE.md) first.**
+> It is written for someone arriving with no context and nobody to ask: the one
+> flow you must understand (a sale), four traps that will otherwise cost you a
+> day, how to change the database safely, and what is dangerous to touch. It
+> also has a section for the owner, who does not write code, on what to require
+> of a developer and how to check it was done.
+
 ## Layout
 
 | File | What it is |
