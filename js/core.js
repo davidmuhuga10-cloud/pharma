@@ -252,6 +252,46 @@ function jsArg(s) {
     return '\\u' + '0000'.slice(h.length) + h;
   });
 }
+// A one-off id for a write, so the same request sent twice is only acted on
+// once.
+//
+// WHY THIS EXISTS
+// act() already stops a double TAP: it disables the button until the request
+// finishes. The case it cannot stop is the one that actually happens on mobile
+// data: the request reaches Supabase, the sale IS recorded, and the REPLY is
+// lost on the way back. The button comes back, the seller sees an error, and
+// presses Complete again - and without an id like this, that second press
+// records a SECOND real sale. Stock is drained twice and the books say the
+// customer paid twice. Proved on a local copy of the database: two identical
+// calls produced 2 sales and took 6 units instead of 3.
+//
+// HOW TO USE IT - the pattern every money write in this app follows:
+//   1. One variable per screen, outside the handler:  var saleRequestId = null;
+//   2. Just before the call:  if (!saleRequestId) saleRequestId = newRequestId();
+//   3. Pass it as p_client_request_id.
+//   4. ONLY on success:  saleRequestId = null;
+// Keeping it on failure is the whole point: the retry carries the same id, so
+// the database recognises it and returns the original row instead of making a
+// second one. Clearing it on success means the next, genuinely different sale
+// gets a fresh id. If the write failed for real, nothing was stored against
+// the id, so the retry simply does the work for the first time.
+//
+// crypto.randomUUID needs a secure context (https, which the live site is) and
+// a recent browser. The fallback is for older Android WebViews; it does not
+// need to be cryptographically strong, only unique enough that two requests
+// from one till never collide.
+function newRequestId() {
+  try {
+    if (window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
+  } catch (e) { /* fall through to the manual version */ }
+  var hex = Date.now().toString(16);
+  while (hex.length < 32) hex += Math.floor(Math.random() * 16).toString(16);
+  hex = hex.slice(0, 32);
+  // shaped like a v4 uuid so Postgres accepts it as one
+  return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-4' + hex.slice(13, 16) +
+         '-a' + hex.slice(17, 20) + '-' + hex.slice(20, 32);
+}
+
 // Whole shillings normally, but never round away a real fractional amount
 // (prices and discounts can have cents). Rounding everything once showed
 // "Balance KES 0" while Confirm stayed disabled.

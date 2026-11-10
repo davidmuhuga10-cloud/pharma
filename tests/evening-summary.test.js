@@ -41,7 +41,30 @@ check(/queueSummary/.test(sender) && /mode === "evening_summary"/.test(sender), 
 check(/queue_evening_summary_now/.test(idx), 'it calls the right database function for that mode');
 check(/x-cron-secret/.test(cronFn) && /!safeEqual\(got, want\)/.test(cronFn) && /diff \|= /.test(cronFn), 'the cron-only sender checks a shared secret (compared in constant time), not a person\'s login');
 check(/ROUND_SIZE/.test(cronFn) && /BUDGET_MS/.test(cronFn) && /while \(/.test(cronFn), 'it keeps sending in rounds until the queue is empty or its time budget is used, instead of stopping at a fixed number');
-check(/kind", "summary"\)/.test(cronFn) && /status", "queued"\)/.test(cronFn), 'it only ever sends summary messages that are still queued');
+// It must CLAIM its batch, not merely read one.
+//
+// This check used to look for .eq("kind","summary").eq("status","queued") in
+// this file. That was the bug: the rows were read, the provider was called, and
+// only then were they marked 'sent' - so two copies of this function running at
+// the same time read the SAME rows and sent every message twice. The cron jobs
+// collide at 15:30 UTC by construction (queue_evening_summaries nudges, and
+// nudge_summary_sender also fires at :30).
+//
+// The kind/status filter now lives inside claim_queued_summaries(), which moves
+// rows to 'sending' with "for update skip locked" so concurrent senders get
+// disjoint batches. tests/sms-claim.sh proves that by running two senders at
+// once; this check just makes sure the edge function keeps using it.
+check(/\.rpc\("claim_queued_summaries"/.test(cronFn),
+  'it claims its batch through claim_queued_summaries()');
+check(!/\.eq\("status", "queued"\)/.test(cronFn),
+  'it does NOT read status="queued" rows directly any more - that is what allowed two senders to double-send');
+const claimMig = read('migrations/2026-11-10_claim_queued_sms.sql');
+check(/for update skip locked/i.test(claimMig),
+  'the claim uses "for update skip locked", which is what makes two senders take different rows');
+check(/requeue_stalled_summaries/.test(claimMig) && /nudge_summary_sender/.test(claimMig),
+  'a sender that dies mid-send is recovered: the nudge re-queues anything left in flight');
+check(/'sending'/.test(claimMig) && /sms_log_status_check/.test(claimMig),
+  "sms_log.status is widened to allow 'sending', or nothing could be claimed at all");
 // The function deploys on its own, so it carries a local copy of the sending code. The copy must stay
 // word-for-word the same as send-sms/sender.ts, or the two would send differently.
 const localSender = read('supabase/functions/send-queued-summaries/sender.ts');

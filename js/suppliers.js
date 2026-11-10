@@ -335,6 +335,9 @@ function toggleLpoExpiryUnknown(drugId, supplierId, checked) {
   if (STATE.lpoSelected[drugId]) { STATE.lpoSelected[drugId].expiryUnknown = checked; drawNewLpo(supplierId); }
 }
 
+// Retry safety for recording a delivery - see newRequestId() in js/core.js.
+var lpoRequestId = null;
+
 async function saveLpo(supplierId) {
   var btn = $('#lpoSaveBtn');
   if (!btn) return;
@@ -360,14 +363,19 @@ async function saveLpo(supplierId) {
         batch_no: sel.batchNo ? sel.batchNo.trim() : null
       });
     }
+    // Retry safety - see newRequestId() in js/core.js. Without this, a lost
+    // reply meant the whole delivery was recorded twice and stock doubled.
+    if (!lpoRequestId) lpoRequestId = newRequestId();
     var { error } = await sb.rpc('record_supplier_lpo', {
       p_pharmacy_id: STATE.profile.pharmacy_id,
       p_supplier_id: supplierId,
       p_items: items,
       p_delivered_at: lpoDeliveredAt || null,
-      p_notes: lpoNotes.trim() || null
+      p_notes: lpoNotes.trim() || null,
+      p_client_request_id: lpoRequestId
     });
     if (error) { toast(friendlyError(error), 'bad'); return; }
+    lpoRequestId = null;   // recorded; the next delivery is a new request
     toast('Delivery recorded.', 'good');
     STATE.lpoSelected = {};
     closeSheet();

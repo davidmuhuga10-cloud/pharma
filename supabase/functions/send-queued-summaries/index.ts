@@ -50,13 +50,25 @@ Deno.serve(async (req: Request) => {
   let sent = 0, failed = 0, rounds = 0, updateErrors = 0;
 
   while (Date.now() - started < BUDGET_MS && updateErrors === 0) {
+    // CLAIM the next batch rather than just reading it.
+    //
+    // This used to be a plain select on status='queued', and the rows were only
+    // marked 'sent' AFTER the provider call returned. Two copies of this
+    // function running at once therefore read the SAME rows and both sent them,
+    // so an owner got the same evening summary twice and the SMS was paid for
+    // twice. The two cron jobs collide at 15:30 UTC by construction
+    // (queue_evening_summaries nudges, and nudge_summary_sender also fires at
+    // :30), so that was reachable - it simply had not been noticed, because
+    // only one summary had ever been sent.
+    //
+    // claim_queued_summaries() moves rows to 'sending' with
+    // "for update skip locked" and hands back only the rows THIS call claimed.
+    // Two senders now get disjoint batches instead of the same one. If this
+    // function dies mid-send, requeue_stalled_summaries() (called by
+    // nudge_summary_sender every 5 minutes) puts anything left in flight for
+    // more than 15 minutes back to 'queued', so nothing is lost.
     const { data: rows, error } = await admin
-      .from("sms_log")
-      .select("id, to_phone, body")
-      .eq("kind", "summary")
-      .eq("status", "queued")
-      .order("created_at")
-      .limit(ROUND_SIZE);
+      .rpc("claim_queued_summaries", { p_limit: ROUND_SIZE });
     if (error) return json({ ok: false, message: error.message, sent, failed });
     if (!rows || !rows.length) break;
     rounds++;
@@ -86,7 +98,12 @@ Deno.serve(async (req: Request) => {
     }
   }
 
+  // "remaining" counts anything not yet delivered, including rows still marked
+  // 'sending'. A row can be left in flight if this call ran out of time or hit
+  // an update error; the sweeper re-queues those, so reporting only 'queued'
+  // here would say 0 while work was in fact outstanding.
   const { count: remaining } = await admin
-    .from("sms_log").select("id", { count: "exact", head: true }).eq("kind", "summary").eq("status", "queued");
+    .from("sms_log").select("id", { count: "exact", head: true })
+    .eq("kind", "summary").in("status", ["queued", "sending"]);
   return json({ ok: updateErrors === 0, sent, failed, rounds, remaining: remaining ?? null, update_errors: updateErrors });
 });

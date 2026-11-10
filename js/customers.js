@@ -368,14 +368,21 @@ function openCustomerPayment() {
     '<div class="field"><label>Note (optional)</label><input id="cpNote"></div>' +
     '<button class="btn primary" id="cpSaveBtn" onclick="saveCustomerPayment()">Record payment</button>';
 }
+// Retry safety - see newRequestId() in js/core.js. Without this, a lost reply
+// meant the customer was credited twice and their debt understated.
+var paymentRequestId = null;
+
 function saveCustomerPayment() {
   act($('#cpSaveBtn'), async function () {
     var amount = parseFloat($('#cpAmount').value);
     if (!(amount > 0)) { toast('Enter an amount greater than zero.', 'bad'); return; }
+    if (!paymentRequestId) paymentRequestId = newRequestId();
     await rpcCall('record_customer_payment', {
       p_pharmacy_id: STATE.profile.pharmacy_id, p_customer_id: custDetail.row.customer_id, p_amount: amount,
-      p_method: $('#cpMethod').value, p_reference: $('#cpRef').value.trim() || null, p_note: $('#cpNote').value.trim() || null
+      p_method: $('#cpMethod').value, p_reference: $('#cpRef').value.trim() || null, p_note: $('#cpNote').value.trim() || null,
+      p_client_request_id: paymentRequestId
     });
+    paymentRequestId = null;   // recorded; the next payment is a new request
     closeSheet();
     toast('Payment recorded.', 'good');
     openCustomerDetail(custDetailId);

@@ -427,6 +427,10 @@ function openRestock(encodedDrug) {
     '<button class="btn primary" id="rSaveBtn" onclick="saveRestock(\'' + drug.id + '\')">Save restock</button>';
 }
 
+// Retry safety - see newRequestId() in js/core.js. Without this, a lost reply
+// meant the same delivery was added to stock twice.
+var restockRequestId = null;
+
 async function saveRestock(drugId) {
   var btn = $('#rSaveBtn');
   act(btn, async function () {
@@ -438,6 +442,7 @@ async function saveRestock(drugId) {
     if (!sell) { toast('Enter the sell price.', 'bad'); return; }
     var supplierName = $('#rSupplier').value.trim() || null;
     var matchedSupplier = supplierName ? STATE.suppliersCache.find(function (s) { return s.name.toLowerCase() === supplierName.toLowerCase(); }) : null;
+    if (!restockRequestId) restockRequestId = newRequestId();
     var { error } = await sb.rpc('record_restock', {
       p_pharmacy_id: STATE.profile.pharmacy_id,
       p_drug_id: drugId,
@@ -447,9 +452,11 @@ async function saveRestock(drugId) {
       p_expiry_date: exp,
       p_batch_no: $('#rBatch').value.trim() || null,
       p_supplier: supplierName,
-      p_supplier_id: matchedSupplier ? matchedSupplier.id : null
+      p_supplier_id: matchedSupplier ? matchedSupplier.id : null,
+      p_client_request_id: restockRequestId
     });
     if (error) { toast(friendlyError(error), 'bad'); return; }
+    restockRequestId = null;   // added; the next delivery is a new request
     toast('Restocked.', 'good');
     closeSheet();
     renderInventory();

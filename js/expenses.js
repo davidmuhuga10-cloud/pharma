@@ -175,6 +175,10 @@ function openAddExpense() {
     '<button class="btn primary" id="exSaveBtn" onclick="saveExpense()">Save expense</button>';
 }
 
+// Retry safety - see newRequestId() in js/core.js. Without this, a lost reply
+// meant the same expense was counted twice and profit understated.
+var expenseRequestId = null;
+
 async function saveExpense() {
   var btn = $('#exSaveBtn');
   act(btn, async function () {
@@ -187,6 +191,7 @@ async function saveExpense() {
     // not in EXP_CATEGORY_LABELS.
     var categoryRaw = $('#exCategory').value.trim();
     var category = categoryRaw.toLowerCase().replace(/\s+/g, ' ') || 'other';
+    if (!expenseRequestId) expenseRequestId = newRequestId();
     var { error } = await sb.rpc('record_expense', {
       p_pharmacy_id: STATE.profile.pharmacy_id,
       p_category: category,
@@ -194,9 +199,11 @@ async function saveExpense() {
       p_amount: amount,
       p_method: $('#exMethod').value,
       p_expense_date: $('#exDate').value || null,
-      p_notes: $('#exNotes').value.trim() || null
+      p_notes: $('#exNotes').value.trim() || null,
+      p_client_request_id: expenseRequestId
     });
     if (error) { toast(friendlyError(error), 'bad'); return; }
+    expenseRequestId = null;   // recorded; the next expense is a new request
     toast('Expense recorded.', 'good');
     closeSheet();
     renderExpenses();

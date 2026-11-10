@@ -32,9 +32,29 @@ Read in this order. Do not skip to the code.
 5. **`CHANGELOG.md`** — newest first. Skim the last twenty entries. Each says
    what was wrong, what changed, and how it was checked. This is where the
    project's hard-won knowledge lives.
+6. **`SCALE_AND_RESILIENCE.md`** — whether this holds up with many pharmacies
+   and real traffic, and what breaks first. Read it before you change anything
+   to do with locking, queues or retries; it explains why those are the shape
+   they are, with the measurements.
 
 Then run the tests (`npm test`). They should all pass. If they do not, fix that
 before you write a line of your own.
+
+Three tests need a real throwaway database rather than just reading the source,
+so they are **not** in `npm test`. Run them before changing a money function,
+the SMS queue, or anything that locks:
+
+```bash
+createdb hodhi_test
+psql hodhi_test -f tests/00_auth_stub.sql
+psql hodhi_test -f schema.sql
+psql hodhi_test -f migrations/2026-11-10_retry_safe_writes.sql
+psql hodhi_test -f migrations/2026-11-10_claim_queued_sms.sql
+
+psql hodhi_test -f tests/retry-safety.sql   # a retry cannot make a second sale
+bash tests/sms-claim.sh                     # two senders cannot double-send
+bash tests/tenant-isolation.sh              # one pharmacy cannot block another
+```
 
 ## The one flow you must understand: a sale
 

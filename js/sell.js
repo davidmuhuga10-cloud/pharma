@@ -448,6 +448,11 @@ function removePaymentLine(i) {
   drawCheckoutPayments();
 }
 
+// Retry safety for the sale. Held outside completeSale() so a failed attempt
+// and the seller's next press share one id - see newRequestId() in js/core.js
+// for why that matters. Cleared only after a sale is confirmed recorded.
+var saleRequestId = null;
+
 async function completeSale() {
   var btn = $('#pSaveBtn');
   act(btn, async function () {
@@ -499,6 +504,10 @@ async function completeSale() {
     }
     if (payments.some(function (p) { return p.method === 'credit'; }) && !customerId) { toast('Choose the customer who is taking this on credit.', 'bad'); return; }
     var insuranceLine = payments.find(function (p) { return p.method === 'insurance'; });
+    // Same id across retries of this one sale. If the reply to the first
+    // attempt was lost, record_sale finds this id and returns the sale it
+    // already made instead of making another.
+    if (!saleRequestId) saleRequestId = newRequestId();
     var { data: saleId, error } = await sb.rpc('record_sale', {
       p_pharmacy_id: STATE.profile.pharmacy_id,
       p_items: items,
@@ -506,9 +515,13 @@ async function completeSale() {
       p_customer_name: customer,
       p_insurance_scheme: insuranceLine ? insuranceLine.reference : null,
       p_customer_id: customerId,
-      p_discount: discount
+      p_discount: discount,
+      p_client_request_id: saleRequestId
     });
+    // Deliberately NOT cleared here: the seller's next press must carry the
+    // same id so the database can recognise it as the same sale.
     if (error) { toast(friendlyError(error), 'bad'); return; }
+    saleRequestId = null;   // this sale is recorded; the next one is a new request
     // record_sale creates the insurance claim in the same transaction, for every
     // insurance payment line. Doing it here as a second request could leave a sale
     // with no claim if the connection dropped in between.
