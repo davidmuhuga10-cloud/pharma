@@ -223,7 +223,13 @@ h2 { font-size: 16px; }
 
 .mask { position: fixed; inset: 0; background: rgba(20,18,16,0.5); display: flex; align-items: flex-end; z-index: 50; }
 .sheet { background: #fff; width: 100%; max-height: 88vh; overflow-y: auto; border-radius: 18px 18px 0 0; padding: 18px 16px 24px; }
-@media (min-width: 640px) {
+/* Below this width a sheet is a full-width bottom sheet, which suits a phone.
+   Above it, cap and centre it. Stretched to ~550px while keeping a phone's
+   16px padding, a cart line pushes the drug name hard against the left edge
+   and Remove against the right with a dead gap between them. 480px is the
+   width sheets already used on a desktop, so this only makes that start
+   sooner - phones and desktops are unchanged. */
+@media (min-width: 480px) {
   .mask { align-items: center; justify-content: center; }
   .sheet { max-width: 480px; border-radius: 18px; box-shadow: var(--shadow-lg); }
 }

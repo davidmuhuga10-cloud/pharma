@@ -52,6 +52,72 @@
 <link rel="manifest" href="manifest.json">
 <!-- The "Install Pharma" popup. Plain script, tiny, in the head so it hears the browser's "installable" message early. -->
 <script src="install.js"></script>
+<!-- If the app cannot start, say so instead of spinning for ever.
+     Registered HERE, before every script below, on purpose: the old copy of
+     this sat at the end of <body>, which is too late - js/core.js has already
+     thrown by the time it exists, so nothing was caught and the user just
+     watched the loading screen for ever.
+     Three different failures all looked identical to a user:
+       1. a file that fails to download  -> error event on the <script> tag,
+          which does not bubble, so this listens with capture = true;
+       2. a script that throws           -> error event on window;
+       3. a file that never arrives and never errors - a stalled download on a
+          weak connection. NOTHING fires, so only a timer catches it. This is
+          the one that happened on 10 Nov 2026: vendor-supabase.js hung, so
+          `supabase` was never defined and js/core.js threw on line 7.
+     Styles are inline because style.css may be one of the files that did not
+     arrive. -->
+<script>
+(function () {
+  var shown = false;
+  function stillLoading() { return !!document.querySelector('#app .loadscreen'); }
+
+  // A gentle note first - on a slow connection the app is coming, just slowly.
+  function hint() {
+    if (shown || !stillLoading()) return;
+    if (document.getElementById('lsHint')) return;
+    var p = document.createElement('p');
+    p.id = 'lsHint';
+    p.style.cssText = 'margin:0;font-size:12px;color:#E7C76A;opacity:.9';
+    p.textContent = 'Still loading - slow connection?';
+    var ls = document.querySelector('#app .loadscreen');
+    if (ls) ls.appendChild(p);
+  }
+
+  function fail() {
+    if (shown || !stillLoading()) return;
+    shown = true;
+    var app = document.getElementById('app');
+    if (!app) return;
+    app.innerHTML =
+      '<div style="box-sizing:border-box;min-height:100vh;display:flex;flex-direction:column;' +
+      'align-items:center;justify-content:center;gap:14px;padding:24px;text-align:center;color:#fff;' +
+      'font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;' +
+      'background:linear-gradient(180deg,#0F5132 0%,#09291B 100%)">' +
+      '<p style="margin:0;font-size:19px;font-weight:800">Pharma could not open</p>' +
+      '<p style="margin:0;font-size:14px;line-height:1.5;max-width:300px;opacity:.9">' +
+      'Part of the app did not finish downloading. This is almost always a weak ' +
+      'internet connection rather than a problem with your data - nothing has been lost.</p>' +
+      '<button onclick="location.reload()" style="margin-top:4px;padding:12px 26px;font:inherit;' +
+      'font-weight:700;color:#0F5132;background:#fff;border:0;border-radius:10px;cursor:pointer">' +
+      'Try again</button>' +
+      '<p style="margin:6px 0 0;font-size:12px;opacity:.75">If it keeps happening, try mobile data or another network.</p>' +
+      '</div>';
+  }
+
+  // 1 + 2: a file that fails outright, or a script that throws.
+  window.addEventListener('error', function (e) {
+    var t = e && e.target;
+    if (t && t !== window && t.tagName === 'SCRIPT') { fail(); return; }   // script failed to load
+    if (!t || t === window) fail();                                        // script threw
+  }, true);
+  window.addEventListener('unhandledrejection', fail);
+
+  // 3: nothing failed, nothing threw, it is just never arriving.
+  setTimeout(hint, 12000);
+  setTimeout(fail, 30000);
+})();
+</script>
 <!-- Start the connection to the database now, so the first request does not wait for it. -->
 <link rel="preconnect" href="https://ovegzdlrhlcpjfcsoumu.supabase.co" crossorigin>
 <!-- Does nothing in a browser; inside the Android app it fixes the layout, printing and the back button. deferred so it never holds up the first screen. -->
@@ -116,16 +182,7 @@ html,body{margin:0}
       navigator.serviceWorker.register('sw.js').catch(function () { /* offline shell just won't be available — app still works online */ });
     });
   }
-  // If app.js itself fails to load/execute for any reason, don't leave the
-  // user staring at "Loading Pharma…" forever with no way to recover.
-  window.addEventListener('error', function (e) {
-    if (!document.querySelector('#app .loadscreen')) return;
-    document.getElementById('app').innerHTML =
-      '<div class="auth-wrap"><div class="auth-card"><div class="card empty">' +
-      '⚠️ Pharma could not start. Please reload the page — if this keeps happening, check your internet connection.' +
-      '<div style="margin-top:12px"><button class="btn primary" onclick="location.reload()">Reload</button></div>' +
-      '</div></div></div>';
-  });
+  // The "could not start" guard is in <head>, so it exists before the scripts it protects.
 </script>
 </body>
 </html>
