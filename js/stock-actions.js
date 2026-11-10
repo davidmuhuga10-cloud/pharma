@@ -377,20 +377,20 @@ async function openDrugDetail(drugId) {
         '<span class="badge ' + kind + '">' + b.quantity_remaining + ' left</span></div>' +
         '<div class="meta">Received ' + fmtDate(b.received_at) + (b.supplier ? ' from ' + esc(b.supplier) : '') + '</div>' +
         ((can('write_off') || can('correct_stock') || can('edit_expiry') || can('edit_price')) && b.quantity_remaining > 0 ? '<div class="batch-actions">' +
-          (can('write_off') ? '<button class="btn ghost small" onclick="openWriteOff(\'' + b.id + '\',\'' + esc(d.name).replace(/'/g, "\\'") + '\',' + b.quantity_remaining + ')">Write off</button>' : '') +
+          (can('write_off') ? '<button class="btn ghost small" onclick="openWriteOff(\'' + b.id + '\',\'' + jsArg(d.name) + '\',' + b.quantity_remaining + ')">Write off</button>' : '') +
           // "Correct count" is record_correction, which has its own permission
           // (correct_stock), separate from write_off. A stock_taker can correct but not
           // write off.
-          (can('suppliers') ? '<button class="btn ghost small" onclick="openSupplierReturn(\'' + b.id + '\',\'' + esc(d.name).replace(/'/g, "\\'") + '\',' + b.quantity_remaining + ',' + (b.cost_price == null ? 'null' : Number(b.cost_price)) + ',\'' + (b.supplier_id || '') + '\')">Return to supplier</button>' : '') +
-          (can('correct_stock') ? '<button class="btn ghost small" onclick="openCorrection(\'' + b.id + '\',\'' + esc(d.name).replace(/'/g, "\\'") + '\',' + b.quantity_remaining + ')">Correct count</button>' : '') +
-          (can('discount') ? '<button class="btn ghost small" onclick="openDiscount(\'' + b.id + '\',\'' + esc(d.name).replace(/'/g, "\\'") + '\',' + b.discount_percent + ')">Mark down</button>' : '') +
+          (can('suppliers') ? '<button class="btn ghost small" onclick="openSupplierReturn(\'' + b.id + '\',\'' + jsArg(d.name) + '\',' + b.quantity_remaining + ',' + (b.cost_price == null ? 'null' : Number(b.cost_price)) + ',\'' + (b.supplier_id || '') + '\')">Return to supplier</button>' : '') +
+          (can('correct_stock') ? '<button class="btn ghost small" onclick="openCorrection(\'' + b.id + '\',\'' + jsArg(d.name) + '\',' + b.quantity_remaining + ')">Correct count</button>' : '') +
+          (can('discount') ? '<button class="btn ghost small" onclick="openDiscount(\'' + b.id + '\',\'' + jsArg(d.name) + '\',' + b.discount_percent + ')">Mark down</button>' : '') +
           // Owner only: fixes a batch with a real but wrong expiry date (e.g. already
           // past by mistake), which otherwise drops out of "in stock" with no way back.
-          (can('edit_expiry') ? '<button class="btn ghost small" onclick="openEditExpiry(\'' + b.id + '\',\'' + esc(d.name).replace(/'/g, "\\'") + '\',\'' + (b.expiry_unknown ? '' : b.expiry_date) + '\')">Edit expiry</button>' : '') +
+          (can('edit_expiry') ? '<button class="btn ghost small" onclick="openEditExpiry(\'' + b.id + '\',\'' + jsArg(d.name) + '\',\'' + (b.expiry_unknown ? '' : b.expiry_date) + '\')">Edit expiry</button>' : '') +
           // Owner only, same reasoning as Edit expiry: fixes a batch that was
           // typed in at the wrong price, without voiding a sale or going
           // through Correct count + a fresh restock.
-          (can('edit_price') ? '<button class="btn ghost small" onclick="openEditBatchPrice(\'' + b.id + '\',\'' + esc(d.name).replace(/'/g, "\\'") + '\',' + Number(b.sell_price) + ',' + (b.cost_price == null ? 'null' : Number(b.cost_price)) + ')">Edit price</button>' : '') +
+          (can('edit_price') ? '<button class="btn ghost small" onclick="openEditBatchPrice(\'' + b.id + '\',\'' + jsArg(d.name) + '\',' + Number(b.sell_price) + ',' + (b.cost_price == null ? 'null' : Number(b.cost_price)) + ')">Edit price</button>' : '') +
           '</div>' : '') +
         '</div>';
     }).join('') + usedUpNote : '<div class="empty">No batches yet.</div>') +

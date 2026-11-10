@@ -234,6 +234,24 @@ function syncAttributes(to, from) {
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
   return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
 }); }
+// esc() is for HTML. It is NOT enough inside a JavaScript string in an
+// onclick="..." attribute, because the browser HTML-decodes the attribute
+// before the JavaScript is parsed: esc()'s &#39; turns back into a real quote
+// and ends the string early. That is why `esc(x).replace(/'/g, "\\'")` never
+// worked - esc() has already turned every quote into &#39;, so the replace
+// matches nothing and does nothing. The symptom was a drug named "Jack's
+// Cough Syrup" making those buttons do nothing at all.
+// jsArg() escapes a value for that position: anything that could end the
+// string, end the attribute, or come back as one of those characters when the
+// browser decodes the attribute becomes a \uXXXX escape, which survives HTML
+// decoding unchanged. Use jsArg() for a value going into onclick="fn('...')",
+// and esc() for a value going into HTML text or a normal attribute.
+function jsArg(s) {
+  return String(s == null ? '' : s).replace(/[\\'"&<>\u000d\u000a\u2028\u2029]/g, function (c) {
+    var h = c.charCodeAt(0).toString(16);
+    return '\\u' + '0000'.slice(h.length) + h;
+  });
+}
 // Whole shillings normally, but never round away a real fractional amount
 // (prices and discounts can have cents). Rounding everything once showed
 // "Balance KES 0" while Confirm stayed disabled.

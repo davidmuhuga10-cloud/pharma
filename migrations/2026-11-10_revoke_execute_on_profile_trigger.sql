@@ -1,0 +1,37 @@
+-- 2026-11-10_revoke_execute_on_profile_trigger.sql
+--
+-- WHAT WAS WRONG
+-- prevent_profile_privilege_escalation() is a trigger function, but it was
+-- SECURITY DEFINER with the default grants, so it appeared on the REST surface
+-- as /rest/v1/rpc/prevent_profile_privilege_escalation and showed up in the
+-- Supabase security advisor. Calling a trigger function that way fails anyway
+-- -- Postgres refuses a trigger function invoked outside a trigger -- so
+-- nothing was exploitable, but it broke MIGRATIONS.md rule 6 ("security-definer
+-- functions set search_path and revoke execute from public/anon") and left a
+-- warning on the dashboard.
+--
+-- Every other trigger function in this schema already has execute revoked, so
+-- this makes the set uniform. It is the same tidy-up applied to the four
+-- trigger functions added by 2026-11-10_role_check_triggers_invoker.sql.
+--
+-- WHAT CHANGES
+-- Execute revoked from public, anon and authenticated. A trigger does not need
+-- EXECUTE on its function in order to fire -- that is checked when the trigger
+-- is created, not each time it runs -- so the profiles privilege-escalation
+-- guard keeps working exactly as before.
+--
+-- Left SECURITY DEFINER on purpose, unlike the four guards in that other
+-- migration: this one reads and compares profile rows that the calling user
+-- may not be able to see for themselves.
+--
+-- WHY IT IS SAFE
+-- Verified on the live project after applying: a non-owner attempting to
+-- promote themselves with
+--   update profiles set role = 'owner' where id = <their own id>
+-- is still refused with "Only the pharmacy owner can change role, active
+-- status, or account expiry", and the function reports as no longer executable
+-- by the authenticated role. No data is read, written or dropped.
+--
+-- Safe to run twice: revoke is idempotent.
+
+revoke all on function public.prevent_profile_privilege_escalation() from public, anon, authenticated;

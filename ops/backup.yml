@@ -1,0 +1,241 @@
+name: Pharma database backup
+
+# A free, restore-tested daily backup for a Supabase Free project, which has
+# no backups of its own. BACKUPS.md in this repository explains the one secret
+# this needs and how to actually restore.
+#
+# This file belongs in a SEPARATE PRIVATE repository (suggested name
+# pharma-backups). It must never go in davidmuhuga10-cloud/pharma, which is
+# PUBLIC: these dumps hold patients' names and phone numbers, controlled-drug
+# records, customer debts, and the password hashes in auth.users.
+#
+# Each run:
+#   1. counts every row in every public table, on the live database
+#   2. dumps the public schema, auth.users' rows, and auth.users' structure
+#   3. restores all of it into a throwaway Postgres 17 and checks every table
+#      came back with exactly the same number of rows
+#   4. commits only if that matched
+#   5. keeps 14 daily, 8 weekly (Sundays), 12 monthly (1st of month)
+#
+# Cost: nothing. 20 MB of data compresses to well under 1 MB, and the run
+# takes about two minutes of the 2,000 free private-repo Actions minutes.
+
+on:
+  schedule:
+    # 01:17 UTC = 04:17 Africa/Nairobi, after the pharmacy day is over.
+    # Deliberately not on the hour: on-the-hour jobs are the ones GitHub
+    # delays when it is busy.
+    - cron: '17 1 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: pharma-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    services:
+      verify:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: verify
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+        ports:
+          - 5433:5432
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Postgres 17 client
+        # The runner's own client is older, and pg_dump refuses to dump a
+        # server newer than itself. The live project runs Postgres 17.
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+          # The runner ships its own older client earlier in PATH, so without
+          # this pg_dump stays on v16 and refuses the v17 server with
+          # "aborting because of server version mismatch".
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+          export PATH="/usr/lib/postgresql/17/bin:$PATH"
+          pg_dump --version
+
+      - name: Count rows, then dump
+        env:
+          # Set this yourself in this repository under
+          # Settings -> Secrets and variables -> Actions -> New repository secret.
+          # Use the SESSION POOLER URI from Supabase
+          # (Project Settings -> Database -> Connection string -> Session pooler),
+          # which looks like
+          #   postgresql://postgres.<ref>:<password>@aws-N-<region>.pooler.supabase.com:5432/postgres
+          # Not the direct db.<ref>.supabase.co host: on the Free plan that is
+          # IPv6-only and GitHub's runners have no IPv6, so it just times out.
+          # Not the transaction pooler on 6543 either: pg_dump needs session mode.
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DB_URL:-}" ]; then
+            echo "::error::SUPABASE_DB_URL is not set. See BACKUPS.md."
+            exit 1
+          fi
+          mkdir -p work
+
+          # Exact counts for every table, taken from the live database before
+          # the dump. This is what the restore is checked against, and it is
+          # the only thing that can catch a dump that is valid but empty.
+          psql "$DB_URL" -t -A -o work/counts.txt -c "
+            select string_agg(format('%s|%s', relname, cnt), E'\n' order by relname) from (
+              select c.relname,
+                     (xpath('/row/c/text()',
+                        query_to_xml(format('select count(*) as c from public.%I', c.relname),
+                                     false, true, '')))[1]::text::bigint as cnt
+              from pg_class c
+              join pg_namespace n on n.oid = c.relnamespace
+              where n.nspname = 'public' and c.relkind = 'r'
+            ) s;"
+          echo "counted $(grep -c . work/counts.txt) tables"
+          if [ "$(grep -c . work/counts.txt)" -lt 1 ]; then
+            echo "::error::Could not count any tables - is the connection string right?"
+            exit 1
+          fi
+
+          # The pharmacy's data. --no-owner/--no-privileges keep it loadable
+          # into any project, where Supabase's roles already exist.
+          pg_dump "$DB_URL" --schema=public \
+            --no-owner --no-privileges --clean --if-exists \
+            --file=work/public.sql
+
+          # The sign-in accounts. Without these a restored project has all the
+          # data and nobody who can log in.
+          pg_dump "$DB_URL" --schema=auth --table=auth.users \
+            --data-only --no-owner --no-privileges \
+            --file=work/auth_users.sql
+
+          # auth.users' structure, so the check below can build a faithful
+          # copy of a table that has ~30 Supabase-managed columns. Not used
+          # when restoring for real: a real Supabase project already has it.
+          pg_dump "$DB_URL" --schema=auth --table=auth.users \
+            --schema-only --no-owner --no-privileges \
+            --file=work/auth_users_structure.sql
+
+          wc -c work/*.sql
+
+      - name: Prove it restores, with every row accounted for
+        # A backup nobody has restored is not a backup. Note the order:
+        # auth.users first, because public.profiles.id references it. Restore
+        # public first and that foreign key is silently dropped on the way in.
+        run: |
+          set -euo pipefail
+          V="postgresql://postgres:verify@localhost:5433/postgres"
+
+          psql "$V" -q -c 'create schema if not exists auth;'
+          psql "$V" -q -c 'create extension if not exists pgcrypto;'
+          psql "$V" -q -c "do \$\$ begin
+            if not exists (select 1 from pg_roles where rolname='anon') then create role anon nologin; end if;
+            if not exists (select 1 from pg_roles where rolname='authenticated') then create role authenticated nologin; end if;
+            if not exists (select 1 from pg_roles where rolname='service_role') then create role service_role nologin; end if;
+          end \$\$;"
+          psql "$V" -q -c "create or replace function auth.uid() returns uuid language sql stable as \$\$ select null::uuid \$\$;"
+
+          : > restore.log
+          psql "$V" -q -f work/auth_users_structure.sql >> restore.log 2>&1 || true
+          psql "$V" -q -f work/auth_users.sql           >> restore.log 2>&1 || true
+          psql "$V" -q -f work/public.sql               >> restore.log 2>&1 || true
+
+          # Some errors are expected on a bare server and do not matter:
+          # --clean trying to drop a schema that is in use, and triggers on
+          # auth.users pointing at functions this stripped copy lacks.
+          echo "--- restore messages ---"
+          grep -iE "psql:.*(ERROR|FATAL)" restore.log | sed 's/^/  /' || echo "  (none)"
+
+          # The real test: every table back, with exactly its original count.
+          FAIL=0; CHECKED=0
+          while IFS='|' read -r t expect; do
+            [ -z "$t" ] && continue
+            got=$(psql "$V" -t -A -c "select count(*) from public.\"$t\";" 2>/dev/null || echo FAIL)
+            CHECKED=$((CHECKED+1))
+            if [ "$got" != "$expect" ]; then
+              echo "::error::$t - live had $expect rows, restore produced $got"
+              FAIL=1
+            fi
+          done < work/counts.txt
+          echo "checked $CHECKED tables"
+
+          if [ "$CHECKED" -lt 1 ]; then
+            echo "::error::No tables were checked."; FAIL=1
+          fi
+
+          U=$(psql "$V" -t -A -c 'select count(*) from auth.users;' 2>/dev/null || echo 0)
+          echo "auth.users restored: $U"
+          if [ "$U" -lt 1 ]; then
+            echo "::error::No sign-in accounts restored - a restore from this would lock everyone out."
+            FAIL=1
+          fi
+
+          # The foreign key that only survives if auth.users went in first.
+          FK=$(psql "$V" -t -A -c "select count(*) from pg_constraint where conname='profiles_id_fkey';")
+          if [ "$FK" -lt 1 ]; then
+            echo "::error::profiles_id_fkey missing after restore - restore order is wrong."
+            FAIL=1
+          fi
+
+          if [ "$FAIL" != "0" ]; then
+            echo "--- full restore log ---"; tail -60 restore.log
+            exit 1
+          fi
+          echo "Restore verified: all $CHECKED tables matched, $U accounts, foreign key intact."
+
+      - name: File it and rotate
+        run: |
+          set -euo pipefail
+          DAY=$(date -u +%F); DOW=$(date -u +%u); DOM=$(date -u +%d)
+          mkdir -p daily weekly monthly
+
+          for f in public auth_users auth_users_structure; do
+            gzip -9 -c "work/$f.sql" > "daily/${DAY}_${f}.sql.gz"
+          done
+          cp work/counts.txt "daily/${DAY}_counts.txt"
+
+          [ "$DOW" = "7" ]  && cp daily/${DAY}_* weekly/  || true
+          [ "$DOM" = "01" ] && cp daily/${DAY}_* monthly/ || true
+
+          prune () {
+            local dir=$1 keep=$2
+            ls -1 "$dir" 2>/dev/null \
+              | sed -E 's/_(public|auth_users|auth_users_structure)\.sql\.gz$//; s/_counts\.txt$//' \
+              | sort -u | head -n -"$keep" | while read -r d; do
+                  [ -n "$d" ] && rm -f "$dir/${d}_"* && echo "pruned $dir/$d"
+                done
+          }
+          prune daily 14
+          prune weekly 8
+          prune monthly 12
+
+          rm -rf work restore.log
+          du -sh daily weekly monthly
+
+      - name: Commit
+        run: |
+          set -euo pipefail
+          git config user.name  "pharma-backup"
+          git config user.email "pharma-backup@users.noreply.github.com"
+          git add -A daily weekly monthly
+          if git diff --cached --quiet; then
+            echo "Nothing changed."
+          else
+            git commit -m "Backup $(date -u +%F) - restore verified"
+            git push
+          fi

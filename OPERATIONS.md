@@ -82,8 +82,94 @@ Run the SQL below in the Supabase dashboard -> SQL editor (it runs as an adminis
 
 ## Backups and recovery
 
-- Backups are a property of the Supabase plan: Free has none you can restore from; Pro has daily backups; point-in-time recovery is a paid add-on. **This project is on Free**, so today there is no restorable backup unless you make one yourself (weekly `pg_dump`, see Open items). With a paying pharmacy, daily backups are the minimum to hold.
-- Practise a restore once into a new, empty project and open the app against it. An untested backup is a guess.
+**There is a working, automatic, restore-tested daily backup.** Set up 10 Nov 2026.
+
+Supabase Free keeps no backup you can restore from, so the backup lives outside
+Supabase: a scheduled GitHub Action in a **separate private repository**,
+`davidmuhuga10-cloud/BACKUPS`. It costs nothing.
+
+### How it works
+
+Every night at **01:17 UTC (04:17 Nairobi)**, that repository's
+`.github/workflows/backup.yml` runs and:
+
+1. counts every row in every table of `public`, on the live database;
+2. dumps the `public` schema, the rows of `auth.users`, and `auth.users`'
+   structure;
+3. restores all of it into a throwaway Postgres 17 inside the same run, and
+   checks **every table came back with exactly the count from step 1**;
+4. commits the dump only if that matched - the commit message says
+   "restore verified";
+5. keeps 14 daily, 8 weekly (Sundays) and 12 monthly (1st) copies.
+
+Nobody has to press anything. The "Run workflow" button is only for testing.
+
+### Why the repository must stay private
+
+The dumps hold patients' names and phone numbers, controlled-drug records,
+customers' debts and the password hashes in `auth.users`. The code repository
+`davidmuhuga10-cloud/pharma` is **public**, which is why the backups are
+somewhere else. Never copy a dump, or that repository's secret, into the
+public repo.
+
+### The one secret
+
+`SUPABASE_DB_URL` in that repository's Actions secrets: the **session pooler**
+URI from Supabase (Connect -> Connection string -> Session pooler), port
+**5432**. Two hosts that do not work, both for real reasons:
+
+- the direct `db.<ref>.supabase.co` host is IPv6-only on the Free plan and
+  GitHub's runners have no IPv6, so it times out;
+- the transaction pooler on **6543** cannot be dumped from - `pg_dump` needs
+  session mode.
+
+The workflow also installs the Postgres **17** client and puts it first on
+`PATH`. The runner ships an older client, and `pg_dump` refuses a server newer
+than itself ("aborting because of server version mismatch").
+
+### Getting a few rows back
+
+```bash
+gunzip -c daily/2026-11-09_public.sql.gz > restore.sql
+createdb oneoff && psql oneoff -f restore.sql
+psql oneoff -c "select * from sales where sold_at::date = '2026-11-08';"
+```
+
+Pull out what you need and put it back through the app, or with a small,
+specific `insert`/`update`. **Never** load a whole dump over the live database
+to recover a few rows - that wipes everything since the dump.
+
+### Rebuilding the whole project
+
+1. New Supabase project; run `schema.sql` in its SQL editor.
+2. Restore **`auth_users.sql` first, then `public.sql`.** The order matters:
+   `public.profiles.id` references `auth.users(id)`, and restoring `public`
+   first means Postgres cannot re-create `profiles_id_fkey` and drops it with
+   only a warning - you get a database that looks right but has quietly lost a
+   constraint. The nightly check asserts that key exists, so this cannot
+   regress unnoticed.
+3. Check the counts against that date's `counts.txt`.
+4. Repoint the app: `config.js`, Netlify's `SUPABASE_URL`, redeploy the Edge
+   Functions.
+5. People sign in again with their existing passwords - the hashes came across.
+
+### What it does not cover
+
+Edge Functions, Netlify environment variables and Supabase project settings
+(those live in this repo and in the two dashboards), and anything written
+between the last run and the failure - up to 24 hours. Closing that window
+needs Supabase's paid point-in-time recovery, not a more frequent dump.
+
+### If it breaks
+
+GitHub emails the owner when a run fails. **A red run means that night has no
+backup** - read the log before anything else. GitHub also disables scheduled
+workflows in a repository with no activity for 60 days; nightly commits keep
+resetting that clock, but it is the first thing to check if backups ever stop.
+
+Practise a restore into a local Postgres once, so the first time is not during
+an emergency. The nightly run already proves the dump *can* be restored; this
+is about you knowing the steps.
 
 ## Capacity guide (when to act)
 
@@ -102,9 +188,17 @@ These cannot be done from the code and are not yet confirmed:
 
 1. **Public sign-up in Supabase Auth: checked 8 Nov 2026, it is off** ("Allow new users to sign up", anonymous sign-ins and manual linking all disabled). Accounts can only be created by the app's own `signup-by-phone` function. Re-check it after any Auth settings change.
 2. **Leaked-password protection** (Auth -> Attack Protection) is off in the advisor report; turn it on if the plan allows it (it may need a paid plan).
-3. **The project is on the Supabase Free plan** (dashboard header, 8 Nov 2026) while one pharmacy is paying. Free has no backups you can restore from and pauses after about a week of no activity. Moving to Pro (daily backups, no pausing) is the single most valuable change before adding pharmacies. Until then, take your own export: `pg_dump` of the project's database connection string, weekly, kept off the computer it was made on.
+3. **The project is on the Supabase Free plan** (dashboard header, 8 Nov 2026) while one pharmacy is paying. The missing-backup half of this is now solved outside Supabase - see Backups and recovery; backups run nightly and are restore-tested. What Free still costs you: the project pauses after about a week of no activity, and there is no point-in-time recovery, so the most you can lose is one day's work. Moving to Pro remains the right call before adding pharmacies, but it is no longer the thing standing between you and losing the data.
 4. **The paying pharmacy is recorded as `trial` with expiry 2027-12-31.** Mark it as paid in the admin console so billing reports are right.
-5. **Direct writes to `drugs`.** A signed-in attendant can change fields such as `is_prescription` and `reorder_level` through the API, bypassing role checks in the app's functions. Fixing it needs the screens that edit drugs moved to a role-checked function first; do not simply revoke the privilege, or those screens break.
+5. ~~**Direct writes to `drugs`.**~~ **Fixed 10 Nov 2026** by
+   `migrations/2026-11-10_role_checks_on_direct_writes.sql`, without touching a
+   single screen. It turned out no screen used `drugs` UPDATE at all, so that
+   privilege was simply revoked; the three writes that *are* used (adding a
+   drug, marking a batch down, adding a supplier) kept working and gained a
+   `BEFORE` trigger enforcing the same role rule the screen shows. The same
+   migration covered `batches.discount_percent` - where writing 100 sold a
+   batch for nothing - `suppliers.opening_balance`, and claim status, all of
+   which had the same gap. See the CHANGELOG entry for the verification.
 
 ## Deploying the discount release (9 Nov 2026)
 

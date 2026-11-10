@@ -301,7 +301,7 @@ async function openSaleDetail(saleId) {
       return '<div class="list-row"><div><div class="name">' + esc(name) + (it.patient_name ? ' (' + esc(it.patient_name) + ')' : '') + (it.rx_number ? ' <span class="badge warn">Rx ' + esc(it.rx_number) + '</span>' : '') + '</div>' +
         '<div class="meta">' + it.quantity + ' × ' + fmt(it.unit_price) + '</div></div>' +
         '<div class="right">' + fmt(it.line_total) +
-        (!s.voided && can('return') ? '<div><button class="btn small ghost" style="margin-top:4px" onclick="openReturnItem(\'' + it.id + '\',' + it.quantity + ',\'' + esc(name).replace(/'/g, "\\'") + '\')">Return</button></div>' : '') +
+        (!s.voided && can('return') ? '<div><button class="btn small ghost" style="margin-top:4px" onclick="openReturnItem(\'' + it.id + '\',' + it.quantity + ',\'' + jsArg(name) + '\')">Return</button></div>' : '') +
         '</div></div>';
     }).join('') + '</div>' +
     '<div class="section-title">Payments</div>' +
