@@ -2,6 +2,16 @@
 
 Newest first. The detailed story for each item is in `PHARMA_PROJECT_STATUS.md`.
 
+## 2026-11-11: Inventory/report tables no longer cut off their right-hand columns
+
+**Front-end only. Needs `git push`. No database change.** `sw.js` bumped `hodhi-shell-v4p` -> `v4q`.
+
+- **What was wrong:** `.rt-wrap` (the box around every report and inventory table) used `overflow: hidden`. When a long drug name plus the no-wrap number columns made the table wider than its box, the overflow was silently clipped - the last column was simply gone, with no scrollbar and no way to reach it. It showed up at **exactly 860px**, where the sidebar appears and the content area suddenly narrows: ~32px of the Inventory table was cut off. Below 760px the table becomes cards and above ~1000px there is room, so it hid in one band of tablet and small-laptop widths.
+- **The fix:** `overflow-x: auto; overflow-y: hidden`. The rounded corners are kept, and a too-wide table now scrolls sideways instead of losing columns.
+- **How it was found:** a measuring harness loaded the real `index.html`/`style.css`/`js/*`, seeded realistic data (long names, an apostrophe, big totals) and checked Dashboard, Inventory, Sell, the Cart sheet and Suppliers at 16 widths from 360 to 1280px for: page scrolling sideways, elements past either edge, content with no side margin, clipped text, and tables overflowing with no scroller. After the fix: **0 findings of those kinds.** (The closed menu drawer is intentionally parked off-screen, so it is excluded.)
+- **Not changed on purpose:** the audit also noted that many buttons (the qty `-`/`+`, `Remove`, `Hold sale`, the menu button) are about 28-34px tall, under the usual 36-44px thumb guideline. That is the app's consistent sizing on every screen, not a regression or a broken layout, so it was left alone. If pharmacists report mis-taps, raise it as one deliberate change to the shared button styles rather than patching screens one by one.
+- **Test:** `tests/table-scroll.test.js` (in `npm test`) fails if `.rt-wrap` goes back to `overflow: hidden`. Checked that it fails on the old CSS and passes on the new.
+
 ## 2026-11-10: The evening summary can no longer be sent to the same owner twice
 
 **Status: the database half is APPLIED to live (10 Nov 2026). The edge function is NOT yet deployed.** Until it is, the old sender keeps running and still works - it reads `queued` rows directly, which is still valid - so nothing is broken, but the double-send is not yet prevented. Deploy `send-queued-summaries` to finish it. (`git push` does **not** deploy Supabase edge functions; that needs the Supabase CLI or dashboard.) The order was deliberate: the migration had to land first, because deploying the function before it would have called a `claim_queued_summaries()` that did not exist.
