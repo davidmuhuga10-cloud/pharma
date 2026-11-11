@@ -56,6 +56,22 @@ function makeCtx(nav, Detector) {
   check(!deniedCalled && deniedCtx.sheetClosed && /camera permission/i.test(deniedCtx.toasts[deniedCtx.toasts.length - 1]),
     'declining the camera closes the sheet itself and suggests typing the barcode in instead');
 
+  // --- the message says what to DO, per kind of failure (a real DOMException has .name) ---
+  async function failMessage(errName) {
+    var c = makeCtx(
+      { mediaDevices: { getUserMedia: function () { var e = new Error('x'); e.name = errName; return Promise.reject(e); } } },
+      function () {}
+    );
+    await c.openBarcodeScan(function () {});
+    return c.toasts[c.toasts.length - 1];
+  }
+  check(/padlock/i.test(await failMessage('NotAllowedError')) && /Allow/.test(await failMessage('NotAllowedError')),
+    'a blocked camera tells the person where to switch it back on (padlock -> Camera -> Allow)');
+  check(/No camera was found/i.test(await failMessage('NotFoundError')),
+    'a device with no camera says so, instead of blaming permission');
+  check(/another app/i.test(await failMessage('NotReadableError')),
+    'a camera in use by another app says so');
+
   // --- the happy path: a code is read straight away ---
   var tracksStopped = 0;
   var FakeDetector = function () { this.detect = async function () { return [{ rawValue: ' 6009999988887 ' }]; }; };

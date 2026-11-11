@@ -2,6 +2,18 @@
 
 Newest first. The detailed story for each item is in `PHARMA_PROJECT_STATUS.md`.
 
+## 2026-11-11: "Scan barcode" now asks "Allow camera?" like every other app
+
+**Website part: needs `git push` (Netlify applies `_headers`). Android app part: needs a NEW build of the app (`npx cap sync android`, then rebuild/reinstall) - the website fix alone does not reach the installed app's manifest.** No database change.
+
+- **What the owner saw:** tapping Scan barcode showed "Could not open the camera. Check the browser has camera permission..." and there was nothing to tap - no Allow/Block prompt like Google Meet shows.
+- **Root cause:** `_headers` sent `Permissions-Policy: camera=()`, which tells the browser *no page on this site may ever use the camera*. The browser then refuses `getUserMedia()` instantly and shows **no prompt at all**, so there was nothing for the person to allow. The scanning code was fine; the site's own security header forbade it. The Android app had the same gap one layer down: `AndroidManifest.xml` never declared `CAMERA`, so Android could not ask either. (The `camera=()` line was added as a blanket "lock everything down" header and never tested against the scan feature.)
+- **Proved in a real browser, not assumed:** the same page served with each header, with a fake camera and the prompt auto-accepted so only the header differs: `camera=()` -> **REFUSED: NotAllowedError**; `camera=(self)` -> **CAMERA OPENED**.
+- **The fix:** `camera=(self)` - the camera is allowed for Pharma's **own** pages only. Microphone, location, payment and USB stay blocked, and no embedded third-party page can use the camera. Android manifest gains `CAMERA` (and `uses-feature camera required="false"`, so a device with no camera can still install the app and type barcodes in).
+- **Better messages, because a browser only prompts once:** after someone taps Block it never asks again, so the old one-size error was a dead end. The sheet now says "Your phone or browser will ask to use the camera. Tap Allow" while waiting, and on failure says what actually happened: blocked -> "tap the padlock next to the web address, set Camera to Allow"; no camera -> says so; camera busy in another app -> says so.
+- **Tests:** `tests/camera-policy.test.js` (in `npm test`) fails if `_headers` goes back to `camera=()` or opens to `camera=*`, if the other features stop being blocked, or if the Android manifest loses `CAMERA` (confirmed to fail on the old header). `tests/barcode.test.js` gained the three message cases. 37/37 runnable tests pass.
+- **If a phone still shows no prompt after the update:** the person tapped Block once already. Chrome: padlock -> Permissions -> Camera -> Allow (or Site settings). Android app: Settings -> Apps -> Pharma -> Permissions -> Camera -> Allow.
+
 ## 2026-11-11: Inventory/report tables no longer cut off their right-hand columns
 
 **Front-end only. Needs `git push`. No database change.** `sw.js` bumped `hodhi-shell-v4p` -> `v4q`.

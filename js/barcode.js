@@ -30,18 +30,25 @@ async function openBarcodeScan(onResult) {
     '<div style="position:relative;background:#000;border-radius:10px;overflow:hidden">' +
     '<video id="bcVideo" playsinline autoplay muted style="width:100%;display:block"></video>' +
     '</div>' +
-    '<div class="tiny" style="margin:10px 0">Point the camera at the barcode.</div>' +
+    '<div class="tiny" id="bcHint" style="margin:10px 0">Your phone or browser will ask to use the camera. Tap <b>Allow</b>.</div>' +
     '<button class="btn ghost block" onclick="bcStopScan();closeSheet()">Cancel</button>';
   try {
+    // This is the call that makes the browser show its own "Allow camera?" prompt.
+    // It only appears if the page is allowed to ask: the site's Permissions-Policy
+    // header (_headers) must say camera=(self), and the Android app must declare the
+    // CAMERA permission. If either is missing the browser refuses silently with no
+    // prompt - which is exactly how this broke before 11 Nov 2026.
     bcStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
   } catch (e) {
     bcStopScan();
     closeSheet();
-    toast('Could not open the camera. Check the browser has camera permission, or type the barcode in instead.', 'bad');
+    toast(bcCameraErrorMessage(e), 'bad');
     return;
   }
   var video = $('#bcVideo');
   if (!video || !document.body.contains(video)) { bcStopScan(); return; } // the sheet was closed while the camera was opening
+  var hint = $('#bcHint');
+  if (hint) hint.textContent = 'Point the camera at the barcode.';
   video.srcObject = bcStream;
   try { bcDetector = new BarcodeDetector(); } catch (e) {
     try { bcDetector = new BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'qr_code'] }); }
@@ -49,6 +56,20 @@ async function openBarcodeScan(onResult) {
   }
   bcLoopActive = true;
   bcScanLoop(video);
+}
+
+// Say what actually went wrong and what to do about it. A browser only shows its
+// "Allow camera?" prompt the first time; after someone taps Block it never asks again,
+// so the message has to tell them where to switch it back on.
+function bcCameraErrorMessage(e) {
+  var name = (e && e.name) || '';
+  if (name === 'NotFoundError' || name === 'OverconstrainedError') {
+    return 'No camera was found on this device. Type the barcode in instead.';
+  }
+  if (name === 'NotReadableError' || name === 'AbortError') {
+    return 'The camera is busy - another app may be using it. Close that app and try again, or type the barcode in.';
+  }
+  return 'Camera permission is off for Pharma. Tap the padlock next to the web address, set Camera to Allow, then scan again. Or type the barcode in.';
 }
 
 async function bcScanLoop(video) {
