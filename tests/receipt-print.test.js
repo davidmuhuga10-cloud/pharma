@@ -33,7 +33,7 @@ function makePrintCtx() {
     setTimeout: () => {}, area
   };
   vm.createContext(ctx);
-  vm.runInContext(grab('js/export.js', 'letterheadHtml') + '\n' + grab('js/export.js', 'printHtml'), ctx);
+  vm.runInContext(grab('js/export.js', 'letterheadHtml') + '\n' + grab('js/export.js', 'setPrintPageFooter') + '\n' + grab('js/export.js', 'printHtml'), ctx);
   return ctx;
 }
 {

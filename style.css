@@ -506,7 +506,11 @@ h2 { font-size: 16px; }
    coloured text (never a badge with a background), Excel + Print in the head. On a phone each
    row becomes a card: the first cell is the title, the rest keep their column label. */
 .rt-count { font-size: 13px; font-weight: 700; color: var(--ink); margin: 6px 0; }
-.rt-wrap { background: #fff; border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }
+/* overflow-x:auto, not hidden: when long names plus no-wrap number columns are wider than
+   the box (seen at 860px, where the sidebar appears and the content area suddenly narrows),
+   "hidden" silently cut off the right-hand columns. "auto" still rounds the corners but lets
+   the table scroll sideways so no column is ever unreachable. */
+.rt-wrap { background: #fff; border: 1px solid var(--line); border-radius: var(--radius-sm); overflow-x: auto; overflow-y: hidden; }
 .rt { width: 100%; border-collapse: collapse; font-size: 14px; color: var(--ink); }
 .rt th { background: var(--green); color: #fff; font-size: 12px; font-weight: 800; letter-spacing: .5px; text-transform: uppercase; text-align: left; padding: 10px 12px; }
 .rt td { padding: 10px 12px; border-top: 1px solid var(--line); vertical-align: middle; }
@@ -582,10 +586,12 @@ h2 { font-size: 16px; }
 .print-only { display: none; }
 @media print {
   html, body { background: #fff; }
-  body * { visibility: hidden; }
-  #printArea, #printArea * { visibility: visible; }
+  /* Take everything except the print area OUT of the page rather than merely hiding it. "visibility: hidden"
+     left the app's screen taking up room, and that room printed as blank paper after the report (measured:
+     a 6-row report came out as 2 pages, the same report on A5 as 6 pages, 5 of them blank). */
+  body > *:not(#printArea) { display: none !important; }
   #printArea {
-    display: block; position: absolute; top: 0; left: 0; width: 100%;
+    display: block; position: static; width: auto;
     padding: 0; color: #000; background: #fff;
   }
   /* Receipt head and foot: the plain centred version (the overrides below narrow it for 80mm). */
@@ -595,27 +601,48 @@ h2 { font-size: 16px; }
   #printArea.print-receipt .print-title { font-size: 15px; font-weight: 700; margin: 10px 0; }
   #printArea.print-receipt .print-footer { margin-top: 16px; font-size: 11px; color: #000; }
 
-  /* Every report (everything that is not a receipt): plain black on white, no frame, band or colour, so it
-     prints cleanly on any printer. Each row stays on one line; the table repeats its heading on every page. */
-  #printArea:not(.print-receipt) { padding: 8mm 9mm 6mm; font-family: Arial, "Segoe UI", sans-serif; color: #000; }
-  #printArea:not(.print-receipt) .print-letterhead { text-align: center; padding-bottom: 6px; border-bottom: 1px solid #000; }
-  #printArea:not(.print-receipt) .print-letterhead .pname { font-size: 18px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; }
-  #printArea:not(.print-receipt) .print-letterhead .pmeta { font-size: 11px; margin-top: 3px; }
-  .print-titlebar { text-align: center; margin: 10px 0 2px; }
-  .print-ribbon { display: inline-block; font-size: 14px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; }
-  .print-meta { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; font-size: 11px; margin: 6px 0 8px; color: #000; }
-  .print-table { width: 100%; border-collapse: collapse; font-size: 11px; color: #000; border: 1px solid #000; }
-  .print-table th { font-size: 10px; font-weight: 800; text-transform: uppercase; text-align: left; padding: 4px 6px; border: 0.5px solid #000; border-top: 1px solid #000; border-bottom: 1.5px solid #000; white-space: nowrap; }
-  .print-table td { padding: 3px 6px; border: 0.5px solid #000; text-align: left; white-space: nowrap; }
+  /* Every report (everything that is not a receipt): the LETTERHEAD. Pharmacy name and contact details on
+     the left, report title and period on the right, a double rule under both. Black and white (the table
+     heading's light grey is a bonus: if a printer drops backgrounds it is still bold with a rule under it),
+     so it prints cleanly on any printer. The page margins come from @page below, which also draws
+     "Page 1 of 3" at the foot of every page. The table repeats its heading on every page. */
+  #printArea:not(.print-receipt) { padding: 0; font-family: Arial, "Segoe UI", sans-serif; color: #000; }
+  #printArea:not(.print-receipt) .print-letterhead { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; text-align: left; padding-bottom: 0; border-bottom: 0; }
+  #printArea:not(.print-receipt) .print-letterhead .plh-left { flex: 1 1 56%; min-width: 0; }
+  #printArea:not(.print-receipt) .print-letterhead .pname { font-size: 19px; font-weight: 800; letter-spacing: 0; text-transform: none; line-height: 1.2; overflow-wrap: anywhere; }
+  #printArea:not(.print-receipt) .print-letterhead .pmeta { font-size: 11px; margin-top: 2px; color: #222; overflow-wrap: anywhere; }
+  .print-titlebar { flex: 0 1 40%; min-width: 0; text-align: right; margin: 0; }
+  .print-ribbon { display: block; font-size: 20px; font-weight: 800; letter-spacing: .5px; text-transform: uppercase; line-height: 1.15; overflow-wrap: anywhere; }
+  .print-period { font-size: 12px; margin-top: 4px; overflow-wrap: anywhere; }
+  .plh-line { border-top: 3px solid #000; border-bottom: 1px solid #000; height: 5px; margin: 10px 0 6px; }
+  .print-meta { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; font-size: 10.5px; margin: 0 0 8px; color: #222; }
+  .print-table { width: 100%; border-collapse: collapse; font-size: 11px; color: #000; border: 0; }
+  .print-table th { background: #e4e4e4; -webkit-print-color-adjust: exact; print-color-adjust: exact; font-size: 10px; font-weight: 800; text-transform: uppercase; text-align: left; padding: 5px 6px; border: 0; border-top: 1px solid #000; border-bottom: 1.5px solid #000; overflow-wrap: break-word; }
+  .print-table td { padding: 4px 6px; border: 0; border-bottom: 0.5px solid #888; text-align: left; vertical-align: top; overflow-wrap: break-word; }
   .print-table.wide { font-size: 10px; }
   .print-table.wide th { font-size: 9px; }
-  .print-table th.no, .print-table td.no { width: 24px; text-align: center; padding-left: 2px; padding-right: 2px; }
-  .print-table th.num, .print-table td.num { text-align: right; }
-  .print-table tfoot td { border-top: 1.5px solid #000; border-bottom: 1px solid #000; font-weight: 800; text-align: right; padding: 5px 6px; }
+  /* Numbers, dates in a number column and the row number never break across lines; ordinary text columns may
+     wrap when a wide report (10 columns, long drug names) would otherwise run off the right edge of the page. */
+  .print-table th.no, .print-table td.no { width: 24px; text-align: center; padding-left: 2px; padding-right: 2px; white-space: nowrap; }
+  .print-table th.num, .print-table td.num { text-align: right; white-space: nowrap; }
+  .print-table tfoot td { border-top: 1.5px solid #000; border-bottom: 1px solid #000; font-weight: 800; font-size: 12px; text-align: right; padding: 6px; }
   .print-table tr { break-inside: avoid; }
   .print-table thead { display: table-header-group; }
+  .print-table tfoot { display: table-row-group; }
+  /* Never strand the total line alone on a page of its own. tableHtml() puts the LAST data row in the same
+     <tfoot> as the total, and a tfoot is kept in one piece, so the two always travel together. (Found by sweeping
+     row counts: at 32-33, 70-72 and 109-111 rows the total landed by itself on a new page. "Keep with next"
+     rules did not help: the browser does not honour them reliably inside tables.) That last data row must still
+     look like a data row, so it is reset to the body style here. */
+  .print-table tfoot { break-inside: avoid; }
+  .print-table tfoot tr.lastrow td { font-weight: 400; font-size: inherit; text-align: left; padding: 4px 6px; border-top: 0; border-bottom: 0.5px solid #888; }
+  .print-table tfoot tr.lastrow td.num { text-align: right; }
+  .print-table tfoot tr.lastrow td.no { text-align: center; }
+  .print-table tfoot tr.lastrow td:first-child { font-weight: 400; }
   .print-table .st-bad, .print-table .st-warn, .print-table .st-ok, .print-table .st-ink { color: #000; font-weight: 800; }
-  .print-bandfoot { margin-top: 10px; text-align: center; font-size: 10px; border-top: 1px solid #000; padding-top: 4px; break-inside: avoid; }
+  /* The footer ("<pharmacy> · Generated by Pharma") is NOT drawn here. It is set per print by printHtml() as a page
+     margin box (see setPrintPageFooter in js/export.js), so it appears on every page and, being outside the flow of
+     the report, can never be pushed onto a page by itself. */
 
   /* A sale receipt, sized for an 80mm thermal till roll. This is just a hint:
      the browser's own print dialog still lets anyone pick a different
@@ -636,7 +663,10 @@ h2 { font-size: 16px; }
   .r80-sub span:last-child { white-space: nowrap; }
   .r80-total { font-weight: 800; font-size: 13px; }
 }
-@page receipt80 { size: 80mm auto; margin: 2mm 4mm; }
+/* Page margins for every printed report, and "Page 1 of 3" at the foot of each page. The page number is drawn
+   by the browser (Chrome and Edge from 2024); a browser that does not support it simply leaves it out. */
+@page { margin: 10mm 9mm 15mm; @bottom-right { content: "Page " counter(page) " of " counter(pages); font: 9px Arial, sans-serif; color: #000; } }
+@page receipt80 { size: 80mm auto; margin: 2mm 4mm; @bottom-right { content: none; } @bottom-left { content: none; } }
 
 /* ---- UI polish (Oct 2026) ---- */
 /* Cart lines: price line was rendering at full body size, same as the name */

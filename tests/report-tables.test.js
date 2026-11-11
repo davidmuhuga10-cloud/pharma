@@ -66,7 +66,7 @@ check(/print-ribbon/.test(th) && /Sales Report/.test(th) && /Test &lt;Pharmacy&g
 const rh = run("letterheadHtml('Receipt', '', true)");
 check(/print-title/.test(rh) && !/print-ribbon|pbadge/.test(rh), 'a receipt keeps the plain head for the 80mm roll');
 run("printHtml('Sales Report', 'Today', '<p>x</p>', '12 sales')");
-check(area.className === 'print-only' && !/print-frame/.test(area.innerHTML) && /print-bandfoot/.test(area.innerHTML) && /12 sales/.test(area.innerHTML), 'a report prints with no border frame, a plain footer line and its summary line');
+check(area.className === 'print-only' && !/print-frame|print-bandfoot/.test(area.innerHTML) && /12 sales/.test(area.innerHTML) && /Printed /.test(area.innerHTML), 'a report prints with no border frame and keeps its summary line; its footer is a page-margin box, not part of the report, so it can never be stranded on a page by itself');
 run("printHtml('Receipt', '', '<p>y</p>', null, { receipt: true })");
 check(area.className === 'print-only print-receipt' && !/print-frame|print-bandfoot/.test(area.innerHTML) && /print-footer/.test(area.innerHTML), 'a receipt has no frame or band');
 const ph = run(`tableHtml(['Drug', 'Cost', 'Status'], [['A', 'KES 5', {t:'Expired', c:'st-bad'}], ['B', 'KES 1,000.50', 'ok']], 'Total: 2')`);
@@ -79,9 +79,11 @@ const mixed = run(`tableHtml(['Item', 'Owes (now)'], [['A', 'KES 5'], ['B', 'Set
 check(/KES 5/.test(mixed), 'a column that mixes money and words keeps its KES, nothing is guessed');
 const printCss = cssAll.slice(cssAll.indexOf('/* Every report (everything that is not a receipt)'), cssAll.indexOf('/* A sale receipt'));
 check(printCss.length > 500 && !/#0F5132|#B8860B|#B3261E|#7A5605|#E8F3EC|#F5F2EC|#CFC9BF|\.print-frame/i.test(printCss), 'the report print styles are black and white: no green, gold, red, tinted rows or frame');
-check(/\.print-table td\s*\{[^}]*white-space:\s*nowrap/.test(printCss) && /\.print-table th\s*\{[^}]*white-space:\s*nowrap/.test(printCss), 'every printed row stays on one line');
-check(/\.print-table\s*\{[^}]*border:\s*1px solid #000/.test(printCss) && /\.print-table td\s*\{[^}]*border:\s*0\.5px solid #000/.test(printCss) && /\.print-table th\s*\{[^}]*border:\s*0\.5px solid #000/.test(printCss), 'the printed table is a full grid: a line round it, between every row and between every column');
-check(/@page receipt80/.test(cssAll) && /print-bandfoot/.test(cssAll), 'the print styles are in style.css (footer line, receipt page)');
+check(/\.print-table th\.num, \.print-table td\.num\s*\{[^}]*white-space:\s*nowrap/.test(printCss) && /\.print-table th\.no, \.print-table td\.no\s*\{[^}]*white-space:\s*nowrap/.test(printCss), 'numbers and the row number never break across lines');
+check(/\.print-table td\s*\{[^}]*overflow-wrap:\s*break-word/.test(printCss) && /\.print-table th\s*\{[^}]*overflow-wrap:\s*break-word/.test(printCss) && !/\.print-table t[dh]\s*\{[^}]*overflow-wrap:\s*anywhere/.test(printCss), 'text cells wrap only BETWEEN words when a wide report needs it (never mid-word like "tabl/et", which "anywhere" caused)');
+check(/\.print-table\s*\{[^}]*border:\s*0;/.test(printCss) && /\.print-table td\s*\{[^}]*border:\s*0;[^}]*border-bottom:\s*0\.5px solid #888/.test(printCss) && /\.print-table th\s*\{[^}]*background:\s*#e4e4e4[^}]*print-color-adjust:\s*exact[^}]*border-bottom:\s*1\.5px solid #000/.test(printCss), 'the printed table is open (no outer frame or vertical lines): light-grey heading with a rule under it, a thin line between rows');
+check(/@page receipt80/.test(cssAll) && /@bottom-right\s*\{[^}]*counter\(page\) " of " counter\(pages\)/.test(cssAll), 'the print styles are in style.css: page margins with "Page 1 of 3" on every page, and the receipt page');
+check(/body > \*:not\(#printArea\)\s*\{\s*display:\s*none\s*!important/.test(cssAll) && !/body \* \{ visibility: hidden/.test(cssAll), 'printing removes the app screen from the page instead of hiding it, so it cannot print as blank pages after the report');
 
 // ---- every screen uses the shared table ----
 const screens = {
